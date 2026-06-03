@@ -43,4 +43,4 @@ _No contracts yet._
 | [webdav-transport](features/webdav-transport_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/webdav-transport_review.md) |
 | [crypto](features/crypto_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/crypto_review.md) |
 | [identity](features/identity_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/identity_review.md) |
-| [message-model](features/message-model_plan.md) | — | — |
+| [message-model](features/message-model_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/message-model_review.md) |
