@@ -1,52 +1,52 @@
-# Open WebDAV Messenger — что это и зачем
+# Open WebDAV Messenger — what it is and why
 
-Authored product front door. Owned by `pm-architect`, validated one-pass by the PM. This is **not** the generated map — the contract→features map lives in `docs/product-map.md` (linked from `## Функции` below). This file is written **without** any generated-map signature line.
+Authored product front door. Owned by `pm-architect`, validated one-pass by the PM. This is **not** the generated map — the contract→features map lives in `docs/product-map.md` (linked from `## Features` below). This file is written **without** any generated-map signature line.
 
-## Зачем это нужно
+## Why this exists
 
-Open WebDAV Messenger — это текстовый мессенджер для Android, у которого **нет своего сервера**. Вместо отдельного бэкенда он использует обычный облачный диск, который у вас уже есть, — Яндекс.Диск, Nextcloud или любой WebDAV-диск.
+Open WebDAV Messenger is a native Android text messenger that has **no server of its own**. Instead of a dedicated backend it uses an ordinary cloud disk you already have — Yandex.Disk, Nextcloud, or any WebDAV disk.
 
-Для кого это: люди, которым важна приватность, и небольшие частные группы, у которых уже есть облачный диск и которые хотят переписываться, **не доверяя свою переписку ни оператору мессенджера, ни своему собственному серверу** (его просто нет).
+Who it is for: privacy-conscious people and small private groups who already have a cloud disk and want to chat **without trusting a messenger operator or running their own server** (there is none).
 
-Какую проблему решает: убирает необходимость держать чат-сервер или доверять стороннему мессенджеру. Транспорт — это файловый диск, которым вы сами управляете, а содержимое личных чатов шифруется прямо на устройстве, поэтому оператор диска видит только зашифрованный текст.
+The problem it solves: it removes the need to run a chat server or trust a third-party messenger. The transport is a file disk you control yourself, and private-chat content is encrypted right on the device, so the disk operator sees only ciphertext.
 
-Источник: ответы PM на product Q&A при bootstrap (2026-06-03).
+Source: PM product Q&A at bootstrap (2026-06-03).
 
-## Что умеет сегодня
+## What it does today
 
-Текущая версия — MVP: текстовые чаты с end-to-end шифрованием поверх WebDAV-диска. Покрытие выведено из объёма MVP и компонентов в `docs/architecture.md` (контракты в `.ai-pm/contracts/` ещё не заведены — это greenfield-старт).
+The current version is an MVP: text chats with end-to-end encryption over a WebDAV disk. Coverage is derived from the MVP scope and the components in `docs/architecture.md` (contracts in `.ai-pm/contracts/` are not yet established — this is a greenfield start).
 
-Умеет:
+Does:
 
-- **Личные чаты 1:1** с end-to-end шифрованием. Ключ выводится из общего пароля чата (Argon2id), которым участники обмениваются вне приложения; каждое сообщение шифруется отдельно (XChaCha20-Poly1305).
-- **Групповые чаты** — тот же общий пароль чата для всех участников группы.
-- **Публичные чаты** — на общем/известном ключе: их может прочитать любой, у кого есть ссылка, и оператор диска. Приложение **явно предупреждает**, что публичный чат не секретен, и подталкивает создать защищённый паролем приватный чат для настоящих разговоров.
-- **5 фиксированных реакций** на сообщения.
-- **Ответы (цитирование)** — ответ с цитатой исходного сообщения.
-- **Небольшой Markdown** в сообщениях: жирный, курсив, моноширинный код в строке, блок кода, цитата, ссылка. Ссылки безопасны — только разрешённые схемы, видимый URL, переход только по явному нажатию.
-- **Настраиваемый интервал опроса** диска (как часто приложение проверяет новые сообщения).
-- **Работа офлайн между опросами** — сообщения кешируются локально, лента отзывчива и без сети.
+- **Private 1:1 chats** with end-to-end encryption. The key is derived from a per-chat passphrase (Argon2id) shared out-of-band; each message is encrypted separately (XChaCha20-Poly1305).
+- **Group chats** — the same shared per-chat passphrase for all members.
+- **Public chats** — on a well-known/shared key: readable by anyone with the link and by the disk operator. The app explicitly **warns** that a public chat is not secret and nudges you to create a password-protected private chat for real conversations.
+- **5 fixed reactions** on messages.
+- **Replies (quoting)** — reply with a quote of the original message.
+- **A small Markdown subset** in messages: bold, italic, inline code, code block, blockquote, link. Links are safe — scheme allowlist, visible URL, navigation only on explicit tap.
+- **Configurable disk polling interval** — how often the app checks for new messages.
+- **Works offline between polls** — messages are cached locally, the feed stays responsive without network.
 
-Пока НЕ умеет (сознательно вне MVP):
+Does NOT yet (deliberately out of MVP scope):
 
-- **Шлюз в Telegram** — будущая фича через внешний сервер.
-- **Несколько дисков одновременно** (multi-disk) — пока один диск.
-- **Криптографическую проверку контактов** (ключи личности X25519) — подлинность отправителя держится только на общем пароле, отдельной проверки личности нет.
-- **Отдельные логины для участников** — несколько участников делят один общий доступ к диску на чат (отдельных логинов у каждого пока нет — это будущее усиление для Nextcloud).
-- **Защиту от удаления сообщений** — защиты от удаления сообщений другим участником нет: у всех общий доступ к диску; это осознанное ограничение MVP.
-- **iOS** — только нативный Android.
-- **Голос, медиа, вложения файлов** — MVP это только текст + Markdown.
-- **Доставку «в реальном времени» / быстрее 15 минут** — фоновый опрос на Android ограничен платформенным полом ~15 минут; более быстрая доставка потребует видимого пользователю фонового режима (постоянное уведомление) — решение по этому ещё открыто, см. `docs/architecture.md`.
+- **Telegram gateway** — a future feature via an external server.
+- **Multiple disks at once** (multi-disk) — one disk for now.
+- **Cryptographic contact verification** (X25519 identity keys) — sender authenticity rests only on the shared passphrase; there is no separate identity verification.
+- **Separate per-member logins** — members share one WebDAV credential per chat (Topology A); per-member credentials are a future Nextcloud-only enhancement.
+- **Protection against message deletion** — there is no protection against message deletion by another member: everyone shares the disk credential; this is a deliberate MVP limitation.
+- **iOS** — native Android only.
+- **Voice, media, file attachments** — the MVP is text + Markdown only.
+- **"Real-time" / faster-than-15-minute delivery** — Android background polling is bounded by a ~15-minute platform floor; faster delivery would need a user-visible foreground mode (a permanent notification) — this decision is still open, see `docs/architecture.md`.
 
-## Документы
+## Documents
 
-Навигация по `docs/` на языке PM — куда смотреть за чем.
+Navigation over `docs/` in the PM's language — where to look for what.
 
-- [Архитектура](architecture.md) — стек, ключевые решения, ограничения, поведенческий контракт (типы чатов, формат сообщений, правила синхронизации).
-- [Сценарии пользователя](user-journeys.md) — как продуктом пользуются.
-- [Модель угроз](threat-model.md) — что защищаем, от кого и как (недоверенный WebDAV-транспорт, E2E-шифрование).
-- [UI-гайд](ui-guide.md) — конвенции собственного чат-интерфейса на Compose.
+- [Architecture](architecture.md) — stack, key decisions, constraints, behavioral contract (chat types, message format, sync rules).
+- [User journeys](user-journeys.md) — how the product is used.
+- [Threat model](threat-model.md) — what we protect, from whom, and how (untrusted WebDAV transport, E2E encryption).
+- [UI guide](ui-guide.md) — conventions of the custom Compose chat interface.
 
-## Функции
+## Features
 
-Карта «контракт → фичи» (что каждая гарантия включает, какие фичи её строили, ревью): [`docs/product-map.md`](product-map.md).
+Contract → features map (what each guarantee includes, which features built it, reviews): [`docs/product-map.md`](product-map.md).

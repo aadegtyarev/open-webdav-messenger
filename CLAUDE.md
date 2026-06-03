@@ -8,6 +8,8 @@
 
 **Problem solved:** Removes the need for a dedicated chat server or trusting a third-party messenger with your messages — the transport is a file disk you already control, and message content is end-to-end encrypted so the disk operator sees only ciphertext.
 
+**Language canon:** Conversation language: the user's. Artifacts (files, code, commits, agent-authored docs): English.
+
 ---
 
 ## Architecture
@@ -89,7 +91,7 @@ Custom UI — the project builds its own chat surface in Jetpack Compose. Conven
 
 | File | Purpose |
 |---|---|
-| `docs/product.md` | **Product front door** — authored PM funnel (Зачем это нужно / Что умеет сегодня / Документы / Функции), owned by `pm-architect`, PM-validated. Not generated |
+| `docs/product.md` | **Product front door** — authored PM funnel (Why this exists / What it does today / Documents / Features), owned by `pm-architect`, PM-validated. Not generated |
 | `docs/product-map.md` | **Capability map** — contract-centric (group → contract → features + reviews), PM-facing, auto-generated from contracts/plans/reviews |
 | `docs/architecture.md` | Stack, decisions, constraints |
 | `docs/user-journeys.md` | Existing user scenarios |
