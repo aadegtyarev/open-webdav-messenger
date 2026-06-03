@@ -28,4 +28,8 @@ See `CLAUDE.md` for AI-assisted development workflow.
 
 ## License
 
-TBD
+GNU Affero General Public License v3.0 (AGPL-3.0) — see [`LICENSE`](LICENSE).
+
+A copyleft license: the source stays open, and anyone who distributes a modified
+version — or runs it as a network service (e.g. the future Telegram gateway) —
+must release their source under the same terms. Commercial use is permitted.
