@@ -85,4 +85,15 @@ approve
 <!-- orchestrator appends after code-review pass: -->
 ## Code review findings
 
-## Code review
+Trail reconstructed 2026-06-04 during audit-2026-06-04 from the feature-loop record (`.ai-pm/state/archive/message-model-2026-06-04.md`); the Pass-2 code-review ran at feature time and the fixes landed in the merged commit (3a722d9), but this section was not stamped then. Findings fixed (all addressed before merge):
+
+1. **DoS amplifier (security).** `TlvFields.read` no longer pre-sizes the field map from the untrusted §8.2 field-count; it caps the count against `available_bytes / MIN_TLV_TRIPLE_BYTES` **before** allocating (a count that cannot fit → typed `BAD_FIELDS` reject, no ~0.5 MB allocation, before the §8.3 signature check), and sizes the map from a small constant.
+2. **Field-count drift.** `MessageSerializer` assembles the TLV fields once into a `List<Tlv>` and derives the written field-count from `list.size` — removed the separate `fieldCount(message)` branch (single source of truth).
+3. **Duplicated big-endian codec.** New shared `BigEndian` (`writeUint16Be`/`writeUint64Be`/`readUint64Be`) consolidates the matched BE uint64 encode/decode pair that was hand-rolled in serializer ↔ parser.
+4. **Dead branch.** Removed the unreachable pubkey-length null branch in `MessageParser.publicIdentityOf` (size guaranteed by `take(32)`); replaced with a build-time `init` guard.
+
+§8 wire format byte-identical; reject-don't-guess preserved. Tests added: `absurd_field_count_rejected_without_large_allocation`, `lying_field_count_too_low_rejected`, `field_count_equals_emitted_tlv_count`.
+
+## Code review: 2026-06-04 — passed
+
+Pass-2 fixes verified landed in 3a722d9; all JVM gates green (101 tests + lint + ktlintCheck). Trail reconstructed during audit-2026-06-04.

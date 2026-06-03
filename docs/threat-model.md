@@ -79,6 +79,8 @@ The **Mitigation** column references the enforceable rule in `docs/architecture.
 
 Likelihood and Impact: L / M / H
 
+> **Which shipped feature realizes each threat's mitigation** is tracked one place — the `### Realized by — feature → SCn / Threat traceability` table in `docs/architecture.md` `## Security constraints` (added 2026-06-04, audit-2026-06-04 Note 1). That table maps each of the four merged substrate features (`webdav-transport`, `crypto`, `identity`, `message-model`) to the `SCn` constraints it realizes and the `Tnn` rows above it addresses. The link is one-way and ID-keyed — this threat-model is not edited per realizing feature; the realized-by mapping lives next to the constraint definitions to avoid duplication. A future security feature reads that table to see what a surface already defends before extending it.
+
 ## What we explicitly do NOT protect against
 
 Be honest about out-of-scope threats — without this list, scope creeps. These are load-bearing for this project: each is a deliberate MVP boundary, not an oversight.

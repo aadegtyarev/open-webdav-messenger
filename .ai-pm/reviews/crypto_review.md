@@ -103,4 +103,14 @@ approve
 <!-- orchestrator appends after code-review pass: -->
 ## Code review findings
 
-## Code review
+Trail reconstructed 2026-06-04 during audit-2026-06-04 from the feature-loop record (`.ai-pm/state/archive/crypto-2026-06-03.md`); the Pass-2 code-review ran at feature time and the fixes landed in the merged commit (7346b46), but this section was not stamped then. Findings fixed (all addressed before merge):
+
+1. **Filename-token collision (security).** `ChatKeyStore` filename token was a colliding polynomial fold → replaced with `BLAKE2b(chat-id)` via injected `NativeCrypto` (Base32-lower, 16-byte digest); `CryptoFactory.chatKeyStore(context)` wires the shared native instance.
+2. **Passphrase material left in a `String`.** `KeySources.passphraseToBytes` now UTF-8-encodes the `CharArray` via `CharBuffer→ByteBuffer` with no intermediate `String`, wiping both temp buffers.
+3. **Caller passphrase not zeroized.** `keyFromPassphrase` now zeroizes the caller `CharArray` (`fill(' ')`) and documents consumption in KDoc.
+4. **Duplicated header size.** `Aead.HEADER_SIZE` now references `Envelope.HEADER_SIZE` (single source); `Envelope.readFrame` exposes the validated 8-byte header + blob, reused by `MessageCrypto.openEnvelope` (byte-identical).
+5. **Test coverage.** New JVM tests: KDF runs off the calling thread (injected tracking dispatcher), passphrase array wiped, `readFrame` header/blob; instrumented `two_chat_ids_do_not_collide`.
+
+## Code review: 2026-06-04 — passed
+
+Pass-2 fixes verified landed in 7346b46; all JVM gates (test + lint + ktlintCheck) green at merge. (`connectedAndroidTest` blocked by the device MIUI install gate — recorded as a product note, not a code-review finding.) Trail reconstructed during audit-2026-06-04.

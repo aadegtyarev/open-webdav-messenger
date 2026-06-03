@@ -97,4 +97,13 @@ approve
 <!-- orchestrator appends after code-review pass: -->
 ## Code review findings
 
-## Code review
+Trail reconstructed 2026-06-04 during audit-2026-06-04 from the feature-loop record (`.ai-pm/state/archive/webdav-transport-2026-06-03.md`); the Pass-2 code-review ran at feature time and the fixes landed in the merged commit (6c3a6e6), but this section was not stamped then. Findings fixed (all addressed before merge):
+
+1. **Resource-exhaustion hardening.** Tightened the response-handling path against resource exhaustion (bounded reads on the transport layer).
+2. **Dead code.** Removed the unreachable-code tail in `CallExecutor`.
+3. **Stale protocol constant.** Fixed the stale `order-token = … 30 chars` doc comment to the correct 29 (matching `OrderToken.LENGTH` and the corrected spec summary).
+4. **CI portability.** Build files made path-free (Gradle Java toolchain; no committed machine-specific `JAVA_HOME`).
+
+## Code review: 2026-06-04 — passed
+
+Pass-2 fixes verified landed in 6c3a6e6; all three pipeline commands (test + lint + ktlintCheck) green with no committed path. Trail reconstructed during audit-2026-06-04.

@@ -105,4 +105,11 @@ approve
 <!-- orchestrator appends after code-review pass: -->
 ## Code review findings
 
-## Code review
+Trail reconstructed 2026-06-04 during audit-2026-06-04 from the feature-loop record (`.ai-pm/state/archive/identity-2026-06-03.md`); the Pass-2 code-review ran at feature time and the fixes landed in the merged commit (062bdb8), but this section was not stamped then. Findings fixed (all addressed before merge):
+
+1. **Duplicated Keystore wrap/unwrap mechanics (durability + shared seam).** New `keystore/KeystoreWrapper(alias, file)` owns the wrap/unwrap mechanics (AES/GCM-256 Keystore key, `iv‖ct+tag`, atomic write, typed `UnwrapResult`). Both `ChatKeyStore` and `IdentityStore` were refactored onto it; per-store policy preserved (`ChatKeyStore` treats an unrecoverable key as absent since it is re-derivable; `IdentityStore` surfaces it as account loss).
+2. **Durability/concurrency hardening.** Atomic write fix and typed unwrap-result handling applied through the shared wrapper.
+
+## Code review: 2026-06-04 — passed
+
+Pass-2 fixes verified landed in 062bdb8; all four gates green at re-review, including `connectedDebugAndroidTest` on device (18/18, 0 failures). Trail reconstructed during audit-2026-06-04.
