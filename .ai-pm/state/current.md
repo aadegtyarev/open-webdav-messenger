@@ -8,67 +8,38 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-identity — asymmetric/identity substrate: per-user Ed25519+X25519 keypairs (Keystore-wrapped), X25519 DH→KDF→ChatKey (4th key source), sealed-box, Ed25519 sign/verify, safety-number fingerprint. Builds on crypto substrate. Backend-only.
+(none active)
 
 ## Status
 
-coding — Pass-2 review durability/concurrency fixes applied; ALL 4 gates GREEN (incl. connectedDebugAndroidTest on 5c3ff0: 18/18, 0 failures). Ready for re-review. NOT committed (instructed).
+idle
 
 ## Done
 
-- Plan approved, saved to docs/features/identity_plan.md
-- pm-stack-researcher extended stack-notes Crypto with public-key primitives (crypto_box / sealed-box / crypto_sign / conversion / fingerprint)
-- Product map updated (identity in Infrastructure bucket); branch feature/identity
-- pm-architect recorded decision #10 (two keypairs, DH→KDF→ChatKey, sealed-box rotation primitive w/ sender-unauth note, fingerprint), updated decision #9 follow-on (a)=IMPLEMENTED, added app/.../identity/ to module map
-- pm-coder: implemented identity/ substrate + extended crypto NativeCrypto/LazySodiumCrypto with public-key ops
-  - NativeCrypto + LazySodiumCrypto: added boxKeypair / signKeypair / boxBeforeNm / boxSeal / boxSealOpen / signDetached / signVerifyDetached / keyedHash (native-mode byte[] calls; BoxKeyPair / SignKeyPair value types)
-  - identity/Identity (two keypairs, redacted, serialize/deserialize 160B), PublicIdentity (signPub+boxPub), SealedResult (Opened/Rejected typed), IdentityCrypto (generateIdentity / agreeChatKey DH→KDF→ChatKey / seal / openSealed / sign / verify / fingerprint), IdentityStore (Keystore-wrapped, distinct alias owdm.identity.wrap.v1 + distinct dir, generate-once guard), IdentityFactory (Android entry point)
-  - JVM tests (lazysodium-java): IdentityCryptoTest (generation/DH/AEAD-roundtrip/sealed/sign/verify/fingerprint + interaction), IdentityStackSpecTest (chatkey-is-kdf-not-raw / box-nonce-24-and-fresh / ed25519-verify-rejects / sign-dh-keys-independent via convert / serialize-roundtrip)
-  - Instrumented tests written (NOT yet run on device — see Remaining): IdentityInstrumentedTest (native_pubkey_paths_load / dh_and_seal_native_roundtrip / fingerprint_symmetric / verify_rejects_tamper), IdentityStoreInstrumentedTest (identity_keystore_wrap_unwrap / identity_persists_across_load / identity_store_does_not_disturb_chat_keys)
-- Gates green: ./gradlew test ✓, ./gradlew ktlintCheck ✓, ./gradlew lint ✓
-- pm-coder Pass-2 review fixes (durability/concurrency/error-handling in IdentityStore — silent identity-loss class):
-  - FIX1 cross-process generate-once: loadOrCreate now takes a cross-process FileLock (RandomAccessFile.channel.lock() on identity/identity.lock) + double-checks load() under the lock before generating; in-process synchronized(generateOnceLock) kept as the fast path. A WorkManager/foreground process in a separate android:process can no longer generate a second identity.
-  - FIX2 atomic write: store() now writes via temp file in the same dir → flush+fd.sync() → renameTo (atomic same-fs swap). A crash mid-write leaves the old intact file or the new one, never a partial/zero-length blob.
-  - FIX3 typed load: load() returns IdentityLoadResult { None | Loaded | Unrecoverable }. cipher.doFinal / Keystore-invalidation exceptions (AEADBadTagException / KeyPermanentlyInvalidatedException) are caught in KeystoreWrapper.unwrap and mapped to Unrecoverable — never escape, never crash on startup. loadOrCreate generates ONLY on None; on Unrecoverable it throws IdentityUnrecoverableException (surfaced to caller) and NEVER silently regenerates (= no silent account loss).
-  - FIX4 keygen zeroize: IdentityCrypto.generateIdentity wipes the signKeypair()/boxKeypair() source arrays (sk + pk) after Identity defensively copies them.
-  - CLEANUP5 shared seam: new keystore/KeystoreWrapper(alias, file) owns wrap/unwrap mechanics (AES/GCM-256 Keystore key, iv‖ct+tag, atomic write fix2, typed UnwrapResult fix3). BOTH ChatKeyStore and IdentityStore refactored onto it. Policy stays per-store: ChatKeyStore treats Unrecoverable as absent (chat key re-derivable); IdentityStore surfaces it (account loss). compareLex left as-is (CLEANUP6).
-  - Tests: JVM IdentityCryptoTest.generate_identity_zeroizes_keygen_source_arrays (CapturingKeypairNative decorator). Instrumented IdentityStoreInstrumentedTest +4: atomic_write_partial_blob_surfaces_unrecoverable, corrupt_blob_load_returns_unrecoverable_not_none, atomic_write_no_partial_after_store, concurrent_load_or_create_yields_one_identity. identity_store_does_not_disturb_chat_keys still green after the refactor.
-- ALL 4 gates GREEN: test ✓ / ktlintCheck ✓ / lint ✓ / connectedDebugAndroidTest on 5c3ff0 ✓ (18 tests, 0 failures, 0 errors — MIUI install gate was open this run).
+- identity feature complete: plan → architect (decision #10) → coder → plan-checker (approve) → code-review Pass 2 (core clean; 5 IdentityStore durability findings fixed) → all gates green (JVM + connectedAndroidTest 18/18 on device 5c3ff0). Committed + merged to main (062bdb8). Archived.
 
 ## Remaining
 
-- pm-plan-checker / code-review re-review of the Pass-2 fixes → commit → merge (pm-coder did NOT commit, per instruction).
+- Next feature — PM's choice. Recommended next: sync / message-model (message format + sync; reworks the retention model + decision #2 per the corrected "shared chat log + per-user index + retention window" design). See .ai-pm/backlog.md roadmap.
 
 ## Touched files
 
-- app/.../crypto/NativeCrypto.kt (extended: public-key ops + BoxKeyPair/SignKeyPair)
-- app/.../crypto/LazySodiumCrypto.kt (extended: public-key impls)
-- app/.../identity/Identity.kt (new)
-- app/.../identity/PublicIdentity.kt (new)
-- app/.../identity/SealedResult.kt (new)
-- app/.../identity/IdentityCrypto.kt (new)
-- app/.../identity/IdentityStore.kt (Pass-2: refactored onto KeystoreWrapper; typed load; cross-process FileLock generate-once; atomic write via wrapper)
-- app/.../identity/IdentityLoadResult.kt (new, Pass-2: None/Loaded/Unrecoverable + IdentityUnrecoverableException)
-- app/.../identity/IdentityFactory.kt (new)
-- app/.../keystore/KeystoreWrapper.kt (new, Pass-2: shared wrap/unwrap mechanics + atomic write + UnwrapResult)
-- app/.../keystore/ChatKeyStore.kt (Pass-2: refactored onto KeystoreWrapper; Unrecoverable→null policy)
-- app/src/test/.../identity/IdentityTestSupport.kt (new)
-- app/src/test/.../identity/IdentityCryptoTest.kt (new)
-- app/src/test/.../identity/IdentityStackSpecTest.kt (new)
-- app/src/androidTest/.../identity/IdentityInstrumentedTest.kt (new)
-- app/src/androidTest/.../identity/IdentityStoreInstrumentedTest.kt (new)
+(committed/merged)
 
 ## Next step
 
-pm-plan-checker / code-review re-review of the Pass-2 durability/concurrency fixes, then commit + merge.
+Wait for PM to describe the next feature.
 
 ## Validation
 
-ALL 4 gates GREEN. JVM: ./gradlew test (lazysodium-java) — GREEN (incl. keygen-zeroize test). Device: ./gradlew connectedDebugAndroidTest on 5c3ff0 — GREEN, 18 tests / 0 failures / 0 errors (atomic-write, corrupt-blob-unrecoverable, concurrent-create, no-disturb-chat-keys all pass). Plus lint/ktlintCheck — GREEN.
+identity: all four gates green, verified (JVM independent run + connectedAndroidTest 18/18 on 5c3ff0).
 
 ## Notes
 
-Key decisions: two distinct keypairs (Ed25519 sign + X25519 box) per libsodium recommendation, fingerprint over BOTH pubkeys (user verifies one); DH shared secret always via KDF (keyed BLAKE2b, never raw to AEAD); fingerprint display format = UI feature; rotation feature MUST Ed25519-sign sealed payloads (sealed-box is sender-unauthenticated). Implementation uses Box.Native/Sign.Native/GenericHash.Native byte[] calls (NOT the String-based *Easy Lazy methods, which would corrupt binary bytes via charset conversion) — so native names are cryptoBoxSeal/cryptoBoxSealOpen, the stack-notes Easy-naming gotcha applies only to the Lazy API. IdentityStore reuses ChatKeyStore's Keystore AES/GCM discipline under a distinct alias (owdm.identity.wrap.v1) + distinct dir (identity/) — proven non-disturbing of chat keys by instrumented test. Device 5c3ff0 (MIUI) re-gates "Install via USB" — needs toggle + on-screen confirm during connectedAndroidTest.
+No git remote — local squash-merges. Device 5c3ff0 (MIUI) intermittently re-gates "Install via USB".
+Roadmap (.ai-pm/backlog.md): sync/message-model → directory → invite/onboarding → rotation → community → compression → UI; later TG gateway, forward secrecy, retention/TTL, Nextcloud Topology B.
+CORRECTED retention model (supersedes "transient buffer"): disk = bounded retention window (shared encrypted per-chat log + per-user change index), full history local; to be designed in sync/message-model (architect reworks webdav-layout + decision #2).
+Done substrates: webdav-transport, crypto (symmetric), identity (asymmetric). 3 open arch decisions: polling cadence/foreground-service; CI emulator (mooted locally); + retention rework pending.
 
 ---
 
