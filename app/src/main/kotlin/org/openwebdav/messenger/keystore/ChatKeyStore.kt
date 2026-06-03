@@ -1,26 +1,22 @@
 package org.openwebdav.messenger.keystore
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.protocol.Base32
 import java.io.File
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 /**
  * Device-local, Keystore-wrapped storage of per-chat [ChatKey]s
  * (`docs/architecture.md` decision 9 / Security constraints; `docs/stack-notes.md` → Android Keystore).
  *
- * The raw key is wrapped with a **non-exportable AES/GCM key generated in the Android Keystore**
- * (`KeyGenParameterSpec`, `androidx.security:security-crypto` is deprecated — not used) and only the
- * wrapped blob (`iv(12) ‖ ciphertext+tag`) is written to app-private internal storage. The raw key,
- * the passphrase, and the wrapping key **never** reach the WebDAV disk and are never logged.
+ * The wrap/unwrap **mechanics** (Keystore AES/GCM key, `iv ‖ ct+tag` format, atomic write, typed unwrap)
+ * live in the shared [KeystoreWrapper]; this store keeps only the per-chat **policy** and file naming.
+ * The raw key, the passphrase, and the wrapping key **never** reach the WebDAV disk and are never logged.
+ *
+ * **Policy:** a chat key is re-derivable (passphrase) / re-agreeable, so an unrecoverable wrapped blob is
+ * treated as **absent** ([load] returns `null`) — distinct from `IdentityStore`, which must surface an
+ * unrecoverable identity (account loss) and never regenerate.
  *
  * Android-only — exercised by `connectedAndroidTest` (Keystore is device-backed; cannot run on the JVM).
  */
@@ -30,7 +26,7 @@ class ChatKeyStore(
 ) {
     /**
      * Wrap [chatKey] under the Keystore key and persist the wrapped blob for [chatId]. Overwrites any
-     * existing stored key for that chat. The raw key bytes are zeroized after wrapping.
+     * existing stored key for that chat (atomic write). The raw key bytes are zeroized after wrapping.
      */
     fun store(
         chatId: String,
@@ -38,50 +34,44 @@ class ChatKeyStore(
     ) {
         val raw = chatKey.copyBytes()
         try {
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, wrappingKey())
-            val iv = cipher.iv
-            val wrapped = cipher.doFinal(raw)
-            val blob = ByteArray(iv.size + wrapped.size)
-            iv.copyInto(blob, 0)
-            wrapped.copyInto(blob, iv.size)
-            keyFile(chatId).writeBytes(blob)
+            wrapper(chatId).wrap(raw)
         } finally {
             raw.fill(0)
         }
     }
 
     /**
-     * Load and unwrap the stored key for [chatId], or `null` if none is stored. The returned [ChatKey]
+     * Load and unwrap the stored key for [chatId], or `null` if none is stored **or** the stored blob is
+     * unrecoverable (corrupt / Keystore key invalidated). A chat key is re-derivable, so an unrecoverable
+     * blob is treated as absent here — the policy difference from `IdentityStore`. The returned [ChatKey]
      * holds the raw bytes only in memory; the on-disk blob stays wrapped.
      */
-    fun load(chatId: String): ChatKey? {
-        val file = keyFile(chatId)
-        if (!file.exists()) return null
-        val blob = file.readBytes()
-        if (blob.size <= IV_BYTES) return null
-        val iv = blob.copyOfRange(0, IV_BYTES)
-        val wrapped = blob.copyOfRange(IV_BYTES, blob.size)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, wrappingKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-        val raw = cipher.doFinal(wrapped)
-        try {
-            return ChatKey.fromBytes(raw)
-        } finally {
-            raw.fill(0)
+    fun load(chatId: String): ChatKey? =
+        when (val result = wrapper(chatId).unwrap()) {
+            is UnwrapResult.None -> null
+            is UnwrapResult.Unrecoverable -> null // re-derivable: treat as absent (policy)
+            is UnwrapResult.Unwrapped -> {
+                val raw = result.plaintext
+                try {
+                    ChatKey.fromBytes(raw)
+                } finally {
+                    raw.fill(0)
+                }
+            }
         }
-    }
 
     /** Whether a wrapped key is stored for [chatId]. */
-    fun has(chatId: String): Boolean = keyFile(chatId).exists()
+    fun has(chatId: String): Boolean = wrapper(chatId).exists()
 
     /** Delete the stored wrapped key for [chatId] (e.g. on leaving a chat). */
     fun remove(chatId: String) {
-        keyFile(chatId).delete()
+        wrapper(chatId).delete()
     }
 
     /** The raw wrapped-on-disk bytes for [chatId] — for tests asserting the raw key is NOT in plaintext. */
-    internal fun rawStoredBlob(chatId: String): ByteArray? = keyFile(chatId).takeIf { it.exists() }?.readBytes()
+    internal fun rawStoredBlob(chatId: String): ByteArray? = wrapper(chatId).rawBlob()
+
+    private fun wrapper(chatId: String): KeystoreWrapper = KeystoreWrapper(WRAP_KEY_ALIAS, keyFile(chatId))
 
     private fun keyFile(chatId: String): File {
         val dir = File(context.filesDir, KEY_DIR).apply { mkdirs() }
@@ -95,31 +85,9 @@ class ChatKeyStore(
         return File(dir, "k_$token.bin")
     }
 
-    private fun wrappingKey(): SecretKey {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (keyStore.getKey(WRAP_KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        val spec =
-            KeyGenParameterSpec.Builder(
-                WRAP_KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(WRAP_KEY_BITS)
-                .build()
-        generator.init(spec)
-        return generator.generateKey()
-    }
-
     companion object {
-        private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val WRAP_KEY_ALIAS = "owdm.chatkey.wrap.v1"
         private const val KEY_DIR = "chatkeys"
-        private const val TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val WRAP_KEY_BITS = 256
-        private const val IV_BYTES = 12
-        private const val GCM_TAG_BITS = 128
 
         /**
          * BLAKE2b digest length for the filename token. 16 bytes = 128 bits is far beyond collision

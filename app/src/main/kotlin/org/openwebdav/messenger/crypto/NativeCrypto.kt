@@ -60,4 +60,95 @@ interface NativeCrypto {
 
     /** CSPRNG bytes (`randombytes_buf`) — used for the random key source and the per-seal nonce. */
     fun randomBytes(count: Int): ByteArray
+
+    // ---- Public-key primitives (X25519 identity substrate, decision 10) -----------------------
+    // The same lazysodium base type backs these as the AEAD calls above, so the identity logic runs
+    // on lazysodium-java (JVM tests) and lazysodium-android (app) unchanged. All operate on raw
+    // bytes via the `Box.Native` / `Sign.Native` / `GenericHash.Native` mode — NOT the String-based
+    // `*Easy` Lazy methods, which would corrupt binary key/ciphertext bytes through charset
+    // conversion. (The stack-notes `cryptoBoxSealEasy` naming gotcha is about that Lazy API; the
+    // native-mode names below are `cryptoBoxSeal` / `cryptoBoxSealOpen`.)
+
+    /**
+     * Generate an X25519 box keypair (`crypto_box_keypair`). Returns `pk(32) ‖ sk(32)` as a
+     * [BoxKeyPair]. Source: https://doc.libsodium.org/public-key_cryptography/authenticated_encryption
+     */
+    fun boxKeypair(): BoxKeyPair
+
+    /**
+     * Generate an Ed25519 signing keypair (`crypto_sign_keypair`). Returns `pk(32) ‖ sk(64)` as a
+     * [SignKeyPair] — the 64-byte sk embeds the seed and the public key.
+     * Source: https://doc.libsodium.org/public-key_cryptography/public-key_signatures
+     */
+    fun signKeypair(): SignKeyPair
+
+    /**
+     * X25519 precomputed shared secret (`crypto_box_beforenm`) for [peerBoxPk] (32) and [myBoxSk]
+     * (32). Returns the 32-byte DH output. This is a DH output, NOT an AEAD key — callers MUST run
+     * it through a KDF before use (see [genericHash] / `identity/Kdf`). Symmetric: beforenm(B.pk, A.sk)
+     * == beforenm(A.pk, B.sk). Source: https://doc.libsodium.org/public-key_cryptography/authenticated_encryption
+     */
+    fun boxBeforeNm(
+        peerBoxPk: ByteArray,
+        myBoxSk: ByteArray,
+    ): ByteArray
+
+    /**
+     * Anonymous sealed box (`crypto_box_seal`) — encrypt [plaintext] to [recipientBoxPk] (32) with an
+     * ephemeral internal sender keypair. Overhead is `crypto_box_SEALBYTES` = 48. Sender-unauthenticated
+     * by design. Source: https://doc.libsodium.org/public-key_cryptography/sealed_boxes
+     */
+    fun boxSeal(
+        plaintext: ByteArray,
+        recipientBoxPk: ByteArray,
+    ): ByteArray
+
+    /**
+     * Open a sealed box (`crypto_box_seal_open`) with the recipient's keypair. Returns the plaintext,
+     * or `null` if [sealed] does not open under ([myBoxPk], [myBoxSk]) (wrong recipient / tampered) —
+     * the typed-rejection path, never an exception.
+     */
+    fun boxSealOpen(
+        sealed: ByteArray,
+        myBoxPk: ByteArray,
+        myBoxSk: ByteArray,
+    ): ByteArray?
+
+    /**
+     * Ed25519 detached signature (`crypto_sign_detached`) of [message] under [signSk] (64). Returns the
+     * 64-byte signature. Source: https://doc.libsodium.org/public-key_cryptography/public-key_signatures
+     */
+    fun signDetached(
+        message: ByteArray,
+        signSk: ByteArray,
+    ): ByteArray
+
+    /**
+     * Verify an Ed25519 detached [signature] (64) over [message] against [signPk] (32)
+     * (`crypto_sign_verify_detached`). Returns `true` only on libsodium success (0); `false` on any
+     * failure (the `-1` hard reject) — never best-effort.
+     * Source: https://doc.libsodium.org/public-key_cryptography/public-key_signatures
+     */
+    fun signVerifyDetached(
+        signature: ByteArray,
+        message: ByteArray,
+        signPk: ByteArray,
+    ): Boolean
+
+    /**
+     * Keyed BLAKE2b (`crypto_generichash` with a key) — [outLen] bytes of `BLAKE2b(input, key)`. Used by
+     * the DH→KDF→ChatKey derivation so the shared secret is keyed/domain-separated, never fed raw to the
+     * AEAD. Source: https://doc.libsodium.org/hashing/generic_hashing
+     */
+    fun keyedHash(
+        input: ByteArray,
+        key: ByteArray,
+        outLen: Int,
+    ): ByteArray
 }
+
+/** An X25519 box keypair: [publicKey] (32) and [secretKey] (32). Raw bytes — in-memory only. */
+class BoxKeyPair(val publicKey: ByteArray, val secretKey: ByteArray)
+
+/** An Ed25519 signing keypair: [publicKey] (32) and [secretKey] (64). Raw bytes — in-memory only. */
+class SignKeyPair(val publicKey: ByteArray, val secretKey: ByteArray)
