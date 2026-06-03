@@ -16,31 +16,29 @@ idle
 
 ## Done
 
-- webdav-transport feature complete: plan → spec → code → plan-checker (approve) → code-review (Pass 2, 12 findings fixed) → committed dff0d2f on branch feature/webdav-transport. Archived to archive/webdav-transport-2026-06-03.md.
+- crypto feature complete: plan → architect (§5.1 + chat taxonomy + decision #9) → coder → plan-checker (approve) → code-review Pass 2 (5 findings fixed) → all gates green (JVM test/lint/ktlint + connectedAndroidTest 7/7 on device 5c3ff0). Committed + merged to main. Archived to archive/crypto-2026-06-03.md.
 
 ## Remaining
 
-- PM decision: merge feature/webdav-transport into main (no git remote — local only).
-- Manual smoke vs a real Yandex.Disk account (needs PM app-password).
-- Next feature (suggested: crypto — AEAD + Argon2id, fills the envelope ciphertext slot).
+- Next feature — PM's choice. Candidates: message-model (plaintext envelope fields inside the ciphertext), X25519 (remote private chats), UI (Compose chat surface), or invite/onboarding. See .ai-pm/backlog.md.
 
 ## Touched files
 
-(committed in dff0d2f)
+(committed/merged)
 
 ## Next step
 
-Wait for PM: merge to main and/or describe the next feature.
+Wait for PM to describe the next feature.
 
 ## Validation
 
-Pipeline green (test/lint/ktlintCheck) on feature/webdav-transport, verified independently.
+crypto: all four gates green, verified independently (connectedAndroidTest 7/7 on 5c3ff0).
 
 ## Notes
 
-No git remote configured — pr-prep/GitHub PR not applicable; merge happens locally if PM wants it.
-Open product note: TLS is enforced — a non-loopback `http://` WebDAV URL is rejected (CleartextRejected); a self-hosted WebDAV server must be reachable over https.
-Three open architecture decisions still pending (polling cadence / foreground-service, CI emulator). ktlint+Lint resolved. Codec-id reject-don't-guess gap (plan-checker note) is now closed in Envelope.read.
+No git remote — merges are local squash-merges. Device 5c3ff0 (MIUI) re-gates "Install via USB" intermittently; needs the toggle on + a device-side confirm tap during connectedAndroidTest.
+Two open architecture decisions remain (polling cadence / foreground-service; CI emulator — partially mooted since a real device works locally).
+Backlog (.ai-pm/backlog.md) holds: X25519, directory (encrypted w/ community key), invite/onboarding (two-layer: community vs chat membership; re-key vs password-rotation removal), message-model, compression, UI, forward secrecy.
 
 ---
 

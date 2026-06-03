@@ -117,6 +117,22 @@ class ProtocolPrimitivesTest {
         assertNull(Envelope.read(unknownCodec))
     }
 
+    // §5/§5.1: readFrame exposes the validated 8-byte header (the AEAD AAD) alongside the blob, so the
+    // crypto layer reuses it instead of re-slicing the header independently. read() == readFrame().blob.
+    @Test
+    fun envelope_read_frame_exposes_validated_header_and_blob() {
+        val blob = byteArrayOf(9, 8, 7, 6)
+        val framed = Envelope.write(blob)
+        val frame = Envelope.readFrame(framed)!!
+        // The frame header is exactly the first 8 bytes; the blob is everything after.
+        assertTrue(framed.copyOfRange(0, Envelope.HEADER_SIZE).contentEquals(frame.header))
+        assertTrue(blob.contentEquals(frame.blob))
+        // read() is the blob-only view over the same parse.
+        assertTrue(Envelope.read(framed)!!.contentEquals(frame.blob))
+        // A not-understood frame returns null from readFrame too.
+        assertNull(Envelope.readFrame(byteArrayOf(0, 0, 0, 0, 1, 0, 0, 0)))
+    }
+
     // §2: splitMessageId rejects names that are not well-formed message-ids.
     @Test
     fun split_message_id_rejects_malformed_names() {

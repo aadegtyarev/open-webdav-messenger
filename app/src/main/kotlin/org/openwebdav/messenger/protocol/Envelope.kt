@@ -37,26 +37,47 @@ internal object Envelope {
     const val HEADER_SIZE = 8
 
     /**
+     * §5/§5.1: build the 8-byte envelope header for [codecId] (`magic ‖ version ‖ codec-id ‖
+     * flags=0x00 ‖ reserved=0x00`). The crypto feature builds this **first** and binds it as AEAD
+     * AAD before sealing, so tampering with any header byte breaks the Poly1305 tag (§5.1). The
+     * final envelope file = these 8 bytes ‖ the ciphertext-blob (see [write]).
+     */
+    fun header(codecId: Byte = CODEC_NONE): ByteArray {
+        require(codecId in DEFINED_CODECS) { "codec-id must be one of the defined codecs" }
+        val out = ByteArray(HEADER_SIZE)
+        MAGIC.copyInto(out, 0)
+        out[4] = ENVELOPE_VERSION
+        out[5] = codecId
+        out[6] = 0x00
+        out[7] = 0x00
+        return out
+    }
+
+    /**
      * §5: wrap an opaque [blob] in the 8-byte header with `codec-id = none`,
      * `flags = 0x00`, `reserved = 0x00`. The returned bytes are exactly what is `PUT`.
      */
     fun write(blob: ByteArray): ByteArray {
+        val header = header(CODEC_NONE)
         val out = ByteArray(HEADER_SIZE + blob.size)
-        MAGIC.copyInto(out, 0)
-        out[4] = ENVELOPE_VERSION
-        out[5] = CODEC_NONE
-        out[6] = 0x00
-        out[7] = 0x00
+        header.copyInto(out, 0)
         blob.copyInto(out, HEADER_SIZE)
         return out
     }
 
     /**
-     * §5/§7: parse [fileBytes]. Returns the opaque blob on success, or `null` when the
-     * frame is not understood (bad magic, unknown envelope-version, truncated) — the
-     * "reject, don't guess" rule (§7). The caller treats `null` as not-a-message / not-ready.
+     * §5/§7: a successfully-parsed frame — the validated 8-byte [header] (exactly the bytes bound as
+     * AEAD AAD, §5.1) and the opaque [blob] (offset 8 onward). Both are slices of the original file
+     * bytes; the crypto layer reuses [header] as AAD instead of re-slicing the header independently.
      */
-    fun read(fileBytes: ByteArray): ByteArray? {
+    class Frame(val header: ByteArray, val blob: ByteArray)
+
+    /**
+     * §5/§7: parse [fileBytes] into a [Frame], or `null` when the frame is not understood
+     * (bad magic, unknown envelope-version, unknown codec-id, truncated) — the "reject, don't guess"
+     * rule (§7). The single point that validates and exposes the header; [read] is the blob-only view.
+     */
+    fun readFrame(fileBytes: ByteArray): Frame? {
         if (fileBytes.size < HEADER_SIZE) return null
         for (i in MAGIC.indices) {
             if (fileBytes[i] != MAGIC[i]) return null
@@ -68,6 +89,16 @@ internal object Envelope {
         if (fileBytes[5] !in DEFINED_CODECS) return null
         // flags/reserved (bytes 6-7) are not asserted here so a future minor revision can set
         // reserved bits without breaking this reader of the blob slot.
-        return fileBytes.copyOfRange(HEADER_SIZE, fileBytes.size)
+        return Frame(
+            header = fileBytes.copyOfRange(0, HEADER_SIZE),
+            blob = fileBytes.copyOfRange(HEADER_SIZE, fileBytes.size),
+        )
     }
+
+    /**
+     * §5/§7: parse [fileBytes]. Returns the opaque blob on success, or `null` when the
+     * frame is not understood (bad magic, unknown envelope-version, truncated) — the
+     * "reject, don't guess" rule (§7). The caller treats `null` as not-a-message / not-ready.
+     */
+    fun read(fileBytes: ByteArray): ByteArray? = readFrame(fileBytes)?.blob
 }

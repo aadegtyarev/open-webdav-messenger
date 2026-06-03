@@ -7,7 +7,7 @@
 > **Trust model recap (decision 2, Topology A):** all members of a chat share **one** WebDAV credential (one app-password) scoped to one folder. To the provider they are the same disk identity. Every member can **read AND delete every file** in the shared space. Nothing below is an access-control boundary — the inbox split is a *read-efficiency* layout only.
 
 **Protocol version:** `1` (see [§7 Versioning](#7-versioning)).
-**Status:** transport slots fixed; crypto + compression slots reserved (marked `filled by <feature>`).
+**Status:** transport slots fixed; crypto slot fixed (filled by the crypto feature); compression slot reserved (marked `filled by <feature>`).
 
 ---
 
@@ -65,7 +65,7 @@ One chat == one shared chat-root folder, reachable by one credential (decision 2
 
 Named **now** so the layout is stable, but **populated by a later feature** (roster/chat-management). The transport does not write these in this feature; it only ensures the folder exists.
 
-- **`meta/chat.json`** — chat descriptor: `{ "protocol": 1, "chat-id": "<id>", "chat-type": "private" | "public" }`. The `chat-type` enum is closed at the two values fixed in `docs/architecture.md` → Behavioral contract (adding a value is an architectural decision).
+- **`meta/chat.json`** — chat descriptor: `{ "protocol": 1, "chat-id": "<id>", "kind": "dm" | "group", "access": "public" | "private" }`. The chat taxonomy (the `kind` and `access` axes, and the optional password on private chats) is the **two-axis model** fixed in `docs/architecture.md` → Behavioral contract → *Chat taxonomy* (changing it is an architectural decision). This spec only reserves the path and JSON shape; the exact `chat.json` field names/shape are pinned by the later roster/chat-management feature against that taxonomy — keep this a **forward pointer**, do not restate the taxonomy here.
 - **`meta/roster.json`** — member list: the recipient-identifiers a sender fans out to. Until a later feature writes this, membership is supplied out-of-band alongside the passphrase (decision 2).
 
 > `meta/` carries **no secret** material (no passphrase, no key — Security constraints). Whether the roster itself is encrypted is the roster feature's call; this spec only reserves the path and the JSON shape.
@@ -136,7 +136,7 @@ Every reader computes the same order from the file names alone — no clock, no 
 
 ## 5. Message envelope framing
 
-The file content **is** (will be) the AEAD ciphertext wrapped in a small, versioned binary frame. **For the transport feature the whole post-header blob is opaque bytes** (no crypto/compression wired). The frame is defined in full now so crypto and compression implement it without changing the on-disk format.
+The file content **is** the AEAD ciphertext wrapped in a small, versioned binary frame. The transport feature wrote/read the whole post-header blob as opaque bytes; the **crypto feature** (`docs/features/crypto_plan.md`) now pins the internal structure of that blob (nonce + AEAD ciphertext + tag) and the AAD binding. The frame is defined in full so crypto and compression implement it without changing the on-disk format.
 
 **Serialization choice: a compact fixed binary header + binary body** (not JSON). Justification for a slow, rate-limited WebDAV transport: every byte is a round-trip cost and 429 pressure (decision 3); a JSON header would add quoting, field names, and Base64 of the binary body (~33% inflation). A fixed binary header is the smallest self-describing framing. The roster/chat descriptor files (§1.3) stay JSON because they are human-managed config, not per-message hot path.
 
@@ -153,13 +153,31 @@ offset  size  field            value / meaning
                                  [other values reserved — unknown codec = error path, §7]
 6       1     flags            bit0..7 reserved, MUST be 0x00 in protocol v1
 7       1     reserved         MUST be 0x00 (alignment / future use)
-8       N     ciphertext-blob  opaque AEAD ciphertext (incl. nonce + auth tag)  [filled by crypto feature]
+8       N     ciphertext-blob  AEAD blob: nonce(24) ‖ AEAD-ciphertext-with-tag  [filled by crypto feature]
 ```
+
+The 8 bytes at offsets 0–7 are the **envelope header**; the bytes at offset 8 onward are the **ciphertext-blob** (§5.1).
 
 - **Header size:** fixed **8 bytes**. `N` = (file length − 8) = the ciphertext blob length, derived from `d:getcontentlength` / the `GET` body length; no length field is stored (the file boundary is the length).
 - **`magic` + `envelope-version`** let a reader reject a non-envelope or future-frame file before touching the blob.
-- **`codec-id` — the compression slot (filled by the compression feature).** Records which codec compressed the plaintext **before** encryption (compress-then-encrypt, decision 4 / stack-notes Traffic compression). The reader inflates per this field *after* AEAD-open. For the transport feature the writer sets `codec-id = 0x00 (none)` because no compression is wired; the field's presence is what lets the compression feature turn it on without a format change. Unknown `codec-id` on read → **error path, not a guess** (skip/reject the message).
-- **`ciphertext-blob` — the crypto slot (filled by the crypto feature).** In this transport feature the transport writes whatever opaque `ByteArray` it is handed and reads it back; it assigns **no** meaning to these bytes. The crypto feature defines: nonce placement, AEAD construction (XChaCha20-Poly1305, decision 1), and — importantly — that the 8-byte header (`magic`..`reserved`) is bound as **AEAD associated data (AAD)** so `codec-id`/`flags` cannot be tampered without breaking the tag. *(Reserved decision for the crypto feature; recorded here so the framing accounts for it.)*
+- **`codec-id` — the compression slot (filled by the compression feature).** Records which codec compressed the plaintext **before** encryption (compress-then-encrypt, decision 4 / stack-notes Traffic compression). The reader inflates per this field *after* AEAD-open. **For the crypto feature `codec-id` stays `0x00 (none)`** — no compression is wired by crypto; the field's presence is what lets the compression feature turn it on without a format change. Unknown `codec-id` on read → **error path, not a guess** (skip/reject the message). Because the header is AEAD AAD (§5.1), `codec-id` is also tamper-evident.
+
+### 5.1 Ciphertext-blob layout (filled by the crypto feature)
+
+The bytes at offset 8 onward are the **ciphertext-blob**. The crypto feature (`docs/features/crypto_plan.md`, architecture decision 1 = libsodium-only) pins these now-fixed values:
+
+```
+ciphertext-blob = nonce(24 bytes) ‖ AEAD-ciphertext-with-tag
+                  └─ 24-byte random nonce ─┘└─ ciphertext + 16-byte Poly1305 tag ─┘
+```
+
+- **AEAD = XChaCha20-Poly1305** (libsodium), via the combined-mode call `crypto_aead_xchacha20poly1305_ietf_encrypt` / `..._decrypt`. The Poly1305 authentication **tag is appended to the ciphertext by libsodium's combined mode** (16 bytes) — it is *not* a separate frame field; it lives at the tail of the AEAD-ciphertext portion of the blob.
+- **Nonce = 24 bytes (192-bit), freshly random per seal,** placed at the **start** of the blob. XChaCha20-Poly1305's 192-bit nonce is large enough that a CSPRNG-random nonce is **safe to pick at random** (no counter/state needed; collision probability is negligible). A fresh random nonce per seal also makes two seals of identical plaintext produce different bytes, upholding the content-addressing invariant (§2).
+- **AAD = the 8-byte envelope header.** The full 8 bytes at offsets 0–7 (`magic` ‖ `envelope-version` ‖ `codec-id` ‖ `flags` ‖ `reserved`) are bound as AEAD **associated data**. They are authenticated but **not** encrypted (a reader needs `magic`/version/`codec-id` *before* decrypting). Consequently `codec-id`, `flags`, `envelope-version` (and the rest of the header) **cannot be tampered without breaking the Poly1305 tag** → `open` returns a typed rejection.
+- **Open / reject discipline:** `open` recomputes the tag over (nonce, header-as-AAD, ciphertext) and returns the exact original plaintext on success, or a **typed rejection** on any auth failure (wrong key, tampered header, tampered ciphertext/tag). It never crashes and never returns silently-wrong plaintext.
+- **Truncated-blob guard:** a ciphertext-blob shorter than `nonce(24) + tag(16) = 40` bytes cannot be a valid sealed message. The reader treats it as a **reject / NotReady path** (skip this cycle, retry — consistent with §3 incomplete-write tolerance), **not** an index/bounds error. (For an empty plaintext the minimum valid blob is exactly 40 bytes: 24-byte nonce + 16-byte tag + 0-byte ciphertext.)
+- **Key source is out of frame.** Which of the three key sources (known / random / passphrase — `docs/architecture.md` → decision "Crypto substrate") produced the AEAD key is **not** encoded in the blob or header; it is determined by the chat's configuration (the chat taxonomy, architecture → Behavioral contract). The blob layout is identical for all three.
+
 - **Plaintext envelope fields** (message-id echo, chat-id, chat-type, sender, reply-to, reaction, body, ordering data) live **inside** the encrypted plaintext, not in this outer frame, and are specified by the crypto/message-model features against `docs/architecture.md` → *Message envelope (conceptual fields)*. The outer frame here carries only what a reader needs **before** decryption: magic, versions, codec-id.
 - **Decompression bound (zip-bomb guard):** when the compression feature wires `codec-id = deflate`, the reader MUST bound the inflated size; exceeding the bound is an error path (architecture → Decompression bound). The numeric bound is fixed by the compression feature, not here.
 
@@ -192,15 +210,16 @@ Two independent version fields, so path layout and byte framing can evolve separ
 **Unknown-version handling (error path, never a guess):**
 
 - A reader that encounters a `meta/chat.json` with a **`protocol`** value it does not implement MUST refuse to operate on that chat-root (surface "unsupported protocol version"), rather than guessing the layout. (For the transport feature, where `meta/chat.json` may be absent because no feature writes it yet, the transport assumes `protocol = 1`.)
-- A reader that reads a message file whose **`magic`** ≠ `"OWDM"` or whose **`envelope-version`** it does not implement MUST skip/reject that file as not-understood — it MUST NOT attempt to parse the blob. Same rule for an unknown **`codec-id`** (§5).
+- A reader that reads a message file whose **`magic`** ≠ `"OWDM"` or whose **`envelope-version`** it does not implement MUST skip/reject that file as not-understood — it MUST NOT attempt to parse the blob. Same rule for an unknown **`codec-id`** (§5). A blob too short to hold `nonce(24) + tag(16)` is likewise rejected (§5.1) — as not-ready/reject, not a bounds error.
 - This "reject, don't guess" rule is what lets a future version add fields or change framing without a newer writer silently corrupting an older reader's view.
 
 ---
 
 ## Cross-references
 
-- `docs/architecture.md` → decision 2 (Disk topology / Topology A), decision 3 (Aggregated sync), decision 4 (Compression codec), and *Behavioral contract* (chat-type enum, message-id/inbox/ordering/codec invariants — this file is their authoritative source).
+- `docs/architecture.md` → decision 2 (Disk topology / Topology A), decision 3 (Aggregated sync), decision 4 (Compression codec), decision "Crypto substrate" (AEAD/key sources that fill §5.1), and *Behavioral contract* (chat taxonomy, message-id/inbox/ordering/codec invariants — this file is their authoritative source for the byte/path layout).
 - `docs/stack-notes.md` → *OkHttp + WebDAV layer* (verbs, Depth, ETag/If-Match, 429), *Traffic compression* (compress-then-encrypt, codec-id), *Crypto library* (AEAD that fills the ciphertext-blob slot).
 - `docs/features/webdav-transport_plan.md` — the feature that implements §1, §2, §3 (append-only), §6.
+- `docs/features/crypto_plan.md` — the feature that fills §5.1 (ciphertext-blob: nonce + XChaCha20-Poly1305 + tag, header as AAD).
 
-*Authored 2026-06-03 for v2.9.0. Transport slots fixed; crypto + compression slots reserved.*
+*Authored 2026-06-03 for v2.9.0. Transport slots fixed; §5.1 crypto slot fixed by the crypto feature (2026-06-03); compression slot reserved.*

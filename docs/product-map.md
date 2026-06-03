@@ -41,3 +41,4 @@ _No contracts yet._
 | Feature | Done | Review |
 |---|---|---|
 | [webdav-transport](features/webdav-transport_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/webdav-transport_review.md) |
+| [crypto](features/crypto_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/crypto_review.md) |

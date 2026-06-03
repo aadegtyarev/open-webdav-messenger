@@ -1,0 +1,19 @@
+# Backlog
+
+Items noted during planning/review, not yet scheduled. The orchestrator records these; `/pm-plan` matches them against new features.
+
+## Upcoming features (noted in architecture decision #9 as follow-ons)
+
+- **X25519 key agreement** — a fourth key source on top of the crypto substrate. Enables remote private chats between members already sharing a disk: publish per-user public keys in the directory → Diffie-Hellman → a symmetric key fed to the existing XChaCha20-Poly1305 AEAD. The disk operator sees only public keys + ciphertext. Builds on `crypto/` (substrate done).
+- **User/chat directory on the disk** — discovery of users and chats within a community that shares a disk. **Decision (PM, 2026-06-03): the directory is ENCRYPTED with a community key distributed at onboarding (default = encrypted, NOT plaintext).** The community key rides in the onboarding bundle (alongside disk access); it is NEVER the disk app-password (the operator holds that). Caveat to state in the feature: file/folder structure, sizes, timestamps and write activity still leak some metadata to the disk operator even with an encrypted directory; full traffic-metadata hiding (padding/cover-traffic/name randomization) is a separate, larger concern, out of MVP.
+- **Invite / onboarding** — a self-contained **string + QR** (no server, no URL — there is no server) carrying disk access (URL + app-password) + chat-id + chat config + (for random-key private chats) the content key + (later) the community directory key. The crypto substrate already exposes random-key generation and raw-key import/export for this. Illustrative wire format drafted (`owdm1:<base64url(gzip(json))>`, ~264 chars, scannable QR).
+  - **Two-layer model (PM clarification, 2026-06-03) — design invites against this:** *community membership* (= holding the disk app-password; one disk per community) and *chat membership* (= holding a chat's `chat-id` + key; many chats per disk) are **separate layers**. So there are two invite kinds: a **community-onboarding** invite (disk access only, no chat-id → chats then discovered via the directory) and a **chat-join** invite (chat-id + key, + disk access if not yet a member). Bundling both in one string is a convenience, not a requirement.
+  - **Removal semantics:** removing someone from a *chat* = **re-key that chat** (they lose new messages but keep disk access). Removing from the *community* = **rotate the disk app-password** (everyone re-onboards — heavy on Topology A; single-person revocation needs Topology B / Nextcloud, deferred). Under Topology A a chat-removed member still has disk access → can see ciphertext/metadata and can still delete files (the flat-trust limit). True membership/removal hardening (signatures, Topology B) is future.
+- **Message-model** — the plaintext envelope field structure (message-id echo, chat-id, reply-to, reaction, body serialization) that lives inside the AEAD ciphertext. The crypto substrate seals/opens opaque bytes; this feature defines the bytes.
+- **Compression** — wire DEFLATE into the envelope `codec-id` (currently always 0x00). Compress-then-encrypt, per-message, bounded inflate (zip-bomb guard) — see architecture decision and stack-notes.
+- **UI** — Compose chat surface, passphrase entry, the public-chat "not protected" warning, wrong-password feedback.
+- **Forward secrecy / double ratchet** — the genuinely-stronger private-chat path (per-message keys); deferred.
+
+## Downstream expectations recorded from review
+
+- **Chat-model must cache the derived chat key in memory** (plan-checker note, crypto review 2026-06-03). The crypto substrate's "no re-derivation per message" relies on the caller holding the `ChatKey` / using `ChatKeyStore.load()` rather than re-running Argon2id (INTERACTIVE = slow) on every send/receive. The chat-model/sync feature owns this caching; do not re-derive per message.

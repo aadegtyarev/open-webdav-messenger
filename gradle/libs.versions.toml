@@ -6,6 +6,18 @@ coreKtx = "1.13.1"
 coroutines = "1.9.0"
 okhttp = "4.12.0"
 junit = "4.13.2"
+# Crypto substrate (crypto feature, 2026-06-03): libsodium via lazysodium.
+# 5.1.0 is the newest version published for BOTH lazysodium-java AND lazysodium-android that is
+# compiled for Java 8 (class 52). It is required because the project pins the JDK 17 toolchain and
+# `./gradlew test` runs lazysodium-java on it — 5.2.0 (the only newer common version) is compiled
+# for Java 21 / class 65 and throws UnsupportedClassVersionError under JDK 17. lazysodium-java has
+# 5.1.1/5.1.4 but lazysodium-android does not, so 5.1.0 is the matched pair. JNA pinned to 5.13.0
+# (has both the @aar Android variant with libjnidispatch.so and the JVM jar; Java-8 compatible).
+lazysodium = "5.1.0"
+jna = "5.13.0"
+# androidTest / instrumented (Keystore + native .so on device 5c3ff0).
+androidxTestRunner = "1.6.2"
+androidxTestExtJunit = "1.2.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -15,6 +27,19 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+# Crypto: lazysodium-android ships native libsodium .so per ABI via JNA — consumed as @aar
+# (stack-notes Crypto component). The JVM-test variant (lazysodium-java) loads the host's
+# system libsodium so AEAD/Argon2id run in `./gradlew test`.
+lazysodium-android = { group = "com.goterl", name = "lazysodium-android", version.ref = "lazysodium" }
+lazysodium-java = { group = "com.goterl", name = "lazysodium-java", version.ref = "lazysodium" }
+# JNA native variant for Android (carries libjnidispatch.so per ABI); plain jar for JVM tests.
+jna-aar = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+jna-jar = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+
+# Instrumented test harness for connectedAndroidTest (Keystore + native .so on device).
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

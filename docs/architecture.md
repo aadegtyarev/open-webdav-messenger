@@ -93,6 +93,29 @@ Each decision records what was chosen, why, and what was rejected. Decisions 1-5
 **Why it matters:** native-crypto (lazysodium `.so` per ABI) and Android Keystore wrap/unwrap and Room migrations are only verifiable instrumented, on a device/emulator. Without an emulator in CI, `./gradlew connectedAndroidTest` cannot run and these paths go unverified — a green tests+lint with no instrumented run is a false-green for the most security-critical code.
 **Source:** PM stack Q&A "PRODUCT DECISIONS TO FLAG"; `docs/stack-notes.md` → Validators table.
 
+### 9. Crypto substrate — key sources, AEAD, key storage
+
+**Chosen:** the E2E-encryption substrate (`docs/features/crypto_plan.md`, lands the `app/.../crypto/` + `app/.../keystore/` modules) provides three per-chat key sources feeding **one** AEAD construction, with keys stored device-local and Keystore-wrapped.
+
+- **AEAD — single layer, XChaCha20-Poly1305** (libsodium combined mode, decision 1). Every message is sealed with **one** AEAD pass regardless of key source. The on-disk blob layout — `nonce(24) ‖ AEAD-ciphertext-with-tag`, 24-byte random nonce at the front, the 8-byte envelope header bound as AAD — is pinned in **`docs/protocol/webdav-layout.md` §5.1** (authored as part of this feature).
+- **Three key sources** (the substrate exposes all three; the chat taxonomy below maps a chat's config onto one):
+  - **known** = `KDF(in-app constant ‖ chat-id)` → the **public**-chat key. The in-app constant is **non-secret and lives in code** — there is **no build-secret injection**, because the public-chat key is by design not a secret (anyone with the app + chat-id can derive it). (The build-secret pattern is reserved for a *genuine* secret, e.g. a future Telegram-gateway token.)
+  - **random** = a CSPRNG-generated symmetric key → a **private** chat **without** a password; the key is distributed **out-of-band via a future invite** (string + QR) feature. The substrate can import/export the raw key for that feature; it does not encode invites itself.
+  - **passphrase** = `Argon2id(passphrase, salt)` → a **private** chat **with** a password. Uses the libsodium Argon2id **INTERACTIVE** preset (64 MiB) so it survives low-RAM devices (stack-notes → Crypto/Kotlin: run off the UI thread). The **salt is derived deterministically from the chat-id** so members independently derive an identical key from the same passphrase. (Note: a future **roster** feature may move to a **stored random salt** per chat; the deterministic-from-chat-id salt is the MVP choice, not a permanent constraint.)
+- **Key storage:** chat keys are stored **device-local, wrapped via Android Keystore directly** (not `androidx.security:security-crypto`, which is deprecated — Security constraints). **Raw keys and passphrases are never written to the WebDAV disk and never logged.**
+
+**Rejected — double-layer encryption (app-key under passphrase):** sealing private content first under the in-app app-key and then under the passphrase key adds **no** security, because the app key is **extractable from the APK**. A second layer keyed on an extractable constant is **obscurity, not security**, for double the crypto surface. Single-layer AEAD with the passphrase-derived (or random) key is the honest boundary. (Also recorded in `docs/features/crypto_plan.md` → Out of scope.)
+
+**Security rationale — the disk app-password is NEVER a content key (recorded explicitly):** the disk operator (e.g. Yandex) **receives the WebDAV app-password** to authenticate every request. If the content key were derived from that password, the operator would hold the means to **decrypt all content**. Therefore content keys (known / random / passphrase) are **always independent of disk access** and are **never written to the disk**. This is the load-bearing reason none of the three key sources touch the disk credential.
+
+**Planned follow-ons (noted so the substrate seam is understood — NOT designed here):**
+- **(a) X25519 key agreement — a fourth key source.** Enables **remote private chats between members already sharing a disk**: members publish public keys in a directory (b), do a Diffie-Hellman exchange, and feed the resulting shared secret as a symmetric key into **this same** XChaCha20-Poly1305 AEAD. (Group per-member key wrapping is where X25519 later helps — `crypto_plan.md` → Out of scope.)
+- **(b) A user/chat directory on the disk** for discovery. **Known caveat:** a directory exposes **who-is-in-which-chat metadata to the disk operator** until it is itself encrypted with a community key — a later confidentiality concern, not solved here.
+- **(c) Invite / onboarding** as a **self-contained string + QR** (no server/URL — **there is no server**, decision 2 / Architectural constraints) carrying **disk access + chat-id + (for random-key chats) the key**. The substrate's raw-key import/export exists to feed this.
+- **Forward secrecy / double-ratchet** remains the **deferred, genuinely-stronger** private-chat path — a separate larger feature, not on this substrate's critical path.
+
+**Source:** PM decision, bootstrap+crypto planning conversation, 2026-06-03; `docs/features/crypto_plan.md` (approved plan); `docs/stack-notes.md` → Crypto library + Android Keystore components.
+
 ## Architectural constraints
 
 Hard boundaries. Agents must not violate these without an explicit PM decision. Source for each: PM stack Q&A + `CLAUDE.md` Architectural constraints (bootstrap conversation, 2026-06-03).
@@ -117,7 +140,7 @@ Hard boundaries. Agents must not violate these without an explicit PM decision. 
 | `app/.../transport/` | **Implemented** (`webdav-transport`) | OkHttp + WebDAV layer — PROPFIND/MKCOL/GET/PUT/DELETE, ETag/`If-Match` conditional writes, 429 back-off. Observed: `WebDavTransport`, `WebDavRequests`, `WebDavResult`, `CallExecutor`, `TransportFactory`, `ConnectionConfig`, `BackOff`, `PropfindParser`. |
 | `app/.../protocol/` | **Implemented** (`webdav-transport`) | On-disk protocol model — inbox fan-out, message envelope encode/decode, codec id, ordering. Implements the `docs/protocol/webdav-layout.md` spec. Observed: `Envelope`, `MessageId`, `OrderToken`, `ChatPaths`, `Base32`. |
 | `app/.../ui/` | Planned (feature not yet run) | Jetpack Compose chat surface — chat list, message list, composer, settings (incl. polling-interval control). State-hoisted; no I/O in composables. |
-| `app/.../crypto/` | Planned (feature not yet run) | libsodium wrappers — Argon2id passphrase→key derivation, XChaCha20-Poly1305 AEAD seal/open. No keys leave this layer in extractable form. |
+| `app/.../crypto/` | Planned (feature not yet run) | libsodium wrappers — Argon2id passphrase→key derivation, XChaCha20-Poly1305 AEAD seal/open, the three key sources (known/random/passphrase, decision 9). No keys leave this layer in extractable form. |
 | `app/.../keystore/` | Planned (feature not yet run) | Android Keystore wrap/unwrap of derived chat keys; device-local only. |
 | `app/.../codec/` | Planned (feature not yet run) | Compression — DEFLATE compress/inflate, bounded decompression, per-message. |
 | `app/.../markdown/` | Planned (feature not yet run) | Hand-rolled `AnnotatedString` parser for the 6-element subset + link scheme allowlist. |
@@ -138,14 +161,33 @@ This is an Android app installed from an APK, not a library or service with down
 
 The single home for this project's domain taxonomies and format invariants. The byte/path-level layout is specified in **`docs/protocol/webdav-layout.md`** (authored by the first transport feature, 2026-06-03); that file is the **authoritative source** for message-id grammar, inbox/file naming, the ordering token, and the envelope framing — the entries below state each invariant in one line and point there (move-not-copy, do not restate the grammar in two places). `docs/user-journeys.md` and contracts must reference, not restate, these invariants. Remaining `[?]` items (chat-id grammar, reaction glyphs) are pinned by their own later features.
 
-### Chat-type enum
+### Chat taxonomy (two-axis: kind × access)
 
-| Value | Meaning | Secrecy |
-|---|---|---|
-| `private` | Symmetric AEAD; key = Argon2id(passphrase, salt). Passphrase shared out-of-band. Groups (MVP): one shared per-chat passphrase among members (no per-member key wrapping yet). | Secret — disk sees ciphertext only. |
-| `public` | Uses a well-known / shared key so anyone with the link can read. | **NOT secret** — readable by the disk operator and anyone with access. UI must warn and nudge to a private chat. |
+The earlier flat `chat-type` enum `{private, public}` was too narrow — it conflated *who a chat is with* (1:1 vs group) with *whether content is hidden from the disk operator*. The taxonomy is now **two orthogonal axes** plus an optional password:
 
-This enum is closed at **2** values for the MVP. Adding a value is an architectural decision.
+- **Kind:**
+  - `dm` — a 1:1 chat. **Always private — a DM cannot be public.**
+  - `group` — a multi-member chat. **May be public or private.**
+- **Access:**
+  - `public` — **group only**; readable by **anyone with the app + chat-id**. **NOT secret** — the disk operator and anyone with access can read it. UI must warn and nudge toward a private chat.
+  - `private` — a **DM or a group**; content is **hidden from the disk operator** (AEAD ciphertext only on disk).
+- **Password (optional):** a **private** chat (DM **or** private group) may be **passphrase-protected or not**:
+  - private **without** a password → a CSPRNG **random** key distributed out-of-band (future invite).
+  - private **with** a password → a key derived from the passphrase.
+
+**Valid combinations:** `dm` is always `private` (with or without a password). `group` is `public`, or `private` (with or without a password). `dm + public` is **invalid**.
+
+**Mapping onto the three crypto key sources** (substrate, decision 9 — this is *how* each cell is keyed):
+
+| Kind | Access | Password | Key source |
+|---|---|---|---|
+| `group` | `public` | — | **known** = `KDF(in-app constant ‖ chat-id)` (not secret) |
+| `dm` / `group` | `private` | no | **random** = CSPRNG key, distributed out-of-band (future invite) |
+| `dm` / `group` | `private` | yes | **passphrase** = `Argon2id(passphrase, salt)` |
+
+Changing these axes or their valid combinations is an architectural decision. The byte layout that carries a sealed message is identical for all three key sources (`docs/protocol/webdav-layout.md` §5.1); the key source is determined by the chat's `kind`/`access`/password config, not encoded in the envelope.
+
+**Source:** PM decision, bootstrap+crypto planning conversation, 2026-06-03 (supersedes the MVP 2-value `chat-type` enum); key-source mapping per decision 9 / `docs/features/crypto_plan.md`.
 
 ### Reaction enum
 
@@ -157,7 +199,7 @@ Every message written to a WebDAV inbox is an AEAD ciphertext whose plaintext, o
 
 - **message-id** — `order-token "~" content-hash` (content-addressed; stable, unique, never reused; ordering/dedup key). The on-disk file name **is** this id, so each message is **content-addressed and append-only** — a writer PUTs a new file and never overwrites a prior one (decision 2; Inbox invariants below). Exact grammar, alphabet, and length: **`docs/protocol/webdav-layout.md` §2** (authoritative).
 - **chat-id** — grammar `[?]` (identifies the chat; inbox/folder naming derives from it).
-- **chat-type** — one of `{private, public}` (enum above).
+- **chat taxonomy fields** — the chat's `kind` (`dm`/`group`) and `access` (`public`/`private`), plus whether it is password-protected (see *Chat taxonomy* above). These describe the chat, not each message; the per-chat descriptor lives in `meta/chat.json` (`docs/protocol/webdav-layout.md` §1.3, populated by a later roster feature).
 - **sender** — author identity (no X25519 identity keys in MVP; this is a display/address identifier, not a verified key).
 - **reply-to** — optional message-id this message quotes (replies feature).
 - **codec id** — which codec compressed the body before encryption: `{none, deflate}` (decision 4). Carried in the envelope frame's `codec-id` byte; reader inflates per this field; unknown codec = error path, not a guess. Frame byte layout: **`docs/protocol/webdav-layout.md` §5** (authoritative).
@@ -190,16 +232,17 @@ N/A — no automated release pipeline exists. The repository has no commits yet,
 
 Source: PM stack Q&A + `CLAUDE.md` Security constraints + `docs/stack-notes.md` security gotchas (bootstrap conversation, 2026-06-03).
 
-- **Private-chat content:** end-to-end encrypted with XChaCha20-Poly1305 AEAD; per-chat key derived from a passphrase via Argon2id (memory-hard). The disk stores ciphertext only.
-- **Public chats are explicitly NOT secret:** shared/well-known key. The UI must clearly warn that the chat is readable by the disk operator and anyone with access, and nudge toward a password-protected private chat for real conversations.
-- **Passphrases and derived keys:** never written to the WebDAV disk, never logged. Stored only device-local, wrapped via **Android Keystore directly** — `androidx.security:security-crypto` (EncryptedSharedPreferences) is **deprecated (1.1.0, 2025)** and must not be used for new storage.
+- **Private-chat content:** end-to-end encrypted with XChaCha20-Poly1305 AEAD; per-chat key from one of three sources — passphrase via Argon2id (memory-hard), a CSPRNG random key, or a known KDF'd key for public chats (decision 9). The disk stores ciphertext only.
+- **Public chats are explicitly NOT secret:** known/well-known key (`KDF(in-app constant ‖ chat-id)`). The UI must clearly warn that the chat is readable by the disk operator and anyone with access, and nudge toward a password-protected private chat for real conversations.
+- **The disk app-password is NEVER a content key (decision 9).** The disk operator (e.g. Yandex) receives the WebDAV app-password to authenticate every request; deriving a content key from it would let the operator decrypt all content. Content keys (known/random/passphrase) are always **independent of disk access** and are never derived from the disk credential.
+- **Content keys are Keystore-wrapped, never on disk.** Passphrases and derived/random chat keys are stored only device-local, **wrapped via Android Keystore directly**, and are **never written to the WebDAV disk and never logged**. `androidx.security:security-crypto` (EncryptedSharedPreferences) is **deprecated (1.1.0, 2025)** and must not be used for new storage. (No double-layer "app-key under passphrase" — the app key is APK-extractable, so it is obscurity not security; decision 9.)
 - **Compression side channel:** compress each message independently; never co-compress secret + attacker-influenced data in one context (CRIME/BREACH class). Length-hiding/padding to be considered in `webdav-layout.md`.
 - **Untrusted decompression:** bound decompressed size (zip-bomb guard); decompression failure is a normal error path, not a crash.
 - **Untrusted Markdown:** no raw-HTML passthrough, no remote image auto-loading, link scheme allowlist (e.g. `https`/`http`/`mailto`) with the real URL visible, navigation only on explicit tap, no autolinkification.
 - **No hand-rolled crypto:** audited primitives only.
 - **Java-interop nullability:** crypto/HTTP libraries are Java; values crossing the boundary are platform types and must be treated as nullable — no `!!` on WebDAV/crypto paths.
 - **Flat trust model (shared disk credential, decision 2):** all members of a chat share one WebDAV credential, so **any member can technically delete or overwrite another member's message files**. This is an accepted, deliberate MVP limitation — all members already share the chat passphrase, so trust is "knows the passphrase = insider". AEAD provides tamper-detection of message **content**, but **not** deletion resistance. Protection against deletion (signatures, replicated/witnessed logs) is future work. Append-only, content-addressed files (Behavioral contract) limit silent in-place mutation but do not stop deletion.
-- **Identity keys (X25519) for contact verification:** deferred (out of MVP scope) — message authenticity rests on AEAD + the shared passphrase only; no cryptographic sender verification in v1.
+- **Identity keys (X25519) for contact verification:** deferred (out of MVP scope) — message authenticity rests on AEAD + the shared passphrase only; no cryptographic sender verification in v1. (X25519 is the planned fourth key source for remote private chats — decision 9 follow-ons.)
 
 ## Code conventions
 
