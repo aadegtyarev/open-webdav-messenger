@@ -1,0 +1,68 @@
+# Threat Model
+
+What we protect, from whom, and how. Read by agents before planning any feature that touches auth, data storage, network, or user input.
+
+Depth matches project risk: financial / medical / personal safety product → full model. Internal tool → short page.
+
+---
+
+## Assets
+
+What exists in this system that has value to an attacker or matters to users.
+
+- **A1: <name>** — <what it is, why it matters>
+- **A2: <name>** — <…>
+
+## Users and roles
+
+Who legitimately uses the system and what they can access.
+
+- **<Role 1>** — <permissions, data access, trust level>
+- **<Role 2>** — <…>
+
+## Adversaries
+
+Who might attack and why.
+
+- **Casual attacker** — opportunistic, automated, low effort. Looks for: default credentials, exposed endpoints, unvalidated input.
+- **Targeted attacker** — motivated by specific data or disruption. Looks for: auth bypasses, privilege escalation, data exfiltration.
+- **Insider** — legitimate access misused. Looks for: data they shouldn't see, actions they shouldn't take.
+- <add or remove based on actual project risk profile>
+
+## Trust boundaries
+
+Where data crosses a boundary — each one needs a defense.
+
+| Boundary | From → To | Defense |
+|---|---|---|
+| <e.g., Internet → API> | external user → backend | auth token, input validation, rate limiting |
+| <e.g., API → DB> | backend → database | parameterized queries, no raw string interpolation |
+| <e.g., User → File system> | upload → storage | file type validation, size limit, no path traversal |
+
+## Threats
+
+Specific threats to this system. Each gets an ID for cross-referencing.
+
+| ID | Threat | Assets | Likelihood | Impact | Mitigation |
+|---|---|---|---|---|---|
+| T01 | <e.g., Password brute force> | user accounts | H | H | rate limiting, bcrypt |
+| T02 | <e.g., SQL injection via search> | all DB data | M | H | parameterized queries |
+| T03 | <…> | | | | |
+
+Likelihood and Impact: L / M / H
+
+## What we explicitly do NOT protect against
+
+Be honest about out-of-scope threats — without this list, scope creeps.
+
+- <e.g., "Nation-state level attacks — out of scope for v1">
+- <e.g., "Physical device theft — deployment context makes this acceptable">
+
+---
+
+## Review
+
+Revisit this document when:
+- New feature touches auth, storage, or network
+- New user role added
+- Security incident occurs
