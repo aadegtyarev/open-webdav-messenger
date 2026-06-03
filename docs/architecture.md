@@ -52,7 +52,7 @@ Each decision records what was chosen, why, and what was rejected. Decisions 1-5
 **Chosen:** an on-disk protocol where one poll cycle returns everything changed for a user. Senders **fan out** by appending each outgoing message into every recipient's per-user **inbox** on the disk; a client polls its single inbox (one `PROPFIND Depth: 1` + conditional `GET`s) rather than polling each chat folder directly. Optimistic concurrency uses **ETag + `If-Match` conditional requests** (RFC 4918 §8.6/§10.4), **not** WebDAV `LOCK`. The on-disk layout is append-friendly so a writer adds an entry without rewriting prior content.
 **Why:** WebDAV is slow and Yandex.Disk returns `429 Too Many Requests` under frequent `PROPFIND` (stack-notes → OkHttp/WebDAV gotchas). Polling each chat per cycle is an HTTP storm that hits the rate limit; a single per-user inbox collapses the poll to minimal round-trips. ETag conditional writes are portable across providers, whereas `LOCK` is optional/advisory and varies by provider (stack-notes → WebDAV constraints). This fan-out sits on top of the single shared credential fixed in **decision 2 (Disk topology)**: all members share one disk identity, so the inbox is a read-efficiency layout, not an isolation boundary. The loop must additionally budget retries and **exponential back-off** for Yandex.Disk's slow post-upload hash computation (which can time out the client), complementing the 429 back-off above.
 **Rejected:** (a) **per-chat polling** — N round-trips per cycle, directly triggers 429. (b) **WebDAV `LOCK` for write coordination** — not portable; Yandex/Nextcloud differ on support; ETag `If-Match` gives lost-update protection without it.
-**Forward pointer:** the byte-level on-disk spec (folder/file naming, envelope bytes, append semantics, fan-out write order) will be authored as **`docs/protocol/webdav-layout.md`** during the first transport feature. It does **not** exist yet and is **not** written here. The format **invariants** that any such spec must honor are pinned in *Behavioral contract* below. `pm-plan-checker` should block any transport feature whose plan does not reference `docs/protocol/webdav-layout.md` (stack-notes → Integration contracts note).
+**On-disk spec (authored):** the byte/path-level layout — folder/inbox layout, content-addressed file naming, the message-id grammar, the append-only rule, the ordering token, and the envelope framing (with the compression `codec-id` and the opaque ciphertext slot) — is specified in **`docs/protocol/webdav-layout.md`** (authored 2026-06-03 by the first transport feature). That file is the **authoritative source** for this fan-out's on-disk format; the *Behavioral contract* below states the invariants and points there (move-not-copy). `pm-plan-checker` blocks any transport feature whose plan does not reference `docs/protocol/webdav-layout.md` (stack-notes → Integration contracts note).
 **Source:** PM stack Q&A "DECISIONS THAT ARE YOURS TO MAKE NOW" item 2 (bootstrap conversation, 2026-06-03); `docs/stack-notes.md` → OkHttp/WebDAV component + Integration contracts table.
 
 ### 4. Compression codec — DEFLATE (`java.util.zip`), compress-then-encrypt, per-message
@@ -109,22 +109,22 @@ Hard boundaries. Agents must not violate these without an explicit PM decision. 
 
 ## File layout (module map)
 
-> **Greenfield — no source tree exists yet.** `ls` shows no `app/`/`src/` and `git ls-tree -r --name-only HEAD` is empty (no commits). The table below is the **planned** module map (the intended package structure under a single-module Android `app/`), not an observed tree. It is a forward target for the first features and must be reconciled against the real tree once code lands — any divergence then is a finding to fix here. Marked rows are intentions, not facts.
+> **Mixed — reconciled against the real tree as of the `webdav-transport` feature (2026-06-03).** The first feature has landed code under `app/`, so this map now distinguishes **implemented** rows (observed in the working tree via `find app/src -type f`) from **planned** rows (their features have not run yet). The actual package root is `org.openwebdav.messenger` (so `app/.../transport/` = `app/src/main/kotlin/org/openwebdav/messenger/transport/`). The honesty rule stands: keep this map honest against the real tree — implemented rows are facts, planned rows are intentions, and any new divergence is a finding to fix here. (`git ls-tree -r --name-only HEAD` is still empty because the feature branch is uncommitted; the map is reconciled against the working tree directly.)
 
-| Directory / module (planned) | Responsibility |
-|---|---|
-| `app/` | Single Android application module (Gradle), all source under it. |
-| `app/.../ui/` | Jetpack Compose chat surface — chat list, message list, composer, settings (incl. polling-interval control). State-hoisted; no I/O in composables. |
-| `app/.../crypto/` | libsodium wrappers — Argon2id passphrase→key derivation, XChaCha20-Poly1305 AEAD seal/open. No keys leave this layer in extractable form. |
-| `app/.../keystore/` | Android Keystore wrap/unwrap of derived chat keys; device-local only. |
-| `app/.../transport/` | OkHttp + WebDAV layer — PROPFIND/MKCOL/GET/PUT/DELETE, ETag/`If-Match` conditional writes, 429 back-off. |
-| `app/.../protocol/` | On-disk protocol model — inbox fan-out, message envelope encode/decode, codec id, ordering. Implements the (forthcoming) `docs/protocol/webdav-layout.md` spec. |
-| `app/.../codec/` | Compression — DEFLATE compress/inflate, bounded decompression, per-message. |
-| `app/.../markdown/` | Hand-rolled `AnnotatedString` parser for the 6-element subset + link scheme allowlist. |
-| `app/.../data/` | Room cache (entities, DAOs, migrations, schema export) for messages and protocol/key metadata. |
-| `app/.../sync/` | WorkManager worker(s) — one-poll-cycle sync over the inbox; optional foreground-service mode (pending decision 5). |
-| `docs/` | Project docs (this file, stack-notes, product funnel, threat model, user journeys; `docs/protocol/webdav-layout.md` forthcoming). |
-| `.ai-pm/` | AI-PM tooling, contracts, arch notes. |
+| Directory / module | Status | Responsibility |
+|---|---|---|
+| `app/` | **Implemented** (`webdav-transport`) | Single Android application module (Gradle), all source under it; namespace/package root `org.openwebdav.messenger` (stub `OpenWebDavMessengerApp` + build files present). |
+| `app/.../transport/` | **Implemented** (`webdav-transport`) | OkHttp + WebDAV layer — PROPFIND/MKCOL/GET/PUT/DELETE, ETag/`If-Match` conditional writes, 429 back-off. Observed: `WebDavTransport`, `WebDavRequests`, `WebDavResult`, `CallExecutor`, `TransportFactory`, `ConnectionConfig`, `BackOff`, `PropfindParser`. |
+| `app/.../protocol/` | **Implemented** (`webdav-transport`) | On-disk protocol model — inbox fan-out, message envelope encode/decode, codec id, ordering. Implements the `docs/protocol/webdav-layout.md` spec. Observed: `Envelope`, `MessageId`, `OrderToken`, `ChatPaths`, `Base32`. |
+| `app/.../ui/` | Planned (feature not yet run) | Jetpack Compose chat surface — chat list, message list, composer, settings (incl. polling-interval control). State-hoisted; no I/O in composables. |
+| `app/.../crypto/` | Planned (feature not yet run) | libsodium wrappers — Argon2id passphrase→key derivation, XChaCha20-Poly1305 AEAD seal/open. No keys leave this layer in extractable form. |
+| `app/.../keystore/` | Planned (feature not yet run) | Android Keystore wrap/unwrap of derived chat keys; device-local only. |
+| `app/.../codec/` | Planned (feature not yet run) | Compression — DEFLATE compress/inflate, bounded decompression, per-message. |
+| `app/.../markdown/` | Planned (feature not yet run) | Hand-rolled `AnnotatedString` parser for the 6-element subset + link scheme allowlist. |
+| `app/.../data/` | Planned (feature not yet run) | Room cache (entities, DAOs, migrations, schema export) for messages and protocol/key metadata. |
+| `app/.../sync/` | Planned (feature not yet run) | WorkManager worker(s) — one-poll-cycle sync over the inbox; optional foreground-service mode (pending decision 6). |
+| `docs/` | Implemented | Project docs (this file, stack-notes, product funnel, threat model, user journeys; `docs/protocol/webdav-layout.md` authored by `webdav-transport`). |
+| `.ai-pm/` | Implemented | AI-PM tooling, contracts, arch notes. |
 
 ## Integration contract
 
@@ -136,7 +136,7 @@ This is an Android app installed from an APK, not a library or service with down
 
 ## Behavioral contract (taxonomies & invariants)
 
-The single home for this project's domain taxonomies and format invariants. The forthcoming `docs/protocol/webdav-layout.md` will specify byte-level layout; it must honor — and `docs/user-journeys.md` and contracts must reference, not restate — the invariants below. Marked `[?]` items are skeleton placeholders to be pinned by the first transport feature; they are listed so the protocol spec inherits a fixed taxonomy rather than inventing one.
+The single home for this project's domain taxonomies and format invariants. The byte/path-level layout is specified in **`docs/protocol/webdav-layout.md`** (authored by the first transport feature, 2026-06-03); that file is the **authoritative source** for message-id grammar, inbox/file naming, the ordering token, and the envelope framing — the entries below state each invariant in one line and point there (move-not-copy, do not restate the grammar in two places). `docs/user-journeys.md` and contracts must reference, not restate, these invariants. Remaining `[?]` items (chat-id grammar, reaction glyphs) are pinned by their own later features.
 
 ### Chat-type enum
 
@@ -155,28 +155,28 @@ Exactly **5 fixed reactions** (MVP). The concrete glyph/identifier set is `[?]` 
 
 Every message written to a WebDAV inbox is an AEAD ciphertext whose plaintext, once opened, is an envelope carrying at least:
 
-- **message-id** — grammar `[?]` (stable, unique per message; ordering/dedup key; never reused). The on-disk file name derives from this id / a content hash, so each message is **content-addressed and append-only** — a writer PUTs a new file and never overwrites a prior one (decision 2; Inbox invariants below).
+- **message-id** — `order-token "~" content-hash` (content-addressed; stable, unique, never reused; ordering/dedup key). The on-disk file name **is** this id, so each message is **content-addressed and append-only** — a writer PUTs a new file and never overwrites a prior one (decision 2; Inbox invariants below). Exact grammar, alphabet, and length: **`docs/protocol/webdav-layout.md` §2** (authoritative).
 - **chat-id** — grammar `[?]` (identifies the chat; inbox/folder naming derives from it).
 - **chat-type** — one of `{private, public}` (enum above).
 - **sender** — author identity (no X25519 identity keys in MVP; this is a display/address identifier, not a verified key).
 - **reply-to** — optional message-id this message quotes (replies feature).
-- **codec id** — which codec compressed the body: at least `{none, deflate}` (decision 3). Reader inflates per this field; unknown codec = error path, not a guess.
+- **codec id** — which codec compressed the body before encryption: `{none, deflate}` (decision 4). Carried in the envelope frame's `codec-id` byte; reader inflates per this field; unknown codec = error path, not a guess. Frame byte layout: **`docs/protocol/webdav-layout.md` §5** (authoritative).
 - **reaction** — optional, one of the 5-reaction enum (when the envelope is a reaction event).
 - **body** — the (optionally compressed, then encrypted) message text + supported Markdown subset.
-- **timestamp / ordering token** — `[?]` (see ordering rules).
+- **timestamp / ordering token** — a monotonic, best-effort `order-token` = millisecond timestamp + per-sender tag + per-sender sequence; it is the sortable prefix of the message-id. Exact form and tie-break: **`docs/protocol/webdav-layout.md` §4** (authoritative); summary under *Ordering & causality* below.
 
 ### Inbox / file-naming invariants
 
-- **Per-user inbox fan-out:** a sender writes a copy of each outgoing message into **every recipient's** inbox. A client reads only **its own** inbox per poll cycle. Inbox path/file naming derives from the recipient + chat-id; concrete grammar `[?]`.
+- **Per-user inbox fan-out:** a sender writes a copy of each outgoing message into **every recipient's** inbox. A client reads only **its own** inbox per poll cycle. Inbox path = `inbox/<recipient-inbox-id>/`, where `recipient-inbox-id` is a deterministic hash of the recipient identifier + chat-id (so any sender computes a recipient's inbox path to fan out). Exact derivation: **`docs/protocol/webdav-layout.md` §1.2** (authoritative).
 - **The inbox is a read-efficiency layout, NOT an access-control boundary.** Under the single shared WebDAV credential (decision 2, Topology A) every member is the same disk identity, so every member can read **and delete** every file in the shared space — including other members' inboxes. The fan-out exists only to make a poll cycle one cheap `PROPFIND Depth: 1` per client, not to isolate members from each other.
-- **Append-only, content-addressed message files:** a message file name derives from its message-id / content hash, and a writer only ever **PUTs a new file — never modifies or overwrites an existing one**. This append-only, content-addressed discipline is the integrity compensation for the flat trust model: the transport gives no per-author protection on any provider (decision 2), so files are never mutated in place.
+- **Append-only, content-addressed message files:** the message file name **is** the message-id (whose `content-hash` suffix = SHA-256 of the file bytes), and a writer only ever **PUTs a new file — never modifies or overwrites an existing one**; a reader rejects a file whose recomputed hash does not match its name. This append-only, content-addressed discipline is the integrity compensation for the flat trust model: the transport gives no per-author protection on any provider (decision 2), so files are never mutated in place. Naming + on-read check: **`docs/protocol/webdav-layout.md` §2–§3** (authoritative).
 - **Conditional write:** every write that risks a lost update uses ETag + `If-Match`; a competing-writer 412 is a normal retry path, not a crash.
 
 ### Ordering & causality
 
 - Clients must tolerate out-of-order arrival and duplicate delivery (fan-out + polling can re-deliver); **message-id is the dedup key**.
 - A reply (`reply-to`) may arrive before the message it quotes; the UI must degrade gracefully (show as reply to an unknown/unloaded message), not error.
-- Exact ordering token and tie-break rule are `[?]` — to be pinned in `webdav-layout.md`; until then, treat ordering as best-effort over a monotonic per-sender token.
+- Ordering is best-effort over a **monotonic per-sender `order-token`** (timestamp + sender tag + per-sender sequence); the total order and tie-break (by the lexicographically-sortable message-id, falling back through sender-tag, seq, then content-hash) are fixed in **`docs/protocol/webdav-layout.md` §4** (authoritative). Dedup remains by message-id; a `reply-to` may arrive before its target and must degrade gracefully.
 
 ### Decompression bound
 
@@ -233,19 +233,41 @@ Source: PM stack Q&A + `CLAUDE.md` Security constraints + `docs/stack-notes.md` 
 
 ### Policy
 
-Prefer the Android/Kotlin standard library and Jetpack. Add a third-party dependency only when it provides an audited capability the stdlib lacks (crypto) or saves substantial non-trivial code, and is actively maintained. **Treat any dependency that bundles a native `.so` per ABI as a packaging risk** (`UnsatisfiedLinkError`) requiring instrumented verification. No GPL constraint imposed; license each addition consciously (project license itself is TBD — see README).
+Prefer the Android/Kotlin standard library and Jetpack. Add a third-party dependency only when it provides an audited capability the stdlib lacks (crypto) or saves substantial non-trivial code, and is actively maintained. **Treat any dependency that bundles a native `.so` per ABI as a packaging risk** (`UnsatisfiedLinkError`) requiring instrumented verification. License each addition consciously and check compatibility with the project license — **AGPL-3.0** (PM decision 2026-06-03; see `LICENSE`): a copyleft license, so dependencies must be license-compatible with AGPL-3.0 distribution.
 
 ### Current dependencies
 
-> No build files exist yet (greenfield). The table records the **planned** core dependencies implied by the stack decisions, to be reconciled with `app/build.gradle.kts` when it lands.
+> **Reconciled against `app/build.gradle.kts` + `gradle/libs.versions.toml` as of the `webdav-transport` feature (2026-06-03).** The build files now exist, so the rows below are the **actually declared** dependencies/plugins (versions from the version catalog). Libraries implied by later stack decisions but **not yet added** to the build (lazysodium-android, JNA, Jetpack Compose, WorkManager, Room) are listed separately below — they remain forward targets, not current dependencies. `java.util.zip` is stdlib (no coordinate).
 
-| Package | Purpose | Added |
+Build toolchain (from `gradle/libs.versions.toml` + wrapper):
+
+| Tool | Version | Added |
 |---|---|---|
-| Kotlin stdlib + coroutines | Language + off-main-thread concurrency | bootstrap (planned) |
-| Jetpack Compose | UI toolkit | bootstrap (planned) |
-| androidx.work (WorkManager) | Periodic background polling | bootstrap (planned) |
-| OkHttp (+ sardine-android, optional) | WebDAV transport | bootstrap (planned) |
-| com.goterl:lazysodium-android + net.java.dev.jna:jna | Argon2id KDF + XChaCha20-Poly1305 AEAD (native `.so`) | bootstrap (planned) |
-| androidx.room | Local offline-first cache | bootstrap (planned) |
-| `java.util.zip` (stdlib) | DEFLATE compression — zero dependency | bootstrap (planned) |
-| (markdown) | Hand-rolled `AnnotatedString` parser — no dependency | bootstrap (planned) |
+| Android Gradle Plugin (`com.android.application`) | 8.7.3 | `webdav-transport` (2026-06-03) |
+| Kotlin (`org.jetbrains.kotlin.android`) | 2.0.21 | `webdav-transport` (2026-06-03) |
+| ktlint Gradle plugin (`org.jlleitschuh.gradle.ktlint`) | 12.1.2 | `webdav-transport` (2026-06-03) |
+| Gradle wrapper distribution | 8.13 | `webdav-transport` (2026-06-03) |
+| JDK toolchain / `jvmTarget` | 17 | `webdav-transport` (2026-06-03) |
+
+Declared library dependencies:
+
+| Package | Coordinate (version) | Config | Purpose | Added |
+|---|---|---|---|---|
+| androidx.core KTX | `androidx.core:core-ktx:1.13.1` | implementation | Android KTX extensions | `webdav-transport` (2026-06-03) |
+| kotlinx-coroutines-core | `org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0` | implementation | Off-main-thread concurrency | `webdav-transport` (2026-06-03) |
+| kotlinx-coroutines-android | `org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0` | implementation | Android main-dispatcher integration | `webdav-transport` (2026-06-03) |
+| OkHttp | `com.squareup.okhttp3:okhttp:4.12.0` | implementation | WebDAV transport (PROPFIND/GET/PUT/DELETE, conditional writes, back-off) | `webdav-transport` (2026-06-03) |
+| JUnit 4 | `junit:junit:4.13.2` | testImplementation | Unit test framework | `webdav-transport` (2026-06-03) |
+| OkHttp MockWebServer | `com.squareup.okhttp3:mockwebserver:4.12.0` | testImplementation | WebDAV transport tests (verb/concurrency/interaction) | `webdav-transport` (2026-06-03) |
+| kotlinx-coroutines-test | `org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0` | testImplementation | Coroutine test dispatchers | `webdav-transport` (2026-06-03) |
+| `java.util.zip` (stdlib) | — (JDK) | — | DEFLATE compression — zero dependency | (stdlib; available, no coordinate) |
+
+Stack-decision libraries **not yet added** to the build (forward targets — to be added by their features):
+
+| Package | Purpose | Status |
+|---|---|---|
+| Jetpack Compose | UI toolkit | Not yet added (ui feature) |
+| androidx.work (WorkManager) | Periodic background polling | Not yet added (sync feature) |
+| com.goterl:lazysodium-android + net.java.dev.jna:jna | Argon2id KDF + XChaCha20-Poly1305 AEAD (native `.so`) | Not yet added (crypto feature) |
+| androidx.room | Local offline-first cache | Not yet added (data feature) |
+| (markdown) | Hand-rolled `AnnotatedString` parser — no dependency | Not yet added (markdown feature; no coordinate planned) |

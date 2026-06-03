@@ -52,7 +52,9 @@ Stack linter:
 ```
 ./gradlew ktlintCheck
 ```
-(ktlint vs detekt is an open decision — see PM open questions; pipeline assumes ktlint + Android Lint for now.)
+Static analysis: **ktlint + Android Lint** (decided in the `webdav-transport` feature, 2026-06-03; detekt not used).
+
+Build toolchain: JDK selection is via the Gradle Java toolchain (`jvmToolchain(17)` + foojay-resolver) — no machine-specific path is committed. On most hosts no `JAVA_HOME` is needed; only if a host's Gradle daemon refuses to launch on a JRE-only default `java` should the developer/CI set `JAVA_HOME=/path/to/a/jdk` in the environment (never a committed path).
 
 ---
 

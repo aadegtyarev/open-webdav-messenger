@@ -38,4 +38,6 @@ _No contracts yet._
 
 ## Infrastructure (no user-facing contract)
 
-_No infrastructure features yet._
+| Feature | Done | Review |
+|---|---|---|
+| [webdav-transport](features/webdav-transport_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/webdav-transport_review.md) |

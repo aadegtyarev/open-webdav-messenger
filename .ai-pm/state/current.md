@@ -8,7 +8,7 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-Project bootstrap — initial documentation scaffold.
+(none active)
 
 ## Status
 
@@ -16,40 +16,31 @@ idle
 
 ## Done
 
-- Project docs scaffolded (CLAUDE.md, README.md, docs/*)
-- Stack and crypto model decided with PM
-- Protocol template updated to v2.8.0; architecture.md / user-journeys.md skeletons refreshed
-- pm-stack-researcher filled docs/stack-notes.md (core stack + compression + markdown); pipeline validators added to CLAUDE.md
-- pm-architect authored docs/architecture.md (incl. Behavioral contract) + docs/product.md; 4 decisions recorded, 3 flagged OPEN for PM
-- docs/product-map.md generated (greenfield — component groups, no contracts yet)
-- Multi-user disk topology researched + decided: Topology A (one shared app-password per chat). Recorded by pm-architect in architecture.md (new decision #2) + product.md.
+- webdav-transport feature complete: plan → spec → code → plan-checker (approve) → code-review (Pass 2, 12 findings fixed) → committed dff0d2f on branch feature/webdav-transport. Archived to archive/webdav-transport-2026-06-03.md.
 
 ## Remaining
 
-- PM to answer 3 open decisions (polling cadence, ktlint/detekt, CI emulator) — non-blocking, can defer
-- Initial bootstrap commit (PM runs `git commit --no-verify` — no code exists yet)
-- Plan the first feature (likely the WebDAV transport + docs/protocol/webdav-layout.md)
+- PM decision: merge feature/webdav-transport into main (no git remote — local only).
+- Manual smoke vs a real Yandex.Disk account (needs PM app-password).
+- Next feature (suggested: crypto — AEAD + Argon2id, fills the envelope ciphertext slot).
 
 ## Touched files
 
-CLAUDE.md, README.md, docs/architecture.md, docs/product.md, docs/product-map.md, docs/stack-notes.md, docs/user-journeys.md, docs/threat-model.md, docs/ui-guide.md, .ai-pm/state/current.md, .gitmodules/.ai-pm/tooling (submodule bump to v2.8.0)
+(committed in dff0d2f)
 
 ## Next step
 
-PM validates the brief and answers the 3 open decisions; then make the bootstrap commit and wait for the first feature.
+Wait for PM: merge to main and/or describe the next feature.
 
 ## Validation
 
-pending
+Pipeline green (test/lint/ktlintCheck) on feature/webdav-transport, verified independently.
 
 ## Notes
 
-Greenfield bootstrap. Stack: Kotlin + Jetpack Compose, WebDAV transport, passphrase-per-chat E2E. MVP scope: 1:1 + group chats, 5 reactions, replies, configurable polling. Deferred: Telegram gateway, multi-disk, X25519 identity keys.
-
-Additional PM requirements (2026-06-03, to fold into architecture/product via pm-architect):
-- Markdown in messages: bold, italic, inline+block code, quote, link (rendered client-side; markdown is part of the encrypted body).
-- Traffic compression: compress message bodies/batches (gzip/zstd) BEFORE encryption — WebDAV is slow.
-- Aggregated sync: one poll returns everything changed for the user (per-user inbox/changeset), NOT per-chat polling. Core protocol decision to minimise round-trips over slow WebDAV.
+No git remote configured — pr-prep/GitHub PR not applicable; merge happens locally if PM wants it.
+Open product note: TLS is enforced — a non-loopback `http://` WebDAV URL is rejected (CleartextRejected); a self-hosted WebDAV server must be reachable over https.
+Three open architecture decisions still pending (polling cadence / foreground-service, CI emulator). ktlint+Lint resolved. Codec-id reject-don't-guess gap (plan-checker note) is now closed in Envelope.read.
 
 ---
 
