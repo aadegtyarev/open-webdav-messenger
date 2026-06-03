@@ -38,6 +38,15 @@ These shape the invite / directory / community features below.
   - **Honest limit:** offline longer than the window still loses the oldest (unavoidable without a server and with finite disk; make the window generous + configurable). Media/attachments (future) need stricter caps.
   - **This REVISES architecture decision #2 (aggregated sync) and the `webdav-layout` per-recipient-inbox model** ("inbox fan-out + delete-after-read" → "shared chat log + per-user change index + retention window"). Low-level transport verbs are unchanged; the on-disk LAYOUT changes. To be reconciled by pm-architect when the **sync / message-model** features are planned — they own the webdav-layout rework and the decision #2 update.
 
+## Host-governed polling floor (PM idea, 2026-06-04 — refines open decision #6)
+
+The community **host sets a community-wide minimum polling interval** (they own the shared disk, see the load, and are responsible for all members + the Yandex 429 rate-limit budget). Shape:
+- The minimum lives in **signed community metadata** (`meta/community.json`, Ed25519-signed by the host — uses the `identity` substrate). Non-secret.
+- **Each member can only configure their interval UPWARD from that floor.** Effective interval = `max(member's choice, community-minimum, platform-floor)` — where the platform-floor is the WorkManager ~15-min periodic floor (or lower in the foreground-service mode of decision #6).
+- **Enforcement is cooperative / honest-client** (a member could poll faster, hurting the shared disk; acceptable in a trusted community — record in the threat model as a cooperative assumption, not an enforced guarantee). Over-polling is hard to attribute under the one-shared-credential model (reads are mostly invisible per-member).
+- **Future:** auto-tune the community minimum from member count / observed 429 pressure (host-driven, validated on real tests).
+- **Partially resolves open architecture decision #6** (polling cadence): the *minimum* is host-governed community policy; the WorkManager-floor-vs-foreground-service mechanism is still the separate open question. Belongs to the **community** feature (needs `meta/community.json` + host signing) layered over the `sync` poll loop.
+
 ## Downstream expectations recorded from review
 
 - **Chat-model must cache the derived chat key in memory** (plan-checker note, crypto review 2026-06-03). The crypto substrate's "no re-derivation per message" relies on the caller holding the `ChatKey` / using `ChatKeyStore.load()` rather than re-running Argon2id (INTERACTIVE = slow) on every send/receive. The chat-model/sync feature owns this caching; do not re-derive per message.

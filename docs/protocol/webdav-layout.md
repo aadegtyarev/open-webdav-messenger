@@ -7,7 +7,7 @@
 > **Trust model recap (decision 2, Topology A):** all members of a chat share **one** WebDAV credential (one app-password) scoped to one folder. To the provider they are the same disk identity. Every member can **read AND delete every file** in the shared space. Nothing below is an access-control boundary — the inbox split is a *read-efficiency* layout only.
 
 **Protocol version:** `1` (see [§7 Versioning](#7-versioning)).
-**Status:** transport slots fixed; crypto slot fixed (filled by the crypto feature); compression slot reserved (marked `filled by <feature>`).
+**Status:** transport slots fixed; crypto slot fixed (filled by the crypto feature); message-plaintext format fixed (§8, filled by the message-model feature); compression slot reserved (marked `filled by <feature>`).
 
 ---
 
@@ -130,7 +130,7 @@ seq         = b32hex-fixed( per-sender-counter, 8 ) ; 8 chars
 
 Every reader computes the same order from the file names alone — no clock, no server time, no decryption needed for ordering.
 
-**Causality:** a `reply-to` may reference a message-id not yet delivered. The reader does **not** reorder or block on it — it shows the reply against an unknown/unloaded target and degrades gracefully (architecture → Ordering & causality). `reply-to` lives inside the envelope plaintext (§5 / crypto feature), not in the file name.
+**Causality:** a `reply-to` may reference the §2 file name of a message not yet delivered. The reader does **not** reorder or block on it — it shows the reply against an unknown/unloaded target and degrades gracefully (architecture → Ordering & causality). `reply-to` is a §2 file name carried inside the envelope plaintext (§5 / §8.4); it references *another* message and is distinct from this envelope's own file name (a message has no inner self-id, §8.6).
 
 ---
 
@@ -178,7 +178,7 @@ ciphertext-blob = nonce(24 bytes) ‖ AEAD-ciphertext-with-tag
 - **Truncated-blob guard:** a ciphertext-blob shorter than `nonce(24) + tag(16) = 40` bytes cannot be a valid sealed message. The reader treats it as a **reject / NotReady path** (skip this cycle, retry — consistent with §3 incomplete-write tolerance), **not** an index/bounds error. (For an empty plaintext the minimum valid blob is exactly 40 bytes: 24-byte nonce + 16-byte tag + 0-byte ciphertext.)
 - **Key source is out of frame.** Which of the three key sources (known / random / passphrase — `docs/architecture.md` → decision "Crypto substrate") produced the AEAD key is **not** encoded in the blob or header; it is determined by the chat's configuration (the chat taxonomy, architecture → Behavioral contract). The blob layout is identical for all three.
 
-- **Plaintext envelope fields** (message-id echo, chat-id, chat-type, sender, reply-to, reaction, body, ordering data) live **inside** the encrypted plaintext, not in this outer frame, and are specified by the crypto/message-model features against `docs/architecture.md` → *Message envelope (conceptual fields)*. The outer frame here carries only what a reader needs **before** decryption: magic, versions, codec-id.
+- **Plaintext envelope fields** (chat-id, sender identity public key, optional reply-to, body, reaction, send-timestamp) live **inside** this encrypted plaintext, not in this outer frame. A message carries **no inner self-id** — its identity is its §2 file name (§8.6); `reply-to`/`target-id` carry other messages' §2 file names. Their exact structure — a versioned, signed, TLV message format with `kind` ∈ {text, reaction} — is pinned in **§8 (Message plaintext format)** of this document (authored by the `message-model` feature). The outer frame here carries only what a reader needs **before** decryption: magic, versions, codec-id.
 - **Decompression bound (zip-bomb guard):** when the compression feature wires `codec-id = deflate`, the reader MUST bound the inflated size; exceeding the bound is an error path (architecture → Decompression bound). The numeric bound is fixed by the compression feature, not here.
 
 ---
@@ -213,6 +213,132 @@ Two independent version fields, so path layout and byte framing can evolve separ
 - A reader that reads a message file whose **`magic`** ≠ `"OWDM"` or whose **`envelope-version`** it does not implement MUST skip/reject that file as not-understood — it MUST NOT attempt to parse the blob. Same rule for an unknown **`codec-id`** (§5). A blob too short to hold `nonce(24) + tag(16)` is likewise rejected (§5.1) — as not-ready/reject, not a bounds error.
 - This "reject, don't guess" rule is what lets a future version add fields or change framing without a newer writer silently corrupting an older reader's view.
 
+
+## 8. Message plaintext format (inside the §5.1 ciphertext-blob)
+
+> **What this section is.** §5/§5.1 specify the **outer envelope framing** — `magic ‖ envelope-version ‖ codec-id ‖ flags ‖ reserved` then the `ciphertext-blob = nonce(24) ‖ AEAD-ciphertext-with-tag`. This section specifies the **plaintext that the AEAD seals/opens** — the structured bytes that, once `codec-id = 0x00` (no decompression) and AEAD-`open` have run, a reader deserializes into a typed message. It is the **interop contract the `message-model` feature implements** (`docs/features/message-model_plan.md`). Two app instances agree on a message's meaning iff they agree on this section.
+>
+> **Relationship to the outer frame.** These bytes are exactly the plaintext fed to `Aead.seal` and returned by `Aead.open` (§5.1). They are **confidentiality-protected** (sealed inside the ciphertext-blob) and **integrity-protected as a whole** by the Poly1305 tag over (nonce, header-as-AAD, ciphertext). The per-message Ed25519 signature below is an **additional, in-plaintext** authenticator that distinguishes *which member* sent the message — something the shared AEAD key cannot do (§8.3).
+>
+> **Codec.** For this feature `codec-id` stays **`0x00` (none)** — the plaintext below is **not** compressed. Compression is a later feature that may set `codec-id = 0x01`; when it does, the bytes in this section are what gets DEFLATE'd before sealing and inflated after opening. Nothing in §8 changes when compression turns on.
+
+### 8.1 Design rules
+
+- **Versioned and forward-compatible.** A 1-byte `msg-format-version` leads every message. This is **independent** of the §7 protocol version and the §5 `envelope-version` — it governs only the plaintext structure in this section.
+- **Reject-don't-guess (consistent with §7).** An unknown `msg-format-version` or an unknown `kind` tag, a length prefix that overruns the buffer, a trailing-bytes mismatch, a signature that does not verify, or an out-of-range enumerated value (e.g. a reaction index ∉ 0..4) is a **typed rejection** — the message is dropped, never partially parsed, never surfaced as valid, never a crash. A parser MUST validate every length prefix against the remaining buffer before reading (no index/bounds exception escapes to the caller — stack-notes → Kotlin null-safety/Java-interop: no `!!` on parse paths).
+- **Extensible.** New `kind` tags and new trailing fields can be added under a future `msg-format-version` without breaking an older reader: the older reader sees an unknown version (or unknown kind) and rejects that one message, rather than mis-reading it.
+- **Big-endian** for every multi-byte integer (same convention as §5, §0).
+
+### 8.2 Common layout — TLV body under a fixed prefix
+
+Every message, regardless of kind, is:
+
+```
+offset  size  field               value / meaning
+------  ----  ------------------  ---------------------------------------------------
+0       1     msg-format-version  0x01  — this plaintext-format version (§8.1)
+1       1     kind                0x01 = text (§8.4), 0x02 = reaction (§8.5)
+                                   [0x03..0x05 RESERVED: edit/delete/system — NOT defined now]
+                                   [unknown kind = reject, §8.1]
+2       32    sender-id-pubkey    sender's identity Ed25519 PUBLIC key (crypto_sign_PUBLICKEYBYTES = 32)
+34      2     field-count         number of TLV fields that follow (big-endian uint16)
+36      ...   fields              field-count TLV triples (§8.2.1), the SIGNED PAYLOAD
+...     64    signature           Ed25519 detached signature (crypto_sign_BYTES = 64) over §8.3's byte range
+```
+
+- The **signed payload** is the contiguous byte range `[offset 0 .. start-of-signature)` — i.e. everything from `msg-format-version` through the last TLV field, **excluding** the trailing 64-byte `signature` itself (§8.3 pins this exactly).
+- `sender-id-pubkey` is carried in the fixed prefix (not as a TLV) because it is mandatory for **every** kind and is the key the verifier checks the signature against.
+- The `signature` is the **final 64 bytes** of the plaintext; the signed payload is therefore `plaintext[0 .. len-64)` and the signature is `plaintext[len-64 .. len)`. A plaintext shorter than `36 + 64 = 100` bytes (minimum prefix + zero fields + signature) cannot be valid → reject (not a bounds error).
+- **No self-id in the prefix or the TLV body.** The fixed prefix carries no field naming the message itself, and **no `kind` requires a self message-id TLV** (§8.4 / §8.5): a message's identity is its §2 file name, assigned on seal (§8.6). The prefix and the 100-byte structural minimum above are therefore unchanged by that — the self-id was never part of the prefix.
+- **Per-kind minimum valid sizes** (structural floor a parser may use; all are ≥ 100 bytes so the 100-byte check above always fires first). With the §8.2.1 TLV overhead of `1 (tag) + 2 (len) = 3` bytes per field, the smallest well-formed message of each kind is: a `text` with an empty body and no `reply-to` = prefix(36) + `chat-id` TLV(3 + len) + `body` TLV(3 + 0) + `send-timestamp` TLV(3 + 8) + signature(64); a `reaction` = prefix(36) + `chat-id` TLV(3 + len) + `target-id` TLV(3 + 62) + `reaction-index` TLV(3 + 1) + signature(64). (These depend on the `chat-id` length, still `[?]`; the constant `100`-byte floor is the only hard wire-level minimum.)
+
+#### 8.2.1 TLV field encoding
+
+Each field in the `fields` region is a TLV triple:
+
+```
+1 byte    field-tag      identifies the field (per-kind table, §8.4 / §8.5)
+2 bytes   length         big-endian uint16 = byte length of value (0..65535)
+length    value          the field bytes (encoding per field)
+```
+
+- **Tags are per-kind** (a tag number is interpreted in the context of the `kind` byte). A reader MUST read exactly `field-count` (prefix byte 34) triples and MUST end exactly at the start of the 64-byte signature; any overrun/underrun = reject.
+- **Unknown field-tag within a known kind+version:** reject (this version's kind has a closed field set; new fields arrive under a new `msg-format-version`). This keeps "reject-don't-guess" total: a same-version message never carries a field this build does not know.
+- **Optional fields** are simply absent (not present as a TLV). **Required fields** MUST be present exactly once; a missing required field or a duplicate tag = reject.
+- **Integer fields** (e.g. timestamp, reaction-index) carry their value big-endian in `value` with the exact width stated per field.
+- **String/text fields** (e.g. body) carry **UTF-8 bytes**, no NUL terminator (the `length` is authoritative); the body is **raw** — the Markdown subset is carried verbatim, no rendering, no normalization (rendering is the UI feature, decision 5).
+
+### 8.3 Per-message Ed25519 signature — what it covers and why
+
+- **Purpose — intra-chat sender authentication.** The AEAD key is **shared by every chat member** (decision 9 / Chat taxonomy: a chat key is one of known/random/passphrase, held by all members). AEAD therefore proves *a member of this chat* sealed the message, but **cannot distinguish which member** — any member could forge a message as another. The per-message Ed25519 signature closes this: each message is signed with the **sender's identity Ed25519 secret key** (decision 10 identity substrate), and carries the matching **public** key (`sender-id-pubkey`, §8.2). A member cannot sign as another member (they do not hold that member's Ed25519 secret), so impersonation is detected on verify.
+- **Signed byte range (signer and verifier MUST agree exactly):** the signature covers `plaintext[0 .. len-64)` — the **entire serialized message from `msg-format-version` through the final TLV field, excluding the trailing 64-byte signature**. Concretely: `msg-format-version ‖ kind ‖ sender-id-pubkey ‖ field-count ‖ fields`. Because `sender-id-pubkey` is inside the signed range, the claimed sender key is itself signed (it cannot be swapped without breaking the signature).
+- **Sign:** `crypto_sign_detached(signed-payload, sender_ed25519_sk)` → 64-byte detached signature, appended as the final field.
+- **Verify (hard reject):** `crypto_sign_verify_detached(signature, signed-payload, sender-id-pubkey)`; libsodium returns `-1` on failure → **hard reject**, never best-effort (stack-notes → Crypto "verify with `crypto_sign_verify_detached` … treat -1 as a hard reject"). A `Rejected` result is also returned on: unknown version/kind, malformed/truncated buffer, bad length prefix, out-of-range enum, or a sender key the directory (a future feature) later distrusts — at *this* layer, only the cryptographic signature/structure is checked; **binding the key to a human is the directory/safety-number feature's job** (decision 10), not this one.
+- **Confidentiality of the signature.** The whole signed message (including `sender-id-pubkey` and `signature`) lives **inside** the §5.1 ciphertext-blob, so the sender's identity public key and the signature are **also confidentiality-protected** — an on-disk observer (the disk operator) sees only AEAD ciphertext, not who signed.
+- **Tamper-evidence.** Flipping any byte of the signed payload after signing breaks `verify_detached` → `Rejected`. (This is in addition to the outer Poly1305 tag and the §3 content-hash-in-name check, which already reject any post-seal byte flip.)
+
+### 8.4 `text` message (kind = 0x01)
+
+Carries a chat message body plus an optional reply reference. TLV field set (interpreted under `kind = 0x01`):
+
+```
+tag   field            req?  value encoding
+----  ---------------  ----  ------------------------------------------------------------
+0x01  chat-id          req   chat identifier the message belongs to. UTF-8; grammar is [?] in
+                             architecture (chat-id grammar still open) — carried opaque here, length-
+                             prefixed, validated against the chat-id grammar once that feature pins it.
+0x02  reply-to         opt   the FULL §2 file name (order-token "~" content-hash) of the message this
+                             text quotes — i.e. the content-addressed name of an already-received
+                             message (§2 grammar, 62 bytes for a well-formed name, alphabet [0-9a-z~-]).
+                             The reader validates the §2 grammar; a malformed value = reject. Absent =
+                             not a reply. May reference an as-yet-undelivered target (§4 causality:
+                             "a reply may precede its target") — the value is a valid string; whether it
+                             resolves to a loaded message is the READER's concern, NOT a parse error.
+0x03  body             req   UTF-8 text = plain text + the supported Markdown subset, RAW (no
+                             rendering, no normalization). length is the UTF-8 byte count (0..65535).
+0x04  send-timestamp   req   sender wall-clock at send, unix-millis, big-endian uint64 (8 bytes).
+                             DISPLAY-ONLY / best-effort — NOT trusted, NOT used for ordering
+                             (ordering is the outer §4 order-token). Clocks may drift/lie.
+```
+
+- **No self-id field.** A text message carries **no** inner "self" message-id: its identity **is** the §2 content-addressed file name of the envelope that seals it (§8.6), assigned at seal time. There is nothing inside the plaintext that names the message itself.
+- `sender` (the author's public identity) is **not** a TLV here — it is the fixed-prefix `sender-id-pubkey` (§8.2), shared by all kinds.
+- A `text` message with no `reply-to` round-trips with the field absent; with `reply-to` set it round-trips present (plan test `reply_to_optional`).
+
+### 8.5 `reaction` message (kind = 0x02)
+
+A reaction is its **own** message (not a field on a text message), carrying the target it reacts to and an index into the fixed 5-reaction set. TLV field set (interpreted under `kind = 0x02`):
+
+```
+tag   field            req?  value encoding
+----  ---------------  ----  ------------------------------------------------------------
+0x01  chat-id          req   chat identifier (same encoding as §8.4 tag 0x01).
+0x02  target-id        req   the FULL §2 file name (order-token "~" content-hash) of the message being
+                             reacted to — the content-addressed name of an already-received message
+                             (§2 grammar; a malformed value = reject). May reference an as-yet-unseen
+                             message (§4 causality) — applying a reaction to a missing target is a
+                             sync/UI concern, NOT a parse error.
+0x03  reaction-index   req   a single byte, value in the closed range 0..4 (the fixed 5-reaction set,
+                             architecture → Reaction enum). An index ∉ 0..4 = REJECT (§8.1). The
+                             concrete glyph for each index is a UI concern and is NOT fixed here.
+```
+
+- **No self-id field.** Like a text message (§8.4), a reaction carries **no** inner self message-id. The reaction is itself a content-addressed message, and its identity **is** its §2 file name (§8.6) — it does not name itself inside its own plaintext.
+- `send-timestamp` is **not** carried on a reaction (a reaction's display position follows its target / its own §4 order-token; no display timestamp is needed). A future `msg-format-version` may add one as a new optional tag without breaking this version's readers.
+
+### 8.6 Message identity: the §2 file name, no inner self-id
+
+**A message has no inner self-id. Its identity IS its §2 content-addressed file name** (`order-token "~" content-hash`, §2), assigned at seal time. References to *other* messages carry those other messages' §2 file names. There is only **one** id space — the §2 file name — and the plaintext never duplicates it.
+
+**Why no inner self-id (the fixed-point that forced this).** The §2 file name's `content-hash = b32lower(SHA-256(envelope-file-bytes))[0:32]` is computed over the **sealed** envelope bytes — which **encrypt** the plaintext. An inner field that had to equal the file name would therefore have to equal a SHA-256 taken over bytes that *include the encryption of that very field*: a self-referential fixed point over SHA-256 (you would have to invert the hash to choose a plaintext byte that makes its own ciphertext hash to a chosen value). It is **unsatisfiable**, not merely awkward. So the plaintext carries **no** field naming itself; identity is supplied entirely by the §2 name the transport assigns on seal.
+
+- **Outer file name (§2)** = `order-token "~" content-hash`, content-addressed over the **whole envelope** (magic ‖ versions ‖ codec-id ‖ flags ‖ reserved ‖ nonce ‖ AEAD-ciphertext-with-tag). It is the message's id, the path on the disk, the dedup key, the idempotency key, and (via the `order-token` prefix) its ordering key (§2, §3, §4). **This is the message's only id.**
+- **References use full §2 file names.** `reply-to` (§8.4) and `target-id` (§8.5) each carry the **full §2 file name** of an **already-received** message (the sender received those messages, so it knows their names). Content-addressed names are globally unambiguous, so a reference resolves directly to an on-disk path — no second id space, no mapping table.
+- **Graceful degradation (mirrors §4).** A reference may name a message the reader has not yet received (§4: "a reply may precede its target"). The reference is a **valid string**; whether it currently resolves to a loaded message is the **reader's** concern (sync/UI degrades gracefully), **not** a parse error. The parser only checks the value is a well-formed §2 name.
+- **No "self ↔ name" cross-check exists** (there is nothing to cross-check — no inner self-id). The on-read integrity check that ties bytes to name is the **§3 content-hash check** (`b32lower(SHA-256(file-bytes))[0:32]` must equal the name's `content-hash` suffix), plus the outer Poly1305 tag (§5.1) and the §8.3 Ed25519 signature. These three already reject any post-seal byte flip and authenticate the sender; the removed inner self-id added nothing they do not already provide.
+
+> **Why not put the signature in the content-hash only?** The §3 content-hash detects *any* byte change but cannot say *who* wrote the bytes (any member can compute a valid content-hash for a forged message). The §8.3 Ed25519 signature is the layer that authenticates the **sender within the shared-key chat** — orthogonal to, and additional to, content-addressing and AEAD.
+
 ---
 
 ## Cross-references
@@ -221,5 +347,6 @@ Two independent version fields, so path layout and byte framing can evolve separ
 - `docs/stack-notes.md` → *OkHttp + WebDAV layer* (verbs, Depth, ETag/If-Match, 429), *Traffic compression* (compress-then-encrypt, codec-id), *Crypto library* (AEAD that fills the ciphertext-blob slot).
 - `docs/features/webdav-transport_plan.md` — the feature that implements §1, §2, §3 (append-only), §6.
 - `docs/features/crypto_plan.md` — the feature that fills §5.1 (ciphertext-blob: nonce + XChaCha20-Poly1305 + tag, header as AAD).
+- `docs/features/message-model_plan.md` — the feature that authors §8 (the inner signed message plaintext: versioned TLV, kind {text, reaction}, per-message Ed25519 signature) and implements serialize/sign/parse/verify; rides inside the §5.1 ciphertext-blob with `codec-id = 0x00`.
 
-*Authored 2026-06-03 for v2.9.0. Transport slots fixed; §5.1 crypto slot fixed by the crypto feature (2026-06-03); compression slot reserved.*
+*Authored 2026-06-03 for v2.9.0. Transport slots fixed; §5.1 crypto slot fixed by the crypto feature (2026-06-03); §8 message-plaintext format fixed by the message-model feature (2026-06-03); compression slot reserved. §8 corrected 2026-06-04: removed the unsatisfiable inner self-`message-id` field (a fixed point over SHA-256 of the sealed bytes) — a message's identity is now solely its §2 file name, and `reply-to`/`target-id` carry other messages' full §2 file names (§8.4/§8.5/§8.6).*

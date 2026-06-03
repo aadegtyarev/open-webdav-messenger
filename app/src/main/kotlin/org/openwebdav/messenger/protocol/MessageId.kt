@@ -17,6 +17,15 @@ internal object MessageId {
     /** §2: content-hash length in Base32 characters. */
     private const val CONTENT_HASH_LEN = 32
 
+    /** §4: order-token length in characters (the §2 prefix before the `~`). */
+    private const val ORDER_TOKEN_LEN = 29
+
+    /** §4: order-token alphabet (`ts-millis` + `-` + `sender-tag` + `-` + `seq`). */
+    private val ORDER_TOKEN_CHARS = ('0'..'9').toSet() + ('a'..'z').toSet() + '-'
+
+    /** §2: content-hash alphabet (RFC 4648 Base32 lowercase, no padding). */
+    private val CONTENT_HASH_CHARS = ('a'..'z').toSet() + ('2'..'7').toSet()
+
     /** §1.2: recipient-inbox-id length in Base32 characters. */
     private const val INBOX_ID_LEN = 26
 
@@ -49,6 +58,22 @@ internal object MessageId {
         val hash = name.substring(sep + 1)
         if (hash.length != CONTENT_HASH_LEN) return null
         return name.substring(0, sep) to hash
+    }
+
+    /**
+     * §2 well-formedness check for a CONTENT-ADDRESSED REFERENCE (a `reply-to` / `target-id` value):
+     * `true` iff [name] is a syntactically valid §2 file name — the `~` split is unambiguous, the
+     * order-token is exactly 29 chars over `[0-9a-z-]`, and the content-hash is exactly 32 chars over
+     * `[a-z2-7]`. This validates well-formedness ONLY (alphabet + the two component lengths/charsets):
+     * a well-formed reference to a not-yet-received message is valid (resolution is the reader's concern,
+     * §4 causality / §8.6) — only a malformed string is rejected.
+     */
+    fun isWellFormedMessageId(name: String): Boolean {
+        val (orderToken, contentHash) = splitMessageId(name) ?: return false
+        if (orderToken.length != ORDER_TOKEN_LEN) return false
+        if (orderToken.any { it !in ORDER_TOKEN_CHARS }) return false
+        // splitMessageId already pins CONTENT_HASH_LEN; re-check the alphabet here.
+        return contentHash.all { it in CONTENT_HASH_CHARS }
     }
 
     /**
