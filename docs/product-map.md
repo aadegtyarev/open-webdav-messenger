@@ -46,3 +46,4 @@ _No contracts yet._
 | [message-model](features/message-model_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/message-model_review.md) |
 | [sync](features/sync_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/sync_review.md) |
 | [directory](features/directory_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/directory_review.md) |
+| [chat-directory](features/chat-directory_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/chat-directory_review.md) |

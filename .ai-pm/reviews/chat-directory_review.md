@@ -111,4 +111,6 @@ Pass 2 — `code-review` high effort (7 finder angles: line-by-line correctness,
 - **Generic enum-codec helper** for `ChatAccess` (byte↔enum `when`) — DROPPED. Over-engineering for a single closed 2-value enum; the explicit `when` with a `null`→typed-reject is clearer and is the reject-don't-guess idiom.
 - **`Envelope.frame(codecId, blob)` re-serialization** on the read path (`ChatDirectoryService.kt:149`) — DROPPED. This mirrors the §10 precedent verbatim (`DirectoryService.kt:132`); the 8-byte rebuild is off any hot path and is the established pattern. Changing it would diverge from §10 for no measurable gain.
 
-## Code review: NOT YET RUN
+## Code review: 2026-06-04 — passed
+
+Finding 1 (hand-rolled hex → `protocol/Hex.encode`) fixed in `b5eb91e` at both grouping-key sites; the swap is byte-identical, so §10 + chat-directory grouping keys are unchanged and the full JVM suite (all §10 directory + chat-directory tests) stays green. The three lower findings were considered and deliberately dropped (recorded above). Re-verified: no hand-rolled `%02x` remains in the chat-directory / directory main code; no new findings. Pass 2 clean.
