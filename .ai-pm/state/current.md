@@ -28,7 +28,7 @@ review
 
 ## Next step
 
-Review loop: pm-architect docs handoff (architecture.md "Release flow"), then pm-plan-checker pass 1 → code-review pass 2.
+Code-review pass 2 finding 1 fixed (release.yml: tag bound via `env: TAG`, no `${{ }}` in any `run:` body). Orchestrator: re-run code-review to confirm clean → stamp `## Code review` → pm-pr-prep ship (v0.8.0 + CHANGELOG + PR).
 
 ## Touched files
 

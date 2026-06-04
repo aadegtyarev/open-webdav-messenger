@@ -44,8 +44,10 @@ jobs:
       # the tag present, and every subsequent step is skipped — the run stays green with no side effect.
       - name: Check whether tag already exists
         id: tagcheck
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          tag='${{ steps.version.outputs.tag }}'
+          tag="$TAG"
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
             echo "Tag $tag already exists — nothing to do."
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -74,8 +76,10 @@ jobs:
       # in this same job, the GITHUB_TOKEN no-retrigger pitfall does not apply.
       - name: Create and push tag
         if: steps.tagcheck.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          tag='${{ steps.version.outputs.tag }}'
+          tag="$TAG"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -m "Release $tag"
