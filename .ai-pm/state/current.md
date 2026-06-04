@@ -34,6 +34,7 @@ release-ci: `./gradlew test ktlintCheck lint` green locally; CI live-green (pr-c
 
 ## Notes
 
+Trivial fixup (2026-06-05, branch fix/flaky-webdav-cancellation-test): deflaked WebDavConcurrencyTest.cancellation_mid_retry_stops_further_attempts — coroutine now starts LAZY so `job` is assigned before the cancelling delayer can read it (was UninitializedPropertyAccessException under CI load). Test-only, no production change. 20/20 loop passes; full pipeline green.
 GitHub remote configured: `git@github.com:aadegtyarev/open-webdav-messenger.git` (private). CI live: `.github/workflows/pr-checks.yml` (PR gates) + `release.yml` (auto-tag + Release + debug APK on version bump). Today 2026-06-05. Version baseline v0.8.0 (7 substrates + CI). Remote tags: v0.6.0, v0.7.0, v0.8.0. CHANGELOG.md current.
 Done substrates: webdav-transport, crypto, identity, message-model, sync, directory, chat-directory; + release-ci (infra).
 Release scope boundary: debug-signed APK only — release-signing / keystore-secret management deferred. connectedAndroidTest stays manual (decision 8 — no CI emulator).
