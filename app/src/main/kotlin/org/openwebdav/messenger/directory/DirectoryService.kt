@@ -86,11 +86,18 @@ class DirectoryService internal constructor(
                 is WebDavResult.Success -> listed.value
                 else -> return DirectoryReadResult(entries = emptyList(), rejectedCount = 0, listingFailed = true)
             }
-        val resolver = SupersedeResolver()
+        val resolver = SupersedeResolver<DirectoryEntry>()
         var rejected = 0
         for (entry in entries) {
             when (val outcome = fetchAndVerify(entry, communityKey)) {
-                is FetchOutcome.Verified -> resolver.offer(outcome.entry, outcome.versionCounter, outcome.entryName)
+                is FetchOutcome.Verified ->
+                    // §10.5: group by the verified signing-pubkey (hex-keyed for a stable map key).
+                    resolver.offer(
+                        groupingKey = outcome.entry.copySigningPublicKey().joinToString("") { "%02x".format(it) },
+                        value = outcome.entry,
+                        versionCounter = outcome.versionCounter,
+                        entryName = outcome.entryName,
+                    )
                 FetchOutcome.Dropped -> rejected++
                 FetchOutcome.NotReady -> rejected++ // transient (incomplete upload / hash mismatch) — counted, retried next read
             }
