@@ -7,6 +7,57 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.7.0] — 2026-06-04
+
+Adds the community chat directory — the substrate that lets members of a shared disk
+discover which groups exist and are joinable, without a server and without the disk
+operator learning the group names or who is in them. The sibling of the user directory:
+where that one discovers *people*, this one discovers *groups*. Backend substrate — no
+user-facing UI yet; this is the chat-discovery foundation a future "browse community
+groups" screen will sit on.
+
+### Added
+
+- **Community chat directory** (`chat-directory`) — members publish a signed, encrypted
+  descriptor of a group (its id, title, public/private access) to the shared WebDAV disk;
+  everyone in the community can list the directory to discover joinable groups. Each
+  descriptor is signed with the publisher's own signing key (so its contents are
+  tamper-evident) and encrypted with the community-wide key (so only community members can
+  read it — the disk operator sees ciphertext only). Listing decrypts and verifies every
+  descriptor, keeps only the latest version per group, and discards anything unsigned,
+  tampered, or encrypted to the wrong community.
+- **Group-only scope — direct messages are never listed.** The chat directory lists groups
+  only. A 1:1 direct-message conversation is refused at publish AND hard-rejected on read,
+  so the directory can never leak the community's social graph (who talks to whom). DMs are
+  reachable only through their own out-of-band invite, never through discovery. (Scope
+  decision: groups in, DMs out — an escalated PM decision.)
+- **Private groups: existence and title are discoverable within the community; the content
+  key never is.** A private group's existence and title are readable by onboarded community
+  members (sealed from the disk operator), but the group's content key is never placed in
+  the directory — a member who discovers a private group still needs the key out-of-band to
+  read or join it. The directory surfaces existence and metadata only, never a chat key.
+- Reuses the existing encryption, identity, transport, and supersede-resolution layers — no
+  new dependency. Backend substrate — no UI.
+
+### Documentation
+
+- Authored on-disk protocol §11 (community chat directory layout) in
+  `docs/protocol/webdav-layout.md`; §1–§10 unchanged.
+- Recorded architecture decision 13 (chat directory substrate: where descriptors live on
+  disk, the self-signed advisory-discovery trust model, group-only scope, and no local
+  cache this feature) in `docs/architecture.md`; generalized SC18/SC19 to cover both
+  community directories and added SC20 (DMs hard-rejected on read).
+
+### Security
+
+- Extended the threat model (`docs/threat-model.md`) with threats T23–T25 covering
+  chat-descriptor spoofing / unauthorized supersede under flat trust (signature is
+  tamper-evidence and authorship of a version, not chat-ownership authority — an
+  authoritative ownership marker is deferred), private-group existence/title visibility
+  within the community barrier (accepted design boundary), and chat-directory metadata
+  exposure to the disk operator (collection structure/count/timing only; content stays
+  sealed).
+
 ## [0.6.0] — 2026-06-04
 
 Adds the community user directory — the substrate that lets members of a shared disk

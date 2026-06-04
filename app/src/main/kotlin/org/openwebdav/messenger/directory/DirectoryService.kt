@@ -3,6 +3,7 @@ package org.openwebdav.messenger.directory
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.protocol.Envelope
+import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.transport.InboxEntry
 import org.openwebdav.messenger.transport.ReadResult
 import org.openwebdav.messenger.transport.WebDavResult
@@ -86,11 +87,18 @@ class DirectoryService internal constructor(
                 is WebDavResult.Success -> listed.value
                 else -> return DirectoryReadResult(entries = emptyList(), rejectedCount = 0, listingFailed = true)
             }
-        val resolver = SupersedeResolver()
+        val resolver = SupersedeResolver<DirectoryEntry>()
         var rejected = 0
         for (entry in entries) {
             when (val outcome = fetchAndVerify(entry, communityKey)) {
-                is FetchOutcome.Verified -> resolver.offer(outcome.entry, outcome.versionCounter, outcome.entryName)
+                is FetchOutcome.Verified ->
+                    // §10.5: group by the verified signing-pubkey (hex-keyed for a stable map key).
+                    resolver.offer(
+                        groupingKey = Hex.encode(outcome.entry.copySigningPublicKey()),
+                        value = outcome.entry,
+                        versionCounter = outcome.versionCounter,
+                        entryName = outcome.entryName,
+                    )
                 FetchOutcome.Dropped -> rejected++
                 FetchOutcome.NotReady -> rejected++ // transient (incomplete upload / hash mismatch) — counted, retried next read
             }
