@@ -18,6 +18,8 @@ idle
 
 - chat-directory feature complete → released v0.7.0, PR #1 squash-merged to main (d358b42). Archived to archive/chat-directory-2026-06-04.md.
 - release-ci feature complete: GitHub Actions CI — PR-check workflow (3 JVM gates per PR) + release workflow (version bump → debug APK + auto-tag + GitHub Release with APK, idempotent, one job). Stack-notes GitHub Actions section, architecture "Release flow" rewritten, pm-plan-checker approve + code-review passed (shell-injection-hygiene finding fixed). Released v0.8.0; PR #2 squash-merged (1107d16). LIVE-VALIDATED: pr-checks.yml green on the PR, release.yml green on merge → tag v0.8.0 + GitHub Release + app-debug.apk all present. Backfill tags v0.6.0/v0.7.0 pushed. Archived to archive/release-ci-2026-06-05.md.
+- Flaky-test deflake (PR #4, e8772c1): CI caught `WebDavConcurrencyTest.cancellation_mid_retry_stops_further_attempts` racing on a `lateinit job` (UninitializedPropertyAccessException under CI load). Fixed test-only (LAZY coroutine start so `job` is assigned before the cancelling delayer reads it); 20/20 loop + CI green. Production code untouched.
+- Protocol bump (PR #3, 55efbbf): ai-pm-protocol v2.23.0 → v2.25.1 (submodule e940085 → fc2faec). All additive, no migration; settings.json symlink makes the v2.25.1 hook change active automatically. CI green (with the deflake merged in first). PENDING per maintenance flow: run /pm-audit (the new v2.24–v2.25 content disciplines — state-model section, automode-procedural-gates, NFR-limits — are surfaced by audit docs-currency, none blocking).
 
 ## Remaining
 
@@ -26,7 +28,7 @@ idle
 
 ## Next step
 
-Wait for PM: pick the next feature (or address the Node-20 CI-action bump).
+Wait for PM: recommended /pm-audit after the protocol bump; else pick the next feature (or the Node-20 CI-action bump).
 
 ## Validation
 
