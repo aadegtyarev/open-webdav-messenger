@@ -54,6 +54,26 @@ internal class WebDavTransport(
     }
 
     /**
+     * GET a **content-addressed** file whose whole name is `b32lower(SHA-256(file-bytes))[0:N]` (the
+     * §10.4 directory-entry naming), as opposed to a §2 message-id (`order-token "~" content-hash`).
+     * Verifies the §3 / §10.6 on-read content-hash: the recomputed `b32lower(SHA-256(file-bytes))[0:N]`
+     * (truncated to the length of [expectedHash]) must equal [expectedHash]. On mismatch / truncation /
+     * a 404 race / oversize, the file is "not ready" → [ReadResult.NotReady] (skip + retry, never a
+     * crash). On success the post-header blob (§5) is returned with the on-disk codec-id. The §1–§9
+     * message read path ([read]) is unchanged — this is an additive sibling for the community-scoped
+     * directory whose names are not §2 message-ids.
+     */
+    suspend fun readContentAddressed(
+        path: String,
+        expectedHash: String,
+    ): WebDavResult<ReadResult> {
+        gate(path)?.let { return it }
+        return executor.execute(requests.get(path)) { response ->
+            mapContentAddressedRead(response, expectedHash)
+        }
+    }
+
+    /**
      * PUT [bytes] (an already-framed envelope, §5) to [path]. Message writes are unconditional
      * and append-only (§6); pass [ifMatch] only for mutable `meta/` files. A `412` becomes a typed
      * [WebDavResult.Conflict].
@@ -131,6 +151,36 @@ internal class WebDavTransport(
     private fun mapRead(
         response: Response,
         name: String,
+    ): WebDavResult<ReadResult> =
+        mapVerifiedRead(response) { bytes ->
+            // §3: the recomputed content-hash must equal the `~`-split suffix of the §2 message-id.
+            // A missing / unsplittable id is treated as a failed check (→ not-ready), never a Ready.
+            val expected = MessageId.splitMessageId(name)?.second
+            expected != null && MessageId.contentHash(bytes) == expected
+        }
+
+    private fun mapContentAddressedRead(
+        response: Response,
+        expectedHash: String,
+    ): WebDavResult<ReadResult> =
+        mapVerifiedRead(response) { bytes ->
+            // §3 / §10.6: recompute b32lower(SHA-256(file-bytes)) and truncate to the name's length. A
+            // mismatch means tampered OR still-uploading (Yandex computes the hash after upload) — both
+            // are not-ready/skip, never surfaced as a valid entry (the directory drops it, reads the rest).
+            MessageId.contentHash(bytes).take(expectedHash.length) == expectedHash
+        }
+
+    /**
+     * Shared GET-body mapping for the two content-hash-verified read paths ([read] over §2 message-ids,
+     * [readContentAddressed] over §10.4 content-addressed names). The flow is identical — 404 race →
+     * not-ready, bounded [readCapped] (oversize/empty → not-ready), then the §3 content-hash tamper check,
+     * then the §5/§7 frame parse → [ReadResult.Ready] — and differs only in [hashOk], the per-path
+     * predicate that decides whether the recomputed hash matches what the name claims. Unifying both
+     * security-relevant read paths here means the DoS bound and the on-read hash check evolve in lock-step.
+     */
+    private inline fun mapVerifiedRead(
+        response: Response,
+        hashOk: (ByteArray) -> Boolean,
     ): WebDavResult<ReadResult> {
         // A 404 GET is a benign race (a concurrent processor deleted the file, or eventual-
         // consistency lag), the same family as delete()'s 404→success. Map to the skip result,
@@ -143,10 +193,7 @@ internal class WebDavTransport(
                 is CappedRead.Empty -> return WebDavResult.Success(ReadResult.NotReady)
                 is CappedRead.Bytes -> read.value
             }
-        val expected = MessageId.splitMessageId(name)?.second
-        if (expected == null || MessageId.contentHash(bytes) != expected) {
-            return WebDavResult.Success(ReadResult.NotReady)
-        }
+        if (!hashOk(bytes)) return WebDavResult.Success(ReadResult.NotReady)
         // Expose the validated on-disk header alongside the blob so the reader rebuilds the EXACT §5.1
         // AEAD AAD (codec-id and all) rather than assuming codec 0x00 (review finding 4). An unparseable
         // frame (bad magic / unknown envelope-version / unknown codec-id) is §7 reject → not-ready.

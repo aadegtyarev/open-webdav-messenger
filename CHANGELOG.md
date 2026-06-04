@@ -7,6 +7,47 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.6.0] — 2026-06-04
+
+Adds the community user directory — the substrate that lets members of a shared disk
+discover each other and each other's verified public keys, without a server and without
+the disk operator learning who is in the community. Backend substrate — no user-facing UI
+yet; this is the discovery foundation a future contact list will sit on.
+
+### Added
+
+- **Community user directory** (`directory`) — members publish a signed identity entry to
+  the shared WebDAV disk; everyone in the community can list the directory and verify each
+  member's public keys. Each entry is signed with the member's own signing key (so it
+  cannot be forged) and encrypted with a community-wide key (so only community members can
+  read it — the disk operator sees ciphertext only). Listing decrypts and verifies every
+  entry, keeps only the latest one per member, and discards anything unsigned, tampered, or
+  encrypted to the wrong community. Reuses the existing encryption, identity, and transport
+  layers — no new dependency. Backend substrate — no UI.
+
+### Documentation
+
+- Authored on-disk protocol §10 (community user directory layout) in
+  `docs/protocol/webdav-layout.md`; §1–§9 unchanged.
+- Recorded architecture decision 12 (directory substrate: where entries live on disk, the
+  self-published signed-entry trust model, and no local cache this feature) in
+  `docs/architecture.md`.
+
+### Security
+
+- Extended the threat model (`docs/threat-model.md`) with threats T20–T22 covering
+  impersonation-by-display-name (accepted limitation, mitigated by QR safety-number
+  verification), community-key compromise, and directory metadata exposure.
+
+### Known limitations
+
+- Trust is self-published: a member's directory entry asserts its own keys. Confirming a
+  member is who they claim still requires an out-of-band check (QR safety number).
+- Identity name collisions are possible — two members may publish the same display name;
+  the public key, not the name, is authoritative.
+- The community key is supplied as configuration; secure onboarding/distribution of that
+  key is a later feature.
+
 ## [0.5.0] — 2026-06-04
 
 First versioned release. Establishes the baseline after five backend substrates and the

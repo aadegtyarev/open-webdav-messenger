@@ -8,7 +8,7 @@
 
 **Protocol version:** `2` (see [§7 Versioning](#7-versioning)). **Layout generation 2** replaces the v1 per-recipient inbox fan-out with a **shared per-chat log + per-user change index + reserved retention window** (sync feature, 2026-06-04). The byte-level pieces below — §2 message-id grammar, §3 append-only + content-hash-on-read, §4 order-token, §5/§5.1 envelope framing + AEAD, §8 inner message format — are **unchanged** from v1; only §1 (folder layout), the inbox-specific parts of §3/§6, and the new §9 (change index + cursor) changed.
 
-**Status:** transport slots fixed; crypto slot fixed (filled by the crypto feature); message-plaintext format fixed (§8, filled by the message-model feature); folder/poll layout reworked to generation 2 (filled by the sync feature); retention-window pruning reserved (§1.4, **deferred** — not implemented this feature); compression slot reserved (marked `filled by <feature>`).
+**Status:** transport slots fixed; crypto slot fixed (filled by the crypto feature); message-plaintext format fixed (§8, filled by the message-model feature); folder/poll layout reworked to generation 2 (filled by the sync feature); community user directory authored (§10, filled by the directory feature — first community-scoped collection, additive, §1–§9 unchanged); retention-window pruning reserved (§1.4, **deferred** — not implemented this feature); compression slot reserved (marked `filled by <feature>`).
 
 ---
 
@@ -406,13 +406,110 @@ The properties the plan requires fall out of this:
 
 ---
 
+## 10. Community user directory (community-scoped)
+
+> **What this section is.** §1–§9 are **chat-scoped** — one chat-root holds one chat's `log/` + `changes/` + `meta/`. This section adds the first **community-scoped** collection: a directory in which each member publishes a signed, community-key-AEAD-sealed identity entry (a display-name + their two **public** identity keys), so any member can list, decrypt, verify, and resolve the latest entry per member and obtain their verified public keys. It is the interop contract the **directory** feature implements (`docs/features/directory_plan.md`). Two app instances agree on a directory entry's meaning iff they agree on this section. **Backend only — no UI.** It does **not** disturb §1–§9 (per-chat layout, message-id, envelope, message plaintext, cursor): the directory is a distinct location and a distinct inner format.
+>
+> **Trust model.** Entries are **self-published** — each member signs their own entry with their own Ed25519 signing key (the same hard-reject-on-`-1` verify as §8.3). The signature proves *the holder of that signing key authored this entry*; it does **not** bind that key to a human — binding a name to a person is the deferred **QR safety-number** UI (out of scope). Confidentiality of names/keys comes from the **community-key AEAD seal**, not from the path: under the one shared credential (decision 2 / Topology A) any member can read or delete any entry; the directory path is **not** an access-control boundary (the same flat-trust model as §3 / SC11).
+
+### 10.1 On-disk home — community-root + reserved `directory/` collection
+
+The directory is **community-scoped**, one scope level above the chat-roots of §1. A **community-root** path is supplied in connection config exactly as the chat-root is (§1.1: base URL + app-password + community-root path, all local config, **never written to the disk** — SC3/SC4 family). Directly under the community-root lives a reserved **`directory/`** collection — a single flat collection of entry files, one file per member-version.
+
+```
+<webdav-base-url>/<community-root>/      # the community's shared space (one credential, decision 2)
+├── directory/                           # the community user directory (this section) — flat collection
+│   ├── <entry-name>                     # one file per published member-version, content-addressed (§10.4)
+│   ├── <entry-name>
+│   └── <entry-name>
+├── meta/                                # RESERVED — community-level meta (community.json owner marker) [community feature, NOT designed here]
+│   └── community.json                   # owner marker — reserved sibling, populated by a later feature
+└── <chat-root>/                         # per-chat chat-roots (§1) live under the same community-root
+    └── …                                # the directory neither reads nor writes any chat-root
+```
+
+- **Collection:** `<community-root>/directory/` — ensured with idempotent `MKCOL` (§6), listed with one `PROPFIND Depth: 1` (§6 / RFC 4918 — never `infinity`).
+- **Reserved siblings (named, not designed):** `<community-root>/meta/community.json` (owner marker — the **community** feature) and the per-chat chat-roots are reserved community-root children. **Collision rule:** `directory/` and the community-level `meta/` are reserved community-root segments, distinct from any chat-root segment. A directory read/write touches **only** `directory/`; it never touches a chat's `meta/`/`log/`/`changes/`, and the per-chat sync cycle (§9) never touches `directory/`.
+- **One credential (Topology A):** the directory is in the same shared space under the same app-password — **not** an access-control boundary (SC11). Confidentiality is the §10.3 community-key AEAD seal.
+
+### 10.2 Entry framing — §5 envelope wrapping an AEAD-sealed inner signed payload
+
+A directory entry reuses the **§5/§5.1 envelope frame verbatim**: the on-disk entry file is
+
+```
+magic "OWDM" ‖ envelope-version 0x01 ‖ codec-id 0x00 ‖ flags 0x00 ‖ reserved 0x00 ‖ ciphertext-blob
+ciphertext-blob = nonce(24) ‖ XChaCha20-Poly1305(community-key, AAD = header8, inner-signed-payload)
+```
+
+- The 8-byte header is bound as AEAD **AAD** (§5.1), so any header byte tamper breaks the Poly1305 tag → typed rejection. A fresh 24-byte random nonce is generated per seal (§5.1). `codec-id` is **`0x00 (none)`** for this feature (no compression). A blob shorter than `nonce(24) + tag(16) = 40` bytes is a reject, not a bounds error (§5.1 truncated-blob guard).
+- **The AEAD key is the community key** — a community-wide **symmetric** key in the same family as the §5.1 `known`/`random` sources (decision 9), **independent of the disk credential** (SC3), **never written to disk / never logged** (SC4 family), supplied out-of-band / as config (the future onboarding feature distributes it — out of scope). To the disk operator a directory entry is **byte-indistinguishable** from a message envelope (same §5 frame); names/keys are visible only to a community-key holder.
+- The directory is **byte-indistinguishable on the wire from a chat message envelope to a non-keyholder**, but the *inner* plaintext is **not** a §8 message — it is the §10.3 directory inner payload (a distinct `dir-entry-version` leads it, independent of the §8 `msg-format-version`). A reader that opens an entry with the community key parses it as §10.3, not §8.
+
+### 10.3 Inner signed payload — binary versioned TLV (pinned field order)
+
+The plaintext the AEAD seals/opens is a **versioned binary record** in the same shape as §8 (a versioned prefix of fixed public-key fields + a trailing Ed25519 signature over the preceding bytes). **Pinned field order (big-endian, §0):**
+
+```
+offset  size   field                value / meaning
+------  -----  -------------------  ---------------------------------------------------
+0       1      dir-entry-version    0x01 — directory inner-format version (independent of §7
+                                    protocol, §5 envelope-version, §8 msg-format-version)
+1       32     signing-pubkey       author's Ed25519 signing PUBLIC key (crypto_sign_PUBLICKEYBYTES)
+33      32     box-pubkey           author's X25519 box PUBLIC key (crypto_box_PUBLICKEYBYTES)
+65      8      version-counter      signed per-author monotonic supersede coordinate (§10.5),
+                                    big-endian uint64 — best-effort display time is NOT this
+73      2      display-name-len     big-endian uint16, UTF-8 byte length of display-name (≤ cap)
+75      L      display-name         UTF-8 bytes, RAW (no rendering — UI concern), length-prefixed
+75+L    64     signature            Ed25519 detached signature over bytes [0 .. 75+L)
+```
+
+- **Signed range** = `dir-entry-version ‖ signing-pubkey ‖ box-pubkey ‖ version-counter ‖ display-name-len ‖ display-name` (everything before the 64-byte signature). Because `signing-pubkey` is **inside** the signed range, the claimed signer key is itself signed — it cannot be swapped without breaking the signature (the §8.3 property). **Verify** with `crypto_sign_verify_detached(signature, signed-range, signing-pubkey)`; libsodium `-1` = **hard reject**, the entry is dropped (never best-effort).
+- **Reject-don't-guess (consistent with §7/§8.1).** An unknown `dir-entry-version`, a `display-name-len` that overruns the buffer, a payload shorter than `75 + 0 + 64 = 139` bytes (min prefix + empty name + signature), a wrong-width key field, a display-name longer than the cap, or a signature that does not verify is a **typed rejection** — the entry is dropped, never partially parsed, never surfaced, never a crash. Every length prefix is validated against the remaining buffer before reading (no `!!`, no bounds exception escapes).
+- **Display-name grammar.** The display-name is **raw UTF-8**, length-prefixed, capped at a fixed maximum byte length (the coder pins the cap; this feature uses 256). It is **not** a path segment — it lives inside the AEAD-sealed payload, never in a file name — so it is **not** restricted to the §0 filename-safe alphabet (the path-safety / SC16 rule applies to the §10.4 *file name*, not the display-name). Rendering (Markdown, normalization) is a later UI concern; the directory carries the bytes verbatim.
+- **Self-published trust only.** The signature proves the holder of `signing-pubkey`'s secret authored this entry; it does **not** bind that key to a human (deferred QR safety-number — no host attestation is added). The verified `DirectoryEntry { display-name, signing-public-key(32), box-public-key(32) }` is exactly `publicIdentity()`'s shape (§8.2 `sender-id-pubkey` is the same Ed25519 width), so a downstream DH / fingerprint consumer takes the bytes directly.
+
+### 10.4 Entry file name — content-addressed, append-only (SC16-safe)
+
+The entry file name is **content-addressed** like §2/§3, but it is **not** a §2 message-id (no `order-token "~" content-hash` shape — a directory entry has no §4 order-token):
+
+```
+entry-name = b32lower( SHA-256(entry-file-bytes) )[0:32]    ; 32 chars, [a-z2-7] — filename-safe (§0)
+```
+
+- The hash is over the **exact file bytes** (the whole §10.2 envelope = header ‖ nonce ‖ AEAD-ciphertext-with-tag). The 32-char Base32-lowercase alphabet `[a-z2-7]` is fully filename-safe (§0): no `/`, no `..`, no spaces — SC16-safe by construction. A reader that lists the collection **recomputes** `b32lower(SHA-256(file-bytes))[0:32]` on `GET` and rejects a file whose recomputed hash does not match its name (§3 on-read content-hash check) — the same tamper-detection as a message file.
+- **Append-only (§3).** A writer only `PUT`s a new file, never overwrites. Idempotent on identical re-publish (same bytes → same name → same path → idempotent `PUT`). A **changed** entry (new display-name, incremented version-counter) produces **different bytes** → a **different name** → a new file that *supersedes* the older one at read time (§10.5), never an in-place rewrite. Because the AEAD nonce is random, two independent seals of the *same* logical entry differ — so true idempotency (a retried `PUT`) requires the publisher to reuse the *same* envelope bytes on retry (the §2 note, applied here).
+- **Flat trust (SC11).** Any member can `DELETE` another's entry under the one shared credential; a member whose entry was deleted simply re-publishes it. No deletion resistance (future work).
+
+### 10.5 Supersede / ordering — signed monotonic version-counter per signing-pubkey
+
+A member may re-publish (display-name change, reinstall). Entries are append-only (§10.4) — two versions coexist on disk; the reader resolves "latest valid entry **per member**" at read time.
+
+- **Grouping key:** the verified Ed25519 `signing-pubkey` (§10.3) — it is inside the signed range (cannot be forged onto another's entry), it is the key the signature verifies against, and it is exactly what a downstream consumer keys on. This is a **stronger, cryptographic** per-member identity than the §1.2 `member-index-id` (a hash of an unverified roster `member-identifier`); the two are **different identifiers for different scopes** and must not be conflated (§1.2 is untouched, the directory does not name entries by `member-index-id`).
+- **Supersede coordinate:** the signed `version-counter` (big-endian uint64, §10.3), incremented by the author per re-publish (starting at 1). Per `signing-pubkey`, the reader keeps the valid entry with the **maximum** `version-counter`; ties (equal counter) broken by the **lexicographically-greater entry file content-hash** (§10.4 name) — an arbitrary-but-total tiebreak all readers agree on. The counter is **signed and monotonic**, entirely under the author's control: an attacker cannot make a stale entry win without the author's signing secret. It is **never a wall clock** — no clock is trusted for "which wins" (a best-effort display time, if a UI later wants one, would ride as a separate display-only field, not the winner coordinate; not added now).
+- **Known counter-reset edge (accepted limitation).** A reinstall yields a **new keypair** (identity secret keys are Keystore-wrapped device-local, decision 10/SC5; they do not survive a reinstall), so the `signing-pubkey` changes and the old key's entries group separately — not a wrong-winner. Only if a member somehow restores the **same** signing key but a **reset** counter does the content-hash tiebreak resolve it deterministically (possibly to the older display-name) — an acceptable, non-security display glitch (best-effort display; security — "no entry signed by a *different* key can win for a member" — always holds).
+
+### 10.6 Read discipline — Depth-1 listing, reject-don't-guess, flat-trust degradation
+
+A directory read:
+
+1. **`PROPFIND Depth: 1` on `<community-root>/directory/`** (one cheap request, §6 — never `infinity`) → the set of entry file names.
+2. **For each entry:** `GET` the file → §3 content-hash-on-read check (recomputed `b32lower(SHA-256(file-bytes))[0:32]` must equal the §10.4 name) → §5.1 AEAD-`open` with the community key → §10.3 parse + Ed25519-verify. **Every failure mode is a typed rejection — dropped, never surfaced, never a crash:** wrong/absent community key (AEAD-open fails), bad signature (verify `-1`), malformed/truncated/wrong-magic/wrong-version, out-of-cap display-name, content-hash mismatch (tampered or still-uploading), oversize body. **The remaining valid entries still read** — one bad/forged/missing entry never wedges the directory (flat-trust degradation, §3 applied per entry; there is no cursor to wedge — iterate, drop-on-reject, continue).
+3. **Resolve** the surviving valid entries to the latest per `signing-pubkey` (§10.5) → return the verified `DirectoryEntry` set + a count of rejected entries (for diagnostics, not surfaced as members).
+
+A read writes **nothing** to disk (and, this feature, nothing to a local cache — verified entries are recomputed from the on-disk source of truth per read; the Room cache + observable `Flow` is the **UI feature's** to add). An entry written mid-read is simply picked up on the next read (each entry is one self-contained file — no torn state).
+
+> **Metadata exposed to the disk operator (named for the threat model, A5 class — not a new content leak).** The operator sees the `directory/` collection's structure: the **entry count** (roughly how many member-versions exist), entry **sizes**, and **write timing** (roughly when members publish) — even though names/keys are sealed. This is the same metadata class as the §9.2 `changes/` exposure (T17/T18) — no name, key, or display-name content ever leaves the AEAD seal.
+
+---
+
 ## Cross-references
 
-- `docs/architecture.md` → decision 2 (Disk topology / Topology A), decision 3 (Aggregated sync — **revised to shared-log + change-index + window** by the sync feature; the decision-3 text update is the post-coding handoff), decision 4 (Compression codec), decision 9 (Crypto substrate — AEAD/key sources that fill §5.1), decision 10 (Identity substrate — Ed25519/X25519), decision 11 (Message model — §8), and *Behavioral contract* (chat taxonomy, message-id/file-naming/ordering/codec invariants — this file is their authoritative source for the byte/path layout).
+- `docs/architecture.md` → decision 2 (Disk topology / Topology A), decision 3 (Aggregated sync — **revised to shared-log + change-index + window** by the sync feature; the decision-3 text update is the post-coding handoff), decision 4 (Compression codec), decision 9 (Crypto substrate — AEAD/key sources that fill §5.1; the **community key** is a fourth-family symmetric key here, §10.2), decision 10 (Identity substrate — Ed25519/X25519 the §10.3 entry carries), decision 11 (Message model — §8), and *Behavioral contract* (chat taxonomy, message-id/file-naming/ordering/codec invariants — this file is their authoritative source for the byte/path layout).
 - `docs/stack-notes.md` → *OkHttp + WebDAV layer* (verbs, Depth, ETag/If-Match, 429), *WorkManager* (15-min floor + Doze deferral the §9 cursor absorbs), *Room* (local cursor + history), *Traffic compression* (compress-then-encrypt, codec-id), *Crypto library* (AEAD that fills the ciphertext-blob slot).
 - `docs/features/webdav-transport_plan.md` — the feature that implemented §6 access rules, §2/§3 append-only + content-hash, and the v1 path layout.
 - `docs/features/crypto_plan.md` — the feature that fills §5.1 (ciphertext-blob: nonce + XChaCha20-Poly1305 + tag, header as AAD).
 - `docs/features/message-model_plan.md` — the feature that authors §8 (the inner signed message plaintext).
 - `docs/features/sync_plan.md` — the feature that reworks §1 to generation 2 (shared `log/` + per-member `changes/`), authors §9 (change index + cursor), reserves §1.4 (retention window, pruning deferred), and implements send + the background poll cycle + local Room history.
+- `docs/features/directory_plan.md` — the feature that authors §10 (the community user directory: community-root + reserved `directory/` collection, §5-envelope-wrapped AEAD-sealed binary versioned-TLV entries, the signed monotonic per-author supersede coordinate grouped by Ed25519 signing-pubkey, and the Depth-1 reject-don't-guess read). Adds the first community-scoped collection; does not touch §1–§9.
 
-*Authored 2026-06-03 for v2.9.0 (generation 1). Transport slots fixed; §5.1 crypto slot fixed by the crypto feature (2026-06-03); §8 message-plaintext format fixed by the message-model feature (2026-06-03). §8 corrected 2026-06-04: removed the unsatisfiable inner self-`message-id` field (a fixed point over SHA-256 of the sealed bytes). **Reworked 2026-06-04 to layout generation 2 (protocol version 1 → 2) by the sync feature: §1 folder layout (per-recipient `inbox/` fan-out → shared `log/` + per-member `changes/`), §3 inbox-bits → shared-log + flat-trust-degradation bits, §6 poll/write bits, and the new §9 (change-index entry format + cursor semantics) + §1.4 (retention window RESERVED, pruning DEFERRED). §2 message-id grammar, §4 order-token, §5/§5.1 framing + AEAD, §8 inner message, §7 envelope-version are byte-for-byte unchanged.*** §3 cursor-interaction clarification 2026-06-04 (sync code-review): refined §3's single incomplete/mismatch “not ready” bucket into the transient-block vs. permanent-resolve distinction the §9.3 cursor relies on (no loss vs. no wedge) — positional rule referenced from §9.3, not restated.
+*Authored 2026-06-03 for v2.9.0 (generation 1). Transport slots fixed; §5.1 crypto slot fixed by the crypto feature (2026-06-03); §8 message-plaintext format fixed by the message-model feature (2026-06-03). §8 corrected 2026-06-04: removed the unsatisfiable inner self-`message-id` field (a fixed point over SHA-256 of the sealed bytes). **Reworked 2026-06-04 to layout generation 2 (protocol version 1 → 2) by the sync feature: §1 folder layout (per-recipient `inbox/` fan-out → shared `log/` + per-member `changes/`), §3 inbox-bits → shared-log + flat-trust-degradation bits, §6 poll/write bits, and the new §9 (change-index entry format + cursor semantics) + §1.4 (retention window RESERVED, pruning DEFERRED). §2 message-id grammar, §4 order-token, §5/§5.1 framing + AEAD, §8 inner message, §7 envelope-version are byte-for-byte unchanged.*** §3 cursor-interaction clarification 2026-06-04 (sync code-review): refined §3's single incomplete/mismatch “not ready” bucket into the transient-block vs. permanent-resolve distinction the §9.3 cursor relies on (no loss vs. no wedge) — positional rule referenced from §9.3, not restated. **§10 authored 2026-06-04 by the directory feature: the first community-scoped collection — community-root + reserved `directory/`, §5-envelope-wrapped AEAD-sealed binary versioned-TLV entries (§10.3 pinned field order), the signed monotonic per-author `version-counter` supersede coordinate grouped by Ed25519 signing-pubkey with content-hash tiebreak (§10.5), the §10.4 content-addressed SC16-safe entry name, and the §10.6 Depth-1 reject-don't-guess / flat-trust-degradation read. §1–§9 are byte-for-byte unchanged (additive new axis: community scope above chat scope).**

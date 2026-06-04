@@ -2,7 +2,7 @@
 
 > Status: **live** — contract is in force · **deprecated** — superseded, kept for history.
 
-> Generated from contracts + plans + reviews + git (regenerated as features land). Five backend substrates have landed; no user-facing Product Contracts exist yet (the substrates are system-subject — contract blocks appear here once a user-facing feature is planned). The component groups below come from `docs/architecture.md`.
+> Generated from contracts + plans + reviews + git (regenerated as features land). Six backend substrates have landed; no user-facing Product Contracts exist yet (the substrates are system-subject — contract blocks appear here once a user-facing feature is planned). The component groups below come from `docs/architecture.md`.
 
 ## UI (Compose chat surface)
 
@@ -45,3 +45,4 @@ _No contracts yet._
 | [identity](features/identity_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/identity_review.md) |
 | [message-model](features/message-model_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/message-model_review.md) |
 | [sync](features/sync_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/sync_review.md) |
+| [directory](features/directory_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/directory_review.md) |
