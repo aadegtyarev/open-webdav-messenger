@@ -47,3 +47,4 @@ _No contracts yet._
 | [sync](features/sync_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/sync_review.md) |
 | [directory](features/directory_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/directory_review.md) |
 | [chat-directory](features/chat-directory_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/chat-directory_review.md) |
+| [release-ci](features/release-ci_plan.md) | 2026-06-05 | [R](../.ai-pm/reviews/release-ci_review.md) |
