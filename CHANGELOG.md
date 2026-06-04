@@ -7,6 +7,40 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.8.0] — 2026-06-05
+
+Adds the project's continuous-integration and release automation — the GitHub Actions
+machinery that checks every pull request and turns a merge to `main` into a tagged,
+published release. Infrastructure only: no app behavior changes, no new user-facing
+surface. This is the plumbing that makes every future release reproducible and verifiable.
+
+### Added
+
+- **PR-check workflow** (`.github/workflows/pr-checks.yml`) — runs the three JVM gates
+  (`./gradlew test`, `ktlintCheck`, `lint`) on every pull request, on a Temurin-17
+  toolchain with least-privilege permissions. A red gate blocks the merge; this is the
+  always-on quality wall in front of `main`.
+- **Release workflow** (`.github/workflows/release.yml`) — on a merge to `main` it reads
+  `versionName` from `app/build.gradle.kts`, and if no matching tag exists yet, auto-tags
+  `vX.Y.Z`, publishes a GitHub Release, and attaches the built **debug APK**. Idempotent:
+  a merge whose version is already tagged is a no-op, so re-runs and version-less merges
+  never produce a duplicate or corrupt release.
+- **Architecture "Release flow" documented** — `docs/architecture.md` now describes the
+  CI/release pipeline (previously N/A): what runs on a PR, what runs on a merge, and how a
+  version bump becomes a published release.
+- **GitHub Actions section in stack-notes** — `docs/stack-notes.md` records the Actions
+  idioms used (toolchain setup, least-privilege permissions, env-bound shell interpolation
+  for injection safety), so future workflow changes follow the same wired conventions.
+
+### Notes
+
+- **Scope boundary:** releases are **debug-signed only** (no release keystore in CI yet),
+  and `connectedAndroidTest` (the instrumented/emulator gate) stays a manual step — it is
+  not run in CI in this iteration.
+- Backend/infrastructure change — Product Contract intentionally skipped (no user-facing
+  behavior). This PR is itself the live validation: `pr-checks.yml` runs on it, and merging
+  it triggers `release.yml` to cut `v0.8.0`.
+
 ## [0.7.0] — 2026-06-04
 
 Adds the community chat directory — the substrate that lets members of a shared disk
