@@ -128,7 +128,14 @@ class WebDavConcurrencyTest {
 
             val transport = TestSupport.newTransport(server, delayer = cancellingDelayer)
             val scope = CoroutineScope(Dispatchers.Default + Job())
-            job = scope.launch { transport.write("$metaPath.cancel", byteArrayOf(1)) }
+            // Start lazily so `job` is assigned before the coroutine body (and thus the delayer that
+            // reads `job`) can run — otherwise the Dispatchers.Default thread can reach the delayer
+            // before the main thread finishes the assignment, racing into UninitializedPropertyAccess.
+            job =
+                scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                    transport.write("$metaPath.cancel", byteArrayOf(1))
+                }
+            job.start()
             job.join()
 
             assertTrue(job.isCancelled)
