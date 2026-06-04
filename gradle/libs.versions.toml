@@ -18,6 +18,19 @@ jna = "5.13.0"
 # androidTest / instrumented (Keystore + native .so on device 5c3ff0).
 androidxTestRunner = "1.6.2"
 androidxTestExtJunit = "1.2.1"
+# sync feature (2026-06-04): Room local history/cursor cache + WorkManager periodic poll.
+# Room 2.6.1 is the last stable line on the AGP 8.7 / KSP-free KAPT path this project uses;
+# it ships room-testing (MigrationTestHelper) and supports exportSchema + Paging 3.
+room = "2.6.1"
+# WorkManager 2.9.1 ships work-testing (TestDriver) used under `./gradlew test`
+# (stack-notes WorkManager: TestDriver integration test).
+work = "2.9.1"
+# Paging 3 — unbounded local history is exposed paged (stack-notes Room "accessing-data").
+paging = "3.3.6"
+# Robolectric — JVM test harness that supplies the Android SQLite binding + Context so Room
+# in-memory DBs and the WorkManager TestDriver run under `./gradlew test` (the validators the
+# plan pins to `test`), without an emulator. Test-only; never shipped.
+robolectric = "4.13"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -41,7 +54,20 @@ jna-jar = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
 
+# sync feature (2026-06-04): Room (local history + per-chat cursor) and WorkManager (periodic poll).
+room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+room-paging = { group = "androidx.room", name = "room-paging", version.ref = "room" }
+room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+paging-runtime = { group = "androidx.paging", name = "paging-runtime", version.ref = "paging" }
+work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+work-testing = { group = "androidx.work", name = "work-testing", version.ref = "work" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
+# KAPT annotation processing for Room (version-aligned with the Kotlin Gradle plugin).
+kotlin-kapt = { id = "org.jetbrains.kotlin.kapt", version.ref = "kotlin" }

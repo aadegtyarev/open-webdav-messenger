@@ -1,7 +1,5 @@
 package org.openwebdav.messenger.protocol
 
-import java.security.MessageDigest
-
 /**
  * Ordering token per `docs/protocol/webdav-layout.md` §4 — a monotonic, per-sender,
  * best-effort token used only for display ordering (dedup is by message-id, §2).
@@ -43,8 +41,5 @@ internal object OrderToken {
     }
 
     /** §4: `b32lower(SHA-256(utf8(sender)))[0:8]` — a stable per-sender namespace tag. */
-    fun senderTag(senderIdentifier: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(senderIdentifier.toByteArray(Charsets.UTF_8))
-        return Base32.encodeBase32Lower(digest).substring(0, SENDER_TAG_LEN)
-    }
+    fun senderTag(senderIdentifier: String): String = HashTag.tag(senderIdentifier, SENDER_TAG_LEN)
 }

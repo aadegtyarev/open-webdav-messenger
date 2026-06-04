@@ -1,6 +1,6 @@
 package org.openwebdav.messenger.protocol
 
-import java.security.MessageDigest
+import java.io.ByteArrayOutputStream
 
 /**
  * Content-addressed naming and inbox-id derivation per `docs/protocol/webdav-layout.md`.
@@ -20,9 +20,6 @@ internal object MessageId {
     /** §4: order-token length in characters (the §2 prefix before the `~`). */
     private const val ORDER_TOKEN_LEN = 29
 
-    /** §4: order-token alphabet (`ts-millis` + `-` + `sender-tag` + `-` + `seq`). */
-    private val ORDER_TOKEN_CHARS = ('0'..'9').toSet() + ('a'..'z').toSet() + '-'
-
     /** §2: content-hash alphabet (RFC 4648 Base32 lowercase, no padding). */
     private val CONTENT_HASH_CHARS = ('a'..'z').toSet() + ('2'..'7').toSet()
 
@@ -36,7 +33,7 @@ internal object MessageId {
      * §2/§3: `b32lower(SHA-256(file-bytes))[0:32]`.
      * Computed over the exact bytes written to / read from disk (the full envelope, §5).
      */
-    fun contentHash(fileBytes: ByteArray): String = Base32.encodeBase32Lower(sha256(fileBytes)).substring(0, CONTENT_HASH_LEN)
+    fun contentHash(fileBytes: ByteArray): String = HashTag.tag(fileBytes, CONTENT_HASH_LEN)
 
     /**
      * §2: the content-addressed file name. The [orderToken] is supplied by [OrderToken];
@@ -71,7 +68,7 @@ internal object MessageId {
     fun isWellFormedMessageId(name: String): Boolean {
         val (orderToken, contentHash) = splitMessageId(name) ?: return false
         if (orderToken.length != ORDER_TOKEN_LEN) return false
-        if (orderToken.any { it !in ORDER_TOKEN_CHARS }) return false
+        if (orderToken.any { it !in HashTag.ORDER_TOKEN_CHARS }) return false
         // splitMessageId already pins CONTENT_HASH_LEN; re-check the alphabet here.
         return contentHash.all { it in CONTENT_HASH_CHARS }
     }
@@ -85,12 +82,13 @@ internal object MessageId {
         recipientIdentifier: String,
         chatId: String,
     ): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(recipientIdentifier.toByteArray(Charsets.UTF_8))
-        digest.update(UNIT_SEPARATOR)
-        digest.update(chatId.toByteArray(Charsets.UTF_8))
-        return Base32.encodeBase32Lower(digest.digest()).substring(0, INBOX_ID_LEN)
+        // §1.2 domain-separated input: utf8(recipient) ‖ 0x1F ‖ utf8(chatId), hashed as one stream.
+        val composed =
+            ByteArrayOutputStream().apply {
+                write(recipientIdentifier.toByteArray(Charsets.UTF_8))
+                write(UNIT_SEPARATOR.toInt())
+                write(chatId.toByteArray(Charsets.UTF_8))
+            }.toByteArray()
+        return HashTag.tag(composed, INBOX_ID_LEN)
     }
-
-    private fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 }

@@ -57,8 +57,18 @@ internal object Envelope {
      * §5: wrap an opaque [blob] in the 8-byte header with `codec-id = none`,
      * `flags = 0x00`, `reserved = 0x00`. The returned bytes are exactly what is `PUT`.
      */
-    fun write(blob: ByteArray): ByteArray {
-        val header = header(CODEC_NONE)
+    fun write(blob: ByteArray): ByteArray = frame(CODEC_NONE, blob)
+
+    /**
+     * §5/§5.1: reassemble the complete envelope `header([codecId]) ‖ [blob]` from a parsed blob and the
+     * REAL on-disk codec-id (review finding 4). The reader uses this — not [write]'s fixed `0x00` — so
+     * the §5.1 AEAD AAD it rebuilds is byte-identical to what the sender bound, for any defined codec.
+     */
+    fun frame(
+        codecId: Byte,
+        blob: ByteArray,
+    ): ByteArray {
+        val header = header(codecId)
         val out = ByteArray(HEADER_SIZE + blob.size)
         header.copyInto(out, 0)
         blob.copyInto(out, HEADER_SIZE)
@@ -69,8 +79,13 @@ internal object Envelope {
      * §5/§7: a successfully-parsed frame — the validated 8-byte [header] (exactly the bytes bound as
      * AEAD AAD, §5.1) and the opaque [blob] (offset 8 onward). Both are slices of the original file
      * bytes; the crypto layer reuses [header] as AAD instead of re-slicing the header independently.
+     * [codecId] is the §5 byte-5 codec-id read from the actual on-disk header — the reader uses it to
+     * reject-with-reason an unsupported codec instead of silently mis-rebuilding the AAD (finding 4).
      */
-    class Frame(val header: ByteArray, val blob: ByteArray)
+    class Frame(val header: ByteArray, val blob: ByteArray) {
+        /** §5 byte 5: the codec-id this frame's header carries (validated ∈ {0x00, 0x01} by [readFrame]). */
+        val codecId: Byte get() = header[5]
+    }
 
     /**
      * §5/§7: parse [fileBytes] into a [Frame], or `null` when the frame is not understood

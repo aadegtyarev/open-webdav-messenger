@@ -147,8 +147,11 @@ internal class WebDavTransport(
         if (expected == null || MessageId.contentHash(bytes) != expected) {
             return WebDavResult.Success(ReadResult.NotReady)
         }
-        val blob = Envelope.read(bytes) ?: return WebDavResult.Success(ReadResult.NotReady)
-        return WebDavResult.Success(ReadResult.Ready(blob))
+        // Expose the validated on-disk header alongside the blob so the reader rebuilds the EXACT §5.1
+        // AEAD AAD (codec-id and all) rather than assuming codec 0x00 (review finding 4). An unparseable
+        // frame (bad magic / unknown envelope-version / unknown codec-id) is §7 reject → not-ready.
+        val frame = Envelope.readFrame(bytes) ?: return WebDavResult.Success(ReadResult.NotReady)
+        return WebDavResult.Success(ReadResult.Ready(frame.blob, frame.codecId))
     }
 
     /**
@@ -201,10 +204,17 @@ internal class WebDavTransport(
 
 /** Result of [WebDavTransport.read]: a verified message blob, or "not ready" (§3). */
 internal sealed interface ReadResult {
-    data class Ready(val blob: ByteArray) : ReadResult {
-        override fun equals(other: Any?): Boolean = other is Ready && blob.contentEquals(other.blob)
+    /**
+     * A complete, §3-hash-verified file: the opaque post-header [blob] (§5) plus the §5-byte-5 [codecId]
+     * read from the actual on-disk header. The reader rebuilds the exact §5.1 AEAD AAD from [codecId]
+     * (not an assumed 0x00) and reject-with-reasons an unsupported codec (review finding 4). [codecId]
+     * defaults to [Envelope.CODEC_NONE] so callers constructing a Ready in the codec-none MVP path
+     * (and the predating transport tests that assert only [blob]) are unaffected.
+     */
+    data class Ready(val blob: ByteArray, val codecId: Byte = Envelope.CODEC_NONE) : ReadResult {
+        override fun equals(other: Any?): Boolean = other is Ready && codecId == other.codecId && blob.contentEquals(other.blob)
 
-        override fun hashCode(): Int = blob.contentHashCode()
+        override fun hashCode(): Int = 31 * blob.contentHashCode() + codecId
     }
 
     data object NotReady : ReadResult
