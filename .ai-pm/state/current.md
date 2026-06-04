@@ -8,11 +8,11 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-(none active)
+release-ci: GitHub Actions CI — (1) PR-check workflow running the 3 JVM gates (test/ktlintCheck/lint) on every PR; (2) release workflow that on a version bump to main builds the debug APK, auto-tags v<version>, and publishes a GitHub Release with the APK (idempotent, one-job per the GITHUB_TOKEN no-retrigger rule); + one-time backfill of v0.6.0/v0.7.0 tags. Infra/CI, no app code. PM answers: PR-checks + auto-tag; tag + Release with debug APK.
 
 ## Status
 
-idle
+review
 
 ## Done
 
@@ -21,11 +21,20 @@ idle
 
 ## Remaining
 
-- Next feature — PM's choice. Roadmap (`.ai-pm/backlog.md`): invite/onboarding (distributes the community key + chat keys; two-layer community vs chat membership) → rotation (rotate-with-auto-replace, member removal) → community (host-governed: meta/community.json owner marker, polling floor) → compression → UI; plus sync follow-ons (retention-window pruning, foreground-service fast-delivery, app-startup wiring) and local-DB-at-rest encryption (SC17/T16).
+- post-coding docs handoff: pm-architect rewrites architecture.md "Release flow" (N/A → the CI pipeline).
+- review loop: pm-plan-checker pass 1 → code-review pass 2 → stamp.
+- ship: pm-pr-prep bump to v0.8.0 + CHANGELOG + PR; PM authorizes; merge → release.yml auto-creates v0.8.0 tag + Release + APK (live validation); orchestrator backfills v0.6.0/v0.7.0 tags.
+- After: next feature — roadmap (`.ai-pm/backlog.md`): invite/onboarding → rotation → community → compression → UI; plus sync follow-ons and local-DB-at-rest encryption (SC17/T16).
 
 ## Next step
 
-Wait for PM: pick the next feature.
+Code-review pass 2 finding 1 fixed (release.yml: tag bound via `env: TAG`, no `${{ }}` in any `run:` body). Orchestrator: re-run code-review to confirm clean → stamp `## Code review` → pm-pr-prep ship (v0.8.0 + CHANGELOG + PR).
+
+## Touched files
+
+- `.github/workflows/pr-checks.yml` (new) — PR-check workflow: checkout (no submodules) + Temurin 17 + setup-gradle + `./gradlew test ktlintCheck lint`; `permissions: contents: read`.
+- `.github/workflows/release.yml` (new) — release workflow: push:main + workflow_dispatch; `permissions: contents: write`; read versionName → tag-exists guard → (if new) assembleDebug + annotated tag push + softprops/action-gh-release@v2 with the debug APK; all in one job.
+- `CLAUDE.md` — one additive line in Pipeline noting the 3 JVM gates run in CI per PR; connectedAndroidTest stays the manual device gate.
 
 ## Validation
 

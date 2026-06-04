@@ -1,0 +1,95 @@
+name: Release
+
+# On a push to main (or a manual dispatch), read versionName from app/build.gradle.kts.
+# If no v<version> tag exists yet, build the debug APK, create + push the annotated tag, and
+# publish a GitHub Release with the APK attached. Everything runs in ONE job because a tag pushed
+# with the built-in GITHUB_TOKEN does NOT retrigger a tag-listening workflow (stack-notes pitfall).
+# Idempotent: a push at an already-tagged version (e.g. a docs/chore commit) no-ops cleanly.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# contents: write is required to push the tag and create the Release.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # No submodules (private SSH .ai-pm/tooling, unused by the build).
+      # fetch-depth: 0 so all tags are available for the existence check below.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Robust extraction: take the first versionName = "X.Y.Z" line and capture the quoted value.
+      - name: Read versionName
+        id: version
+        run: |
+          version="$(grep -oE 'versionName[[:space:]]*=[[:space:]]*"[^"]+"' app/build.gradle.kts \
+            | head -n1 \
+            | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ -z "$version" ]; then
+            echo "Could not extract versionName from app/build.gradle.kts" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $version (tag v$version)"
+
+      # Does v<version> already exist? Sets exists=true|false. A non-version push lands here, finds
+      # the tag present, and every subsequent step is skipped — the run stays green with no side effect.
+      - name: Check whether tag already exists
+        id: tagcheck
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          tag="$TAG"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Tag $tag already exists — nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag $tag does not exist — will build and release."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17
+        if: steps.tagcheck.outputs.exists == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Gradle
+        if: steps.tagcheck.outputs.exists == 'false'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        if: steps.tagcheck.outputs.exists == 'false'
+        run: ./gradlew assembleDebug
+
+      # Create + push the annotated tag with the built-in token. Because the tag and the Release are
+      # in this same job, the GITHUB_TOKEN no-retrigger pitfall does not apply.
+      - name: Create and push tag
+        if: steps.tagcheck.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          tag="$TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+
+      - name: Publish GitHub Release
+        if: steps.tagcheck.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          files: app/build/outputs/apk/debug/app-debug.apk
+          generate_release_notes: true
