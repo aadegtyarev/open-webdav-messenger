@@ -312,6 +312,25 @@ Every message written to the shared per-chat `log/` is an AEAD ciphertext whose 
 
 - Decompressed plaintext size is bounded (zip-bomb defense); exceeding the bound is an error path. The numeric bound is `[?]` — to be fixed alongside the codec in `webdav-layout.md`.
 
+### System invariants
+
+The single index / entry point for this project's cross-cutting **system invariants** — the rules that must always hold across the whole system, gathered once so a top-down reader finds them in one list instead of three keyed differently (the Behavioral-contract entries above, the `SCn` rules in `## Security constraints`, the journey preconditions in `docs/user-journeys.md`). Each is listed **by reference to its single home**, never restated: **inline** when the Behavioral contract is the home, **by `SCn` ID** when enforced as a security constraint (rule text stays in `## Security constraints` — the threat → constraint Mitigation pattern), **by journey name** when it is a journey precondition (rule stays in that journey's `**Invariants:**` block). Reference-don't-duplicate, one-way-by-ID: the index points *out* at each home, the home keeps no back-link, and the only cross-doc datum is the `SCn` ID or the journey name.
+
+| Invariant | Essence (one line) | Authoritative home |
+|---|---|---|
+| E2E-ciphertext-only on disk | Private-chat content crosses to the WebDAV disk as AEAD ciphertext only; the disk stores ciphertext, never plaintext. | `SC1` → `## Security constraints` |
+| No-keys / no-passphrases on disk | Chat keys, passphrases and identity secret keys are Keystore-wrapped device-local; never written to the disk, never logged. | `SC4`, `SC5` → `## Security constraints` |
+| Community-key ≠ disk-credential | A content / community key is never derived from the WebDAV app-password; disk access and content access are independent. | `SC3`, `SC19` → `## Security constraints` |
+| Append-only, content-addressed integrity | A file name **is** its content hash; a writer only PUTs new files (never overwrites); a reader rejects a file whose recomputed hash ≠ its name — the integrity compensation under flat trust. | inline — `### Shared-log / change-index / file-naming invariants` (`webdav-layout.md` §2–§3) |
+| Flat-trust deletion limit | One shared credential per chat ⇒ any member can delete/overwrite any file; AEAD detects content tampering but not deletion (accepted MVP limit). | `SC11` → `## Security constraints` |
+| Path-traversal safety | Every minted / accepted path segment (chat-root, message-id, `reply-to`/`target-id`) is restricted to the filename-safe alphabet; a value outside the grammar is rejected, never dereferenced. | `SC16` → `## Security constraints` |
+| Reject-don't-guess parsing | An unknown `msg-format-version` / `kind` / codec, or a value outside a closed range, is a typed rejection — never a best-effort guess. | inline — `### Message envelope`, `### Reaction enum` (`webdav-layout.md` §8) |
+| Hard-reject on signature / AEAD failure | A failed per-message Ed25519 verification or a directory-entry signature failure (libsodium `-1`) is a hard reject — the message/entry is dropped, never surfaced best-effort. | `SC15`, `SC18` → `## Security constraints` |
+| DM-never-in-directory | The chat directory lists groups only; a `dm`-kind entry is refused at publish **and** hard-rejected on read, so the social graph never leaks via discovery. | `SC20` → `## Security constraints` |
+| Bounded decompression / bounded reads | Decompressed plaintext size and any single untrusted GET / TLV field-count are capped; exceeding a bound is an error path, never an unbounded allocation. | `SC7`, `SC14` → `## Security constraints`; inline — `### Decompression bound` |
+| Ordering best-effort, dedup-by-id | Ordering is best-effort over a monotonic per-sender `order-token`; clients tolerate out-of-order / duplicate delivery and dedup by message-id; a `reply-to` may precede its target and must degrade gracefully. | inline — `### Ordering & causality` (`webdav-layout.md` §4) |
+| Caught-up without loss or double-surface | Within the disk keep-period, a member catches up on everything missed, in order, with no skip and no duplicate, across interrupted / multi-cycle polls. | *Journey 1 — Chat member: send a message and stay caught up* → `docs/user-journeys.md` |
+
 ## Release flow
 
 > Authored together with the CI by the `release-ci` feature (2026-06-05), the "release automation introduced" event this section previously anticipated. Cross-checked against `.github/workflows/pr-checks.yml` + `.github/workflows/release.yml`; idioms and citations are in `docs/stack-notes.md` → **GitHub Actions (CI — PR checks + release auto-tag)** (not duplicated here).

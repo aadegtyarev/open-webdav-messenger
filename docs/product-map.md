@@ -2,7 +2,7 @@
 
 > Status: **live** — contract is in force · **deprecated** — superseded, kept for history.
 
-> Generated from contracts + plans + reviews + git (regenerated as features land). Six backend substrates have landed; no user-facing Product Contracts exist yet (the substrates are system-subject — contract blocks appear here once a user-facing feature is planned). The component groups below come from `docs/architecture.md`.
+> Generated from contracts + plans + reviews + git (regenerated as features land). Seven backend substrates plus a CI/release pipeline have landed; no user-facing Product Contracts exist yet (these features are system-subject — contract blocks appear here once a user-facing feature is planned). The component groups below come from `docs/architecture.md`.
 
 ## UI (Compose chat surface)
 
