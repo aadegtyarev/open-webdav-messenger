@@ -8,42 +8,35 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-release-ci: GitHub Actions CI — (1) PR-check workflow running the 3 JVM gates (test/ktlintCheck/lint) on every PR; (2) release workflow that on a version bump to main builds the debug APK, auto-tags v<version>, and publishes a GitHub Release with the APK (idempotent, one-job per the GITHUB_TOKEN no-retrigger rule); + one-time backfill of v0.6.0/v0.7.0 tags. Infra/CI, no app code. PM answers: PR-checks + auto-tag; tag + Release with debug APK.
+(none active)
 
 ## Status
 
-review
+idle
 
 ## Done
 
-- Template bump: ai-pm-protocol v2.13.0 → v2.22.0 → v2.23.0 merged to main; no pending migrations; decision-authority project default stays interactive.
-- chat-directory feature complete: plan (group-only chat directory; DMs excluded — escalated PM scope decision; autonomous per-feature authority) → pre-coding arch note (thin `chatdirectory/` package on §10 primitives; supersede by chat-id; no cache) → coder (`app/.../chatdirectory/` 8 files + webdav-layout §11 + SupersedeResolver generalized; 26 JVM + 2 instrumented tests) → post-coding docs (architecture decision 13 + SC18/SC19 generalized + SC20; threat-model T23-T25) → pm-plan-checker pass 1 (approve) → code-review pass 2 (1 reuse finding fixed, 3 dropped; passed) → device gate GREEN on Xiaomi M2102J20SG (24 instrumented tests, 0 failures) → released v0.7.0 + CHANGELOG → PR #1 squash-merged to main (d358b42). Archived to archive/chat-directory-2026-06-04.md.
+- chat-directory feature complete → released v0.7.0, PR #1 squash-merged to main (d358b42). Archived to archive/chat-directory-2026-06-04.md.
+- release-ci feature complete: GitHub Actions CI — PR-check workflow (3 JVM gates per PR) + release workflow (version bump → debug APK + auto-tag + GitHub Release with APK, idempotent, one job). Stack-notes GitHub Actions section, architecture "Release flow" rewritten, pm-plan-checker approve + code-review passed (shell-injection-hygiene finding fixed). Released v0.8.0; PR #2 squash-merged (1107d16). LIVE-VALIDATED: pr-checks.yml green on the PR, release.yml green on merge → tag v0.8.0 + GitHub Release + app-debug.apk all present. Backfill tags v0.6.0/v0.7.0 pushed. Archived to archive/release-ci-2026-06-05.md.
 
 ## Remaining
 
-- post-coding docs handoff: pm-architect rewrites architecture.md "Release flow" (N/A → the CI pipeline).
-- review loop: pm-plan-checker pass 1 → code-review pass 2 → stamp.
-- ship: pm-pr-prep bump to v0.8.0 + CHANGELOG + PR; PM authorizes; merge → release.yml auto-creates v0.8.0 tag + Release + APK (live validation); orchestrator backfills v0.6.0/v0.7.0 tags.
-- After: next feature — roadmap (`.ai-pm/backlog.md`): invite/onboarding → rotation → community → compression → UI; plus sync follow-ons and local-DB-at-rest encryption (SC17/T16).
+- Next feature — PM's choice. Roadmap (`.ai-pm/backlog.md`): invite/onboarding (distributes the community key + chat keys; two-layer community vs chat membership) → rotation (rotate-with-auto-replace, member removal) → community (host-governed: meta/community.json owner marker, polling floor) → compression → UI; plus sync follow-ons (retention-window pruning, foreground-service fast-delivery, app-startup wiring) and local-DB-at-rest encryption (SC17/T16).
+- Pending (offered, not yet backlogged): CI action-majors are on Node.js 20 (force-migrated to Node 24 on 2026-06-16, Node 20 removed 2026-09-16) — bump checkout/setup-java/setup-gradle/action-gh-release majors before then.
 
 ## Next step
 
-Code-review pass 2 finding 1 fixed (release.yml: tag bound via `env: TAG`, no `${{ }}` in any `run:` body). Orchestrator: re-run code-review to confirm clean → stamp `## Code review` → pm-pr-prep ship (v0.8.0 + CHANGELOG + PR).
-
-## Touched files
-
-- `.github/workflows/pr-checks.yml` (new) — PR-check workflow: checkout (no submodules) + Temurin 17 + setup-gradle + `./gradlew test ktlintCheck lint`; `permissions: contents: read`.
-- `.github/workflows/release.yml` (new) — release workflow: push:main + workflow_dispatch; `permissions: contents: write`; read versionName → tag-exists guard → (if new) assembleDebug + annotated tag push + softprops/action-gh-release@v2 with the debug APK; all in one job.
-- `CLAUDE.md` — one additive line in Pipeline noting the 3 JVM gates run in CI per PR; connectedAndroidTest stays the manual device gate.
+Wait for PM: pick the next feature (or address the Node-20 CI-action bump).
 
 ## Validation
 
-chat-directory: three JVM gates green (full suite incl. 26 chat-directory + all §10 directory tests) + connectedAndroidTest GREEN on a real device this run (24 instrumented tests, 0 failures — native AEAD seal/open + Ed25519 sign/verify + Keystore). Decision 8 (CI emulator as the *automated* gate) still open; the manual device run is green.
+release-ci: `./gradlew test ktlintCheck lint` green locally; CI live-green (pr-checks.yml 5m41s on PR #2; release.yml 4m20s on merge → v0.8.0 tag + Release + APK verified). chat-directory: JVM gates + connectedAndroidTest green on hardware. Decision 8 (automated CI device gate) still open — device tests remain a manual on-device run.
 
 ## Notes
 
-GitHub remote now configured: `git@github.com:aadegtyarev/open-webdav-messenger.git` (private). `main` pushed; PRs flow via `gh` (pm-pr-prep). Today 2026-06-04. Version baseline now v0.7.0 (7 substrates), CHANGELOG.md current.
-Done substrates: webdav-transport, crypto, identity, message-model, sync, directory, chat-directory.
-No git tags for v0.6.0 / v0.7.0 — project has no auto-tag CI (`.github/workflows/` absent; architecture.md "Release flow: N/A"). Stale `v0.5.0` tag exists. Tagging/CI is a deferred decision (offered to PM).
-Open: decision #6 foreground side; decision #7 (ktlint vs detekt); decision #8 (CI emulator for connectedAndroidTest — 7 substrates have device-gated tests; chat-directory's ran green on hardware this release).
-Chat-directory deferred (backlog / out of scope): invite/onboarding key distribution (community key + private-chat keys); DMs in directory (excluded — social-graph privacy); authoritative chat-ownership marker / host-attested chat entries; chat-id grammar pinning; UI (chat-list surface, join button); local Room cache of chat-directory entries (UI feature); per-member revocation / re-key (rotation feature).
+GitHub remote configured: `git@github.com:aadegtyarev/open-webdav-messenger.git` (private). CI live: `.github/workflows/pr-checks.yml` (PR gates) + `release.yml` (auto-tag + Release + debug APK on version bump). Today 2026-06-05. Version baseline v0.8.0 (7 substrates + CI). Remote tags: v0.6.0, v0.7.0, v0.8.0. CHANGELOG.md current.
+Done substrates: webdav-transport, crypto, identity, message-model, sync, directory, chat-directory; + release-ci (infra).
+Release scope boundary: debug-signed APK only — release-signing / keystore-secret management deferred. connectedAndroidTest stays manual (decision 8 — no CI emulator).
+Open decisions: #6 foreground polling side; #7 ktlint vs detekt; #8 CI emulator for connectedAndroidTest.
+Known CI maintenance: action majors on Node.js 20 → bump before 2026-09-16 (Node 20 runner removal).
+Next-feature roadmap deferrals (chat-directory): invite/onboarding key distribution; authoritative chat-ownership marker; chat-id grammar; UI; local Room cache; per-member revocation (rotation).
