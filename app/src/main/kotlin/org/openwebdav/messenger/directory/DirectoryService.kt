@@ -3,6 +3,7 @@ package org.openwebdav.messenger.directory
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.protocol.Envelope
+import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.transport.InboxEntry
 import org.openwebdav.messenger.transport.ReadResult
 import org.openwebdav.messenger.transport.WebDavResult
@@ -93,7 +94,7 @@ class DirectoryService internal constructor(
                 is FetchOutcome.Verified ->
                     // §10.5: group by the verified signing-pubkey (hex-keyed for a stable map key).
                     resolver.offer(
-                        groupingKey = outcome.entry.copySigningPublicKey().joinToString("") { "%02x".format(it) },
+                        groupingKey = Hex.encode(outcome.entry.copySigningPublicKey()),
                         value = outcome.entry,
                         versionCounter = outcome.versionCounter,
                         entryName = outcome.entryName,

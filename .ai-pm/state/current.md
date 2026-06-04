@@ -35,6 +35,8 @@ review (pm-plan-checker pass 1).
 
 ## Validation
 
+Code-review pass-2 finding 1 FIXED: hand-rolled `%02x` hex → `protocol/Hex.encode()` at `ChatDirectoryService.kt:155` (chat-id grouping key) and `DirectoryService.kt:96` (signing-pubkey grouping key). `Hex.encode` is byte-identical (lowercase, two chars/byte, no separator), so both grouping keys stay byte-for-byte unchanged. The three lower findings stay consciously dropped (not changed). Re-ran the three JVM gates after the swap: BUILD SUCCESSFUL, full test suite green (tests recompiled + executed) — proof the swap is behavior-preserving.
+
 Three JVM gates GREEN: `./gradlew test`, `./gradlew ktlintCheck`, `./gradlew lint` — full suite incl. 26 new chat-directory tests and all §10 directory tests still green (SupersedeResolver generalization confirmed behavior-preserving). `connectedAndroidTest` is DEVICE-GATED and PENDING: `connectedDebugAndroidTest` → `DeviceException: No connected devices!` (decision 8 — CI emulator — still open). Native AEAD/Ed25519 chat-descriptor paths gate on a device.
 
 ## Notes

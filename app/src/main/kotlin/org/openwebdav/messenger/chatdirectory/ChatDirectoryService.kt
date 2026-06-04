@@ -4,6 +4,7 @@ import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.directory.SupersedeResolver
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.protocol.Envelope
+import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.transport.InboxEntry
 import org.openwebdav.messenger.transport.ReadResult
 import org.openwebdav.messenger.transport.WebDavResult
@@ -152,7 +153,7 @@ class ChatDirectoryService internal constructor(
                 val d = parsed.descriptor
                 FetchOutcome.Verified(
                     entry = ChatDirectoryEntry(d.chatId, d.kind, d.access, d.title, d.signingPublic),
-                    chatIdHex = d.chatId.joinToString("") { "%02x".format(it) },
+                    chatIdHex = Hex.encode(d.chatId),
                     versionCounter = d.versionCounter,
                     entryName = entry.name,
                 )
