@@ -1,6 +1,6 @@
 # Threat Model
 
-**Last reviewed:** 2026-06-04
+**Last reviewed:** 2026-06-05
 
 What we protect, from whom, and how. Read by agents before planning any feature that touches a security-relevant surface (see `### Security-relevant surfaces` in `WORKFLOW.md`).
 
@@ -73,7 +73,7 @@ The **Mitigation** column references the enforceable rule in `docs/architecture.
 | T09 | Compression side-channel (CRIME/BREACH-class length leak) co-compressing a secret with attacker-influenced data | A1 | L | M | SC6 (per-message independent compression), SC7 (bounded decompression) |
 | T10 | Sealed-box rotation forgery — a sender-unauthenticated sealed payload spoofs a key rotation | A2, A3, A4 | M | H | SC12 (sealed-box is sender-unauthenticated → MUST be Ed25519-signed), SC15 (Ed25519 detached signature establishes authorship) |
 | T11 | Untrusted decompression bomb (zip-bomb) inflating to exhaust device memory | A7 | L | M | SC7 (decompression size bound, error path not crash) |
-| T12 | Secret material leaking to disk or logs (passphrase, derived key, identity sk) | A2, A3 | M | H | SC4 (chat keys Keystore-wrapped, never on disk/log), SC5 (identity sk Keystore-wrapped, never on disk/log) |
+| T12 | Secret material leaking to disk or logs (passphrase, derived key, identity sk) | A2, A3 | M | H | SC4 (chat keys Keystore-wrapped, never on disk/log), SC5 (identity sk Keystore-wrapped, never on disk/log). The `identity-store-io-dispatch` feature moved `IdentityStore.loadOrCreate()` to `Dispatchers.IO` and replaced `synchronized` with a coroutines `Mutex`; the key generation, Keystore wrapping, zeroization, and cross-process `FileLock` logic are unchanged — no new leak surface introduced |
 | T13 | A member reads a chat they are not keyed into, by reading the shared disk space | A1 | M | M | SC1 (per-chat AEAD key — not keyed = ciphertext only), SC11 (inbox split is read-efficiency, not access control — confidentiality rests on the key) |
 | T14 | User mistakes a public chat for a private one and sends a secret into a non-secret chat | A1 | M | M | SC2 (public chats explicitly NOT secret — UI warns and nudges to a private chat) |
 | T15 | Hand-rolled or misused crypto introduces a break (nonce reuse, weak KDF, unverified tag) | A1, A2, A3 | L | H | SC9 (audited primitives only), SC1 (XChaCha20-Poly1305 AEAD), SC10 (no `!!` on crypto paths — null-safe boundary) |
