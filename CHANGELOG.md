@@ -7,6 +7,24 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.8.1] — 2026-06-05
+
+Three correctness fixes that close unhandled-exception paths found in the
+audit-2026-06-05b quality sweep. No behavior change on the happy path; error
+paths that previously crashed are now returned as typed failures.
+
+### Fixed
+
+- **`PropfindParser.lastSegment()`** — wrap `URLDecoder.decode()` in
+  `runCatching` so a malformed percent-sequence in a server-returned path
+  returns the raw segment instead of throwing `IllegalArgumentException` and
+  crashing the enclosing `pollCycle()`.
+- **`DirectoryService.publishEntry()`** — add `catch(IllegalArgumentException)`
+  before `finally`; returns `PublishOutcome.Failed(...)` on decode failure,
+  upholding the "never throws" KDoc contract.
+- **`ChatDirectoryService.publishChatEntry()`** — same pattern; returns
+  `ChatPublishOutcome.Failed(...)` on decode failure.
+
 ## [0.8.0] — 2026-06-05
 
 Adds the project's continuous-integration and release automation — the GitHub Actions
