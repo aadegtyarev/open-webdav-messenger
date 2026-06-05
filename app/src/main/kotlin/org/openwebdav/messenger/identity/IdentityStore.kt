@@ -1,6 +1,11 @@
 package org.openwebdav.messenger.identity
 
 import android.content.Context
+import androidx.annotation.WorkerThread
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.keystore.KeystoreWrapper
 import org.openwebdav.messenger.keystore.UnwrapResult
 import java.io.File
@@ -29,7 +34,7 @@ import java.nio.channels.FileLock
  * **Generate-once is serialised across processes**, not just threads: a future foreground / WorkManager
  * process in a separate `android:process` could also see no file and generate a second identity. A
  * **cross-process file lock** ([generateOnce]) on a dedicated lock file, with a **double-checked load**
- * after acquiring it, guarantees exactly one identity is generated. The in-process [generateOnceLock] is
+ * after acquiring it, guarantees exactly one identity is generated. The in-process [generateOnceMutex] is
  * kept too (a fast path that also bounds same-process contention on the file lock).
  *
  * Android-only — exercised by `connectedAndroidTest` (Keystore is device-backed; cannot run on the JVM).
@@ -48,24 +53,25 @@ class IdentityStore(
      *  - generate-once is serialised across **threads and processes** (double-checked under both the
      *    in-process lock and a cross-process [FileLock]).
      */
-    fun loadOrCreate(): Identity {
-        // Fast path: an already-stored identity needs no lock.
-        when (val first = load()) {
-            is IdentityLoadResult.Loaded -> return first.identity
-            is IdentityLoadResult.Unrecoverable -> throw IdentityUnrecoverableException(first.reason, first.cause)
-            is IdentityLoadResult.None -> Unit // fall through to the guarded create
-        }
-        synchronized(generateOnceLock) {
-            // In-process re-check: a racing thread may have created+stored while we waited.
-            when (val second = load()) {
-                is IdentityLoadResult.Loaded -> return second.identity
-                is IdentityLoadResult.Unrecoverable ->
-                    throw IdentityUnrecoverableException(second.reason, second.cause)
-                is IdentityLoadResult.None -> Unit
+    suspend fun loadOrCreate(): Identity =
+        withContext(Dispatchers.IO) {
+            // Fast path: an already-stored identity needs no lock.
+            when (val first = load()) {
+                is IdentityLoadResult.Loaded -> return@withContext first.identity
+                is IdentityLoadResult.Unrecoverable -> throw IdentityUnrecoverableException(first.reason, first.cause)
+                is IdentityLoadResult.None -> Unit // fall through to the guarded create
             }
-            return generateOnce()
+            generateOnceMutex.withLock {
+                // In-process re-check: a racing coroutine may have created+stored while we were suspended.
+                when (val second = load()) {
+                    is IdentityLoadResult.Loaded -> return@withLock second.identity
+                    is IdentityLoadResult.Unrecoverable ->
+                        throw IdentityUnrecoverableException(second.reason, second.cause)
+                    is IdentityLoadResult.None -> Unit
+                }
+                generateOnce()
+            }
         }
-    }
 
     /**
      * Cross-process critical section: hold an exclusive [FileLock] on a dedicated lock file, then
@@ -99,7 +105,10 @@ class IdentityStore(
      * The stored identity as a typed [IdentityLoadResult] — [None] if no file, [Loaded] on success,
      * [Unrecoverable] if the file exists but cannot be decrypted/unwrapped. Never throws on a corrupt
      * blob or an invalidated Keystore key: the [KeystoreWrapper] maps those to [UnwrapResult.Unrecoverable].
+     *
+     * Blocking — must not be called on the main thread. Prefer [loadOrCreate] from a coroutine context.
      */
+    @WorkerThread
     fun load(): IdentityLoadResult =
         when (val result = wrapper().unwrap()) {
             is UnwrapResult.None -> IdentityLoadResult.None
@@ -120,7 +129,8 @@ class IdentityStore(
             }
         }
 
-    /** Wrap [identity]'s serialized bytes under the Keystore key and persist them atomically. */
+    /** Wrap [identity]'s serialized bytes under the Keystore key and persist them atomically. Blocking — must not be called on the main thread. */
+    @WorkerThread
     fun store(identity: Identity) {
         val serialized = Identity.serialize(identity)
         try {
@@ -130,10 +140,12 @@ class IdentityStore(
         }
     }
 
-    /** Whether an identity file exists (it may still be unrecoverable — see [load]). */
+    /** Whether an identity file exists (it may still be unrecoverable — see [load]). Blocking — must not be called on the main thread. */
+    @WorkerThread
     fun has(): Boolean = wrapper().exists()
 
-    /** Delete the stored identity (e.g. on an explicit, user-confirmed reset). */
+    /** Delete the stored identity (e.g. on an explicit, user-confirmed reset). Blocking — must not be called on the main thread. */
+    @WorkerThread
     fun remove() {
         wrapper().delete()
     }
@@ -161,7 +173,10 @@ class IdentityStore(
         /** Dedicated cross-process lock file for the generate-once critical section. Holds no secret. */
         private const val LOCK_FILE = "identity.lock"
 
-        /** In-process fast-path lock for the generate-once guard ([loadOrCreate]). */
-        private val generateOnceLock = Any()
+        /**
+         * In-process fast-path lock for the generate-once guard ([loadOrCreate]).
+         * Non-reentrant — do not call [loadOrCreate] from within this lock.
+         */
+        private val generateOnceMutex = Mutex()
     }
 }

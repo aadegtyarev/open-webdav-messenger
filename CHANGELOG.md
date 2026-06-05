@@ -7,6 +7,22 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.8.4] — 2026-06-05
+
+Dispatcher-safety fix for `IdentityStore.loadOrCreate()`: blocking I/O can no longer
+run on the calling thread's dispatcher. A companion threading-contract hardening lands
+in the same commit.
+
+### Fixed
+
+- **`IdentityStore.loadOrCreate()`** — wrapped body in `withContext(Dispatchers.IO)` so
+  blocking Keystore and file I/O is always dispatched to the IO thread pool, regardless
+  of which coroutine dispatcher the caller uses. Replaces the prior `synchronized` block
+  with a coroutine-friendly `Mutex` to avoid thread pinning.
+- **`IdentityStore` blocking methods** (`load`, `store`, `has`, `remove`) — annotated
+  `@WorkerThread` so any future call from the main dispatcher produces a compile-time
+  warning. `generateOnceMutex` KDoc now documents non-reentrancy to prevent deadlock.
+
 ## [0.8.3] — 2026-06-05
 
 Two internal refactors from the quality-sweep cleanup pass. No behavior change.
