@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.directory
 
 import org.openwebdav.messenger.identity.IdentityCrypto
+import org.openwebdav.messenger.message.BigEndian
 import java.io.ByteArrayOutputStream
 
 /**
@@ -58,8 +59,8 @@ internal class DirectoryEntryCodec(private val identity: IdentityCrypto) {
         out.write(DirectoryFormat.ENTRY_VERSION.toInt())
         out.write(signingPublic)
         out.write(boxPublic)
-        writeUint64Be(out, versionCounter)
-        writeUint16Be(out, nameBytes.size)
+        BigEndian.writeUint64Be(out, versionCounter)
+        BigEndian.writeUint16Be(out, nameBytes.size)
         out.write(nameBytes)
         return out.toByteArray()
     }
@@ -101,21 +102,6 @@ internal class DirectoryEntryCodec(private val identity: IdentityCrypto) {
     }
 
     private fun reject(reason: DirectoryRejectReason): DirectoryParseResult = DirectoryParseResult.Rejected(reason)
-
-    private fun writeUint16Be(
-        out: ByteArrayOutputStream,
-        value: Int,
-    ) {
-        out.write((value ushr 8) and 0xFF)
-        out.write(value and 0xFF)
-    }
-
-    private fun writeUint64Be(
-        out: ByteArrayOutputStream,
-        value: Long,
-    ) {
-        for (i in 7 downTo 0) out.write(((value ushr (8 * i)) and 0xFF).toInt())
-    }
 
     /**
      * A bounds-checked forward reader over the inner payload, bounded at [limit] (the start of the
