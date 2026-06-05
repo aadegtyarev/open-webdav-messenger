@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.identity
 
 import android.content.Context
+import androidx.annotation.WorkerThread
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -104,7 +105,10 @@ class IdentityStore(
      * The stored identity as a typed [IdentityLoadResult] — [None] if no file, [Loaded] on success,
      * [Unrecoverable] if the file exists but cannot be decrypted/unwrapped. Never throws on a corrupt
      * blob or an invalidated Keystore key: the [KeystoreWrapper] maps those to [UnwrapResult.Unrecoverable].
+     *
+     * Blocking — must not be called on the main thread. Prefer [loadOrCreate] from a coroutine context.
      */
+    @WorkerThread
     fun load(): IdentityLoadResult =
         when (val result = wrapper().unwrap()) {
             is UnwrapResult.None -> IdentityLoadResult.None
@@ -125,7 +129,8 @@ class IdentityStore(
             }
         }
 
-    /** Wrap [identity]'s serialized bytes under the Keystore key and persist them atomically. */
+    /** Wrap [identity]'s serialized bytes under the Keystore key and persist them atomically. Blocking — must not be called on the main thread. */
+    @WorkerThread
     fun store(identity: Identity) {
         val serialized = Identity.serialize(identity)
         try {
@@ -135,10 +140,12 @@ class IdentityStore(
         }
     }
 
-    /** Whether an identity file exists (it may still be unrecoverable — see [load]). */
+    /** Whether an identity file exists (it may still be unrecoverable — see [load]). Blocking — must not be called on the main thread. */
+    @WorkerThread
     fun has(): Boolean = wrapper().exists()
 
-    /** Delete the stored identity (e.g. on an explicit, user-confirmed reset). */
+    /** Delete the stored identity (e.g. on an explicit, user-confirmed reset). Blocking — must not be called on the main thread. */
+    @WorkerThread
     fun remove() {
         wrapper().delete()
     }
@@ -166,7 +173,10 @@ class IdentityStore(
         /** Dedicated cross-process lock file for the generate-once critical section. Holds no secret. */
         private const val LOCK_FILE = "identity.lock"
 
-        /** In-process fast-path lock for the generate-once guard ([loadOrCreate]). */
+        /**
+         * In-process fast-path lock for the generate-once guard ([loadOrCreate]).
+         * Non-reentrant — do not call [loadOrCreate] from within this lock.
+         */
         private val generateOnceMutex = Mutex()
     }
 }
