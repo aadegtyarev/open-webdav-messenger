@@ -106,6 +106,8 @@ internal object PropfindParser {
     ): String {
         val raw = (href ?: basePath).trimEnd('/')
         val seg = raw.substringAfterLast('/')
-        return java.net.URLDecoder.decode(seg, Charsets.UTF_8.name())
+        // A malformed percent-sequence (e.g. %GG) throws IllegalArgumentException from URLDecoder;
+        // fall back to the raw segment so the entry still appears rather than crashing the poll cycle.
+        return runCatching { java.net.URLDecoder.decode(seg, Charsets.UTF_8.name()) }.getOrDefault(seg)
     }
 }

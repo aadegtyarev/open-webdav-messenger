@@ -73,6 +73,11 @@ class ChatDirectoryService internal constructor(
                     signingSecret = signingSecret,
                     communityKey = communityKey,
                 )
+            } catch (e: IllegalArgumentException) {
+                // ChatDescriptorCodec.signAndSerialize validates descriptor fields with require();
+                // an invalid kind / key size / versionCounter / chatId / title throws IAE. Convert
+                // to a typed failure so the "never throws" contract of publishChatEntry is upheld.
+                return ChatPublishOutcome.Failed("invalid entry parameters: ${e.message}")
             } finally {
                 // The signing secret was copied out of the Keystore-backed identity for the in-memory
                 // sign; wipe our copy as soon as the seal is done (Security constraints / SC5 family).
