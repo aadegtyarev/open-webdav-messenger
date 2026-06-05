@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.transport
 
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.openwebdav.messenger.protocol.Envelope
@@ -130,6 +131,14 @@ internal class WebDavTransport(
         PathSafety.requireHttps(config.normalizedBaseUrl)?.let { return it }
         PathSafety.validatePath(config.normalizedChatRoot)?.let { return it }
         PathSafety.validatePath(path)?.let { return it }
+        // Validate that the base URL + chat-root combination is parseable by OkHttp before any verb.
+        // PathSafety passes a URL that OkHttp's stricter parser may still reject (e.g. invalid host
+        // characters). Catch IAE here so callers always get a typed TransportError, never a crash.
+        try {
+            "${config.normalizedBaseUrl}/${config.normalizedChatRoot}/".toHttpUrl()
+        } catch (e: IllegalArgumentException) {
+            return WebDavResult.TransportError(code = null, message = "unparseable connection URL: ${e.message}")
+        }
         return null
     }
 
@@ -138,7 +147,7 @@ internal class WebDavTransport(
         basePathUrl: String,
         selfName: String,
     ): WebDavResult<List<InboxEntry>> {
-        if (!response.isSuccessful && response.code != HTTP_MULTI_STATUS) return httpError(response)
+        if (response.code != HTTP_MULTI_STATUS) return httpError(response)
         // Parse from the raw bytes, not response.body.string(): string() decodes per the
         // Content-Type charset and re-encoding to UTF-8 for the DOM parser would double-decode a
         // non-UTF-8 multistatus. The XML's own declaration drives decoding (§9 review finding).

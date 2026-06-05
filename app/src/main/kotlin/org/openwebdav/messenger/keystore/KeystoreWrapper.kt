@@ -4,6 +4,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -44,16 +45,25 @@ class KeystoreWrapper(
      * Encrypt [plaintext] under the Keystore wrapping key and persist the `iv ‖ ct+tag` blob
      * **atomically**: temp file in the same directory → flush+fsync → atomic rename over [file]. The
      * [plaintext] is the caller's buffer; the caller owns zeroizing it (this method does not).
+     *
+     * Throws [java.io.IOException] on any Keystore failure — [KeyStoreException], `ProviderException`,
+     * `InvalidKeyException` etc. can surface from [wrappingKey] or [Cipher.init] under TEE pressure;
+     * wrapping them as [IOException] gives callers a typed storage-layer signal (matches [unwrap] pattern).
      */
+    @Suppress("TooGenericExceptionCaught") // varied Keystore/TEE runtime exceptions; all map to IOException
     fun wrap(plaintext: ByteArray) {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, wrappingKey())
-        val iv = cipher.iv
-        val wrapped = cipher.doFinal(plaintext)
-        val blob = ByteArray(iv.size + wrapped.size)
-        iv.copyInto(blob, 0)
-        wrapped.copyInto(blob, iv.size)
-        writeAtomically(blob)
+        try {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, wrappingKey())
+            val iv = cipher.iv
+            val wrapped = cipher.doFinal(plaintext)
+            val blob = ByteArray(iv.size + wrapped.size)
+            iv.copyInto(blob, 0)
+            wrapped.copyInto(blob, iv.size)
+            writeAtomically(blob)
+        } catch (e: Exception) {
+            throw IOException("Keystore wrap failed", e)
+        }
     }
 
     /**
