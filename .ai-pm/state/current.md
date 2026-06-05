@@ -8,11 +8,11 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-fix/quality-sweep-cleanup (trivial fixup)
+identity-store-io-dispatch
 
 ## Status
 
-done
+in_progress
 
 ## Done
 

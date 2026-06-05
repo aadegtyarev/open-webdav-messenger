@@ -2,6 +2,7 @@ package org.openwebdav.messenger.identity
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -61,8 +62,8 @@ class IdentityStoreInstrumentedTest {
     // not a fresh one.
     @Test
     fun identity_persists_across_load() {
-        val first = store.loadOrCreate()
-        val second = store.loadOrCreate()
+        val first = runBlocking { store.loadOrCreate() }
+        val second = runBlocking { store.loadOrCreate() }
         assertArrayEquals(first.copySignPublic(), second.copySignPublic())
         assertArrayEquals(first.copySignSecret(), second.copySignSecret())
         assertArrayEquals(first.copyBoxPublic(), second.copyBoxPublic())
@@ -109,7 +110,7 @@ class IdentityStoreInstrumentedTest {
         // A valid-length but undecryptable blob: right size to pass the IV-length gate, wrong GCM tag.
         store.writeRawBlobForTest(ByteArray(64) { (it * 7 + 3).toByte() })
         assertTrue(store.load() is IdentityLoadResult.Unrecoverable)
-        assertThrows(IdentityUnrecoverableException::class.java) { store.loadOrCreate() }
+        assertThrows(IdentityUnrecoverableException::class.java) { runBlocking { store.loadOrCreate() } }
         // It must NOT have regenerated over the corrupt file (silent account loss). The file is still
         // the corrupt one we wrote; loadOrCreate did not overwrite it with a fresh identity.
         assertTrue(store.load() is IdentityLoadResult.Unrecoverable)
@@ -123,7 +124,7 @@ class IdentityStoreInstrumentedTest {
         store.writeRawBlobForTest(byteArrayOf(1, 2, 3)) // shorter than the 12-byte IV
         assertTrue(store.load() is IdentityLoadResult.Unrecoverable)
         assertFalse(store.load() is IdentityLoadResult.None)
-        assertThrows(IdentityUnrecoverableException::class.java) { store.loadOrCreate() }
+        assertThrows(IdentityUnrecoverableException::class.java) { runBlocking { store.loadOrCreate() } }
     }
 
     // atomic_write_no_partial_after_store — a normal store() lands a fully-recoverable blob (the atomic
@@ -145,7 +146,7 @@ class IdentityStoreInstrumentedTest {
         store.remove()
         val pool = Executors.newFixedThreadPool(2)
         try {
-            val task = Callable { store.loadOrCreate() }
+            val task = Callable { runBlocking { store.loadOrCreate() } }
             val a = pool.submit(task)
             val b = pool.submit(task)
             val idA = a.get(30, TimeUnit.SECONDS)

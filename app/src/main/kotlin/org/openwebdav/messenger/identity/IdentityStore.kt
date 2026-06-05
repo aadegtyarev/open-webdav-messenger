@@ -1,6 +1,10 @@
 package org.openwebdav.messenger.identity
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.keystore.KeystoreWrapper
 import org.openwebdav.messenger.keystore.UnwrapResult
 import java.io.File
@@ -29,7 +33,7 @@ import java.nio.channels.FileLock
  * **Generate-once is serialised across processes**, not just threads: a future foreground / WorkManager
  * process in a separate `android:process` could also see no file and generate a second identity. A
  * **cross-process file lock** ([generateOnce]) on a dedicated lock file, with a **double-checked load**
- * after acquiring it, guarantees exactly one identity is generated. The in-process [generateOnceLock] is
+ * after acquiring it, guarantees exactly one identity is generated. The in-process [generateOnceMutex] is
  * kept too (a fast path that also bounds same-process contention on the file lock).
  *
  * Android-only — exercised by `connectedAndroidTest` (Keystore is device-backed; cannot run on the JVM).
@@ -48,24 +52,25 @@ class IdentityStore(
      *  - generate-once is serialised across **threads and processes** (double-checked under both the
      *    in-process lock and a cross-process [FileLock]).
      */
-    fun loadOrCreate(): Identity {
-        // Fast path: an already-stored identity needs no lock.
-        when (val first = load()) {
-            is IdentityLoadResult.Loaded -> return first.identity
-            is IdentityLoadResult.Unrecoverable -> throw IdentityUnrecoverableException(first.reason, first.cause)
-            is IdentityLoadResult.None -> Unit // fall through to the guarded create
-        }
-        synchronized(generateOnceLock) {
-            // In-process re-check: a racing thread may have created+stored while we waited.
-            when (val second = load()) {
-                is IdentityLoadResult.Loaded -> return second.identity
-                is IdentityLoadResult.Unrecoverable ->
-                    throw IdentityUnrecoverableException(second.reason, second.cause)
-                is IdentityLoadResult.None -> Unit
+    suspend fun loadOrCreate(): Identity =
+        withContext(Dispatchers.IO) {
+            // Fast path: an already-stored identity needs no lock.
+            when (val first = load()) {
+                is IdentityLoadResult.Loaded -> return@withContext first.identity
+                is IdentityLoadResult.Unrecoverable -> throw IdentityUnrecoverableException(first.reason, first.cause)
+                is IdentityLoadResult.None -> Unit // fall through to the guarded create
             }
-            return generateOnce()
+            generateOnceMutex.withLock {
+                // In-process re-check: a racing coroutine may have created+stored while we were suspended.
+                when (val second = load()) {
+                    is IdentityLoadResult.Loaded -> return@withLock second.identity
+                    is IdentityLoadResult.Unrecoverable ->
+                        throw IdentityUnrecoverableException(second.reason, second.cause)
+                    is IdentityLoadResult.None -> Unit
+                }
+                generateOnce()
+            }
         }
-    }
 
     /**
      * Cross-process critical section: hold an exclusive [FileLock] on a dedicated lock file, then
@@ -162,6 +167,6 @@ class IdentityStore(
         private const val LOCK_FILE = "identity.lock"
 
         /** In-process fast-path lock for the generate-once guard ([loadOrCreate]). */
-        private val generateOnceLock = Any()
+        private val generateOnceMutex = Mutex()
     }
 }
