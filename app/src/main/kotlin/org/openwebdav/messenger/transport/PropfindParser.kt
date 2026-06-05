@@ -19,6 +19,18 @@ import javax.xml.parsers.DocumentBuilderFactory
  * The collection at the listed path itself appears as one `response`; the caller filters by name.
  */
 internal object PropfindParser {
+    // Configured once at object-init time; DocumentBuilderFactory is thread-safe after
+    // configuration (JAXP 1.4 spec §5.2), so reusing the single instance avoids the overhead of
+    // newInstance() + 4 setFeature() calls on every parse() invocation.
+    private val factory =
+        DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            isExpandEntityReferences = false
+        }
+
     /**
      * @param xml the raw multistatus body bytes. Parsed directly so the XML's own declaration /
      *   the DOM parser drives charset decoding — passing pre-decoded text would risk a
@@ -71,14 +83,6 @@ internal object PropfindParser {
         firstNotNullOfOrNull { it.firstLocalText(local)?.ifEmpty { null } }
 
     private fun newDocument(xml: ByteArray): org.w3c.dom.Document? {
-        val factory =
-            DocumentBuilderFactory.newInstance().apply {
-                isNamespaceAware = true
-                setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-                setFeature("http://xml.org/sax/features/external-general-entities", false)
-                setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-                isExpandEntityReferences = false
-            }
         // An XML declaration must be the first content; skip any leading ASCII whitespace bytes a
         // server (or a trimIndent() test fixture) may emit before `<?xml`. Whitespace bytes are the
         // same in every ASCII-superset encoding, so this never disturbs charset decoding.

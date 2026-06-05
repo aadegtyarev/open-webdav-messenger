@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.chatdirectory
 
 import org.openwebdav.messenger.identity.IdentityCrypto
+import org.openwebdav.messenger.message.BigEndian
 import java.io.ByteArrayOutputStream
 
 /**
@@ -67,12 +68,12 @@ internal class ChatDescriptorCodec(private val identity: IdentityCrypto) {
         val out = ByteArrayOutputStream(ChatDescriptorFormat.PREFIX_BEFORE_CHAT_ID_BYTES + chatId.size + titleBytes.size)
         out.write(ChatDescriptorFormat.ENTRY_VERSION.toInt())
         out.write(signingPublic)
-        writeUint64Be(out, versionCounter)
+        BigEndian.writeUint64Be(out, versionCounter)
         out.write(ChatDescriptorFormat.KIND_GROUP)
         out.write(encodeAccess(access))
-        writeUint16Be(out, chatId.size)
+        BigEndian.writeUint16Be(out, chatId.size)
         out.write(chatId)
-        writeUint16Be(out, titleBytes.size)
+        BigEndian.writeUint16Be(out, titleBytes.size)
         out.write(titleBytes)
         return out.toByteArray()
     }
@@ -141,21 +142,6 @@ internal class ChatDescriptorCodec(private val identity: IdentityCrypto) {
         }
 
     private fun reject(reason: ChatRejectReason): ChatParseResult = ChatParseResult.Rejected(reason)
-
-    private fun writeUint16Be(
-        out: ByteArrayOutputStream,
-        value: Int,
-    ) {
-        out.write((value ushr 8) and 0xFF)
-        out.write(value and 0xFF)
-    }
-
-    private fun writeUint64Be(
-        out: ByteArrayOutputStream,
-        value: Long,
-    ) {
-        for (i in 7 downTo 0) out.write(((value ushr (8 * i)) and 0xFF).toInt())
-    }
 
     /**
      * A bounds-checked forward reader over the inner payload, bounded at [limit] (the start of the

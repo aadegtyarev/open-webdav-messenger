@@ -7,6 +7,19 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.8.3] — 2026-06-05
+
+Two internal refactors from the quality-sweep cleanup pass. No behavior change.
+
+### Changed
+
+- **`PropfindParser`** — `DocumentBuilderFactory` is now configured once at object
+  initialization instead of on every `parse()` call. The factory is thread-safe after
+  configuration (JAXP 1.4 §5.2), so the shared instance is safe for concurrent use.
+- **`ChatDescriptorCodec` / `DirectoryEntryCodec`** — removed private `writeUint16Be`
+  and `writeUint64Be` helpers that were byte-for-byte duplicates of `BigEndian.writeUint16Be`
+  and `BigEndian.writeUint64Be`. Call sites now use `BigEndian` directly; output is unchanged.
+
 ## [0.8.2] — 2026-06-05
 
 Three correctness fixes from the audit-2026-06-05b quality sweep.
