@@ -60,6 +60,11 @@ class DirectoryService internal constructor(
                     signingSecret = signingSecret,
                     communityKey = communityKey,
                 )
+            } catch (e: IllegalArgumentException) {
+                // DirectoryEntryCodec.signAndSerialize validates entry parameters with require(); an
+                // invalid displayName / key size / versionCounter throws IAE. Convert to a typed
+                // failure so the "never throws" contract of publishEntry is upheld.
+                return PublishOutcome.Failed("invalid entry parameters: ${e.message}")
             } finally {
                 // The signing secret was copied out of the Keystore-backed identity for the in-memory
                 // sign; wipe our copy as soon as the seal is done (Security constraints / SC5 family).
