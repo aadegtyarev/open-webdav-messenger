@@ -7,6 +7,26 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.8.2] — 2026-06-05
+
+Three correctness fixes from the audit-2026-06-05b quality sweep.
+No behavior change on the happy path; error paths that previously crashed or
+silently misbehaved now return typed failures.
+
+### Fixed
+
+- **`WebDavTransport.mapMultistatus`** — PROPFIND success guard changed from the
+  unreachable `!isSuccessful && code != 207` to `code != 207`; a 200 OK with a
+  non-multistatus body now correctly returns `TransportError` instead of being
+  silently accepted.
+- **`KeystoreWrapper.wrap()`** — body wrapped in `try/catch(Exception)` that
+  rethrows as `IOException`, mirroring the existing `unwrap()` pattern; unhandled
+  `KeyStoreException` / `GeneralSecurityException` can no longer escape as an
+  unchecked crash.
+- **`WebDavTransport.gate()`** — added OkHttp URL parseability validation; a
+  malformed base URL now returns `TransportError` before any HTTP verb is
+  attempted.
+
 ## [0.8.1] — 2026-06-05
 
 Three correctness fixes that close unhandled-exception paths found in the

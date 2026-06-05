@@ -8,11 +8,11 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-(none active)
+fix/quality-sweep-transport-keystore (trivial fixup)
 
 ## Status
 
-idle
+done
 
 ## Done
 
@@ -22,6 +22,7 @@ idle
 - Protocol bump (PR #3, 55efbbf): ai-pm-protocol v2.23.0 → v2.25.1 (submodule e940085 → fc2faec). All additive, no migration; settings.json symlink makes the v2.25.1 hook change active automatically. CI green (with the deflake merged in first).
 - Post-bump audit (full scope, `.ai-pm/audits/audit-2026-06-05.md`): 0 blocking, 3 notes. All 8 features verified protocol-complete (5 earlier substrates clean, SC1–SC20 integral, no migration). Remediated (PR #5, aafb9e0): Note 1 — added `### System invariants` index to architecture.md (12 invariants by reference; closes invariants-index discipline); Note 2 — product-map intro count fixed (Six → Seven substrates + CI). Note 3 (human-role scenario subjects on disclaimed backend substrates) — no action, carried forward to the future user-facing UI feature (must then carry a Product Contract + advocate).
 - Quality-sweep fixup (2026-06-05, branch fix/quality-sweep-error-handling): added catch(IAE) in PropfindParser.lastSegment (malformed %-sequence → fallback to raw seg), DirectoryService.publishEntry (IAE from require() in codec → PublishOutcome.Failed), ChatDirectoryService.publishChatEntry (IAE from require() in codec → ChatPublishOutcome.Failed). Crash → typed failure; no user-visible behavior change. Pipeline green. Done.
+- Quality-sweep fixup #6/#7/#8 (2026-06-05, branch fix/quality-sweep-transport-keystore): (6) dead-code guard in mapMultistatus replaced with exact-207 check; (7) wrap() now catches Keystore/TEE runtime exceptions and rethrows as IOException — matches unwrap() pattern; (8) gate() validates base URL + chat-root parseability via OkHttp toHttpUrl(), returns typed TransportError on IAE instead of crashing. No user-visible change. Pipeline green. Done.
 
 ## Remaining
 
