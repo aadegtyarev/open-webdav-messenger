@@ -8,11 +8,11 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-codec-dedup-and-send-hardening — implement the audit-2026-06-06 quality-sweep "fix now" findings: dedup (shared bounded cursor A1, directory/chatdirectory shared-core A2, base32 alphabet→HashTag A3, AEAD size constants A4), remove dead destroy()×2 (B5), and harden the two directory publish paths to map a native seal failure to typed Failed (C8). Behaviour-preserving + additive; coder must not edit existing tests. Plan: docs/features/codec-dedup-and-send-hardening_plan.md.
+community-keyed-public-tier — PM security-model decisions 2026-06-06 (branch `feature/community-keyed-public-tier`): (1) retire the world-readable public-chat tier → "public" chats use the community key (readable by all onboarded members, sealed from the disk operator); the well-known public-chat key is removed, no key in source. (2) source-repo secret leakage — new SC21 (no secrets in source/git history, absolute) + threat T27 + a gitleaks secret-scan CI gate. Docs via pm-architect; gitleaks gate + 2 KDoc fixes via coder; validator wiring (CLAUDE.md + stack-notes) by orchestrator.
 
 ## Status
 
-shipping — PR #11 open (v0.8.5), awaiting PM merge on GitHub
+review-complete — ready to ship (gitleaks gate manually reviewed; docs owner-validated; awaiting PM go for pr-prep)
 
 ## Done
 
@@ -38,7 +38,7 @@ shipping — PR #11 open (v0.8.5), awaiting PM merge on GitHub
 
 ## Next step
 
-codec-dedup-and-send-hardening is review-complete and docs-updated on branch `chore/audit-2026-06-06-fixups`. Awaiting PM go for the ship gate (pr-prep: CHANGELOG + version bump + push + PR, then PM merges on GitHub). The branch bundles the whole 2026-06-06 audit: doc-currency fixups, audit report + sweep, the D10 backlog blocker, and the codec-dedup feature.
+codec-dedup-and-send-hardening SHIPPED (PR #11 merged, v0.8.5 tagged + released). community-keyed-public-tier is review-complete on branch `feature/community-keyed-public-tier` — awaiting PM go for the ship gate (pr-prep → PR, then PM merges). AFTER that: return to x25519-identity (PAUSED on branch `feature/x25519-identity`, plan + arch note committed at faaf417, awaiting PM plan approval → coder → review → ship).
 
 ## Validation
 

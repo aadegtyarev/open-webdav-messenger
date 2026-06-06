@@ -1,0 +1,25 @@
+# gitleaks configuration for Open WebDAV Messenger.
+#
+# Enforces SC21 (no secret material in source tree or git history) — see the
+# `secret-scan` job in .github/workflows/pr-checks.yml. We extend gitleaks'
+# default ruleset and add a narrow allowlist for documented false positives.
+#
+# Bump deliberately alongside the pinned gitleaks version in the workflow.
+
+[extend]
+# Start from gitleaks' full built-in ruleset, then narrow with the allowlist below.
+useDefault = true
+
+[allowlist]
+description = "Documented false positives — public crypto primitive names, never secrets."
+# The `generic-api-key` rule flags the high-entropy XChaCha20-Poly1305 cipher
+# name wherever it sits next to words like "key" / "AEAD" / "derivation":
+#   - docs prose, hyphenated:                "XChaCha20-Poly1305"
+#   - libsodium constant names, underscored: "AEAD.XCHACHA20POLY1305_IETF_KEYBYTES"
+# It is the public name of the AEAD construction used throughout this project —
+# never a secret. One case-insensitive pattern covers the whole family
+# (hyphen / underscore / bare). Allowlisted by value, so a genuine high-entropy
+# secret anywhere else is still caught.
+regexes = [
+    '''(?i)xchacha20[-_]?poly1305[_a-z0-9]*''',
+]

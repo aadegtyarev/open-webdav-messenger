@@ -7,6 +7,33 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.8.6] — 2026-06-06
+
+Security-model hardening from a PM-directed decision (2026-06-06) — no functional
+app-behavior change (docs, CI, and two KDoc comments only). The net direction is
+tightening: no security claim is weakened, and the threat model gains coverage it
+did not have before.
+
+### Changed
+
+- **"Public" chats are now community-keyed, not world-readable.** The well-known
+  public-chat key is retired and no longer embedded in source. So-called public chats
+  now use the community key — readable by every onboarded member but sealed from the
+  disk operator. Previously the operator (and anyone with the link) could read public
+  chats in plaintext; now they cannot. Architecture decision 9 is revised, along with
+  the `public` axis of the chat taxonomy and security claims SC1/SC2/SC3, and threat
+  T14 is updated.
+
+### Added
+
+- **No-secrets-in-source guarantee (SC21) + threat T27.** A new absolute security
+  claim — no secret material in the source tree or anywhere in git history — backed by
+  a new threat entry (T27, source-repo secret leakage).
+- **gitleaks secret-scan CI gate.** A new `secret-scan` job in
+  `.github/workflows/pr-checks.yml` (pinned gitleaks 8.30.1) scans the full git history
+  and fails the pull request on any finding. It is wired into the CLAUDE.md pipeline and
+  the `docs/stack-notes.md` validators table, and runs on every pull request.
+
 ## [0.8.5] — 2026-06-06
 
 Internal-quality refactor from the 2026-06-06 audit cycle — no end-user behavior

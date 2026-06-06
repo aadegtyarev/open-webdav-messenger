@@ -73,11 +73,12 @@ Every command in this block must be green before coder is done. No exceptions.
 ```
 ./gradlew lint                  # Android Lint — manifest, API levels, resource issues
 ./gradlew connectedAndroidTest  # instrumented tests — gates native crypto .so ABI load, Keystore, Room migrations (requires emulator/device)
+gitleaks detect --source . --redact --exit-code 1   # secret scan — enforces SC21 (no secret material in source/git history); runs in CI, not locally required
 ```
 
 A green tests + lint with a failing validator is still a failed pipeline. Reviewer dim 9 blocks if a validator listed in `stack-notes.md` is not present here, or if it is present here but not actually run by the coder.
 
-The three JVM gates (`test` + `ktlintCheck` + `lint`) also run in CI on every pull request via `.github/workflows/pr-checks.yml`; `connectedAndroidTest` stays the manual on-device gate (no CI emulator — decision 8).
+The three JVM gates (`test` + `ktlintCheck` + `lint`) also run in CI on every pull request via `.github/workflows/pr-checks.yml`, alongside a **`secret-scan`** job (gitleaks over full git history — enforces SC21); `connectedAndroidTest` stays the manual on-device gate (no CI emulator — decision 8).
 
 ---
 
