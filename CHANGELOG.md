@@ -7,6 +7,42 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.8.5] — 2026-06-06
+
+Internal-quality refactor from the 2026-06-06 audit cycle — no end-user behavior
+change. Three near-duplicate parse cursors collapse onto one shared bounded cursor,
+the directory and chat-directory services fold onto a shared generic engine, and the
+base32 alphabet plus AEAD framing sizes are now single-sourced. One additive hardening
+(C8) closes a latent crash path on native encryption failure during publish.
+
+### Changed
+
+- **Codec parsing** — the three private parse cursors in `ChatDescriptorCodec`,
+  `DirectoryEntryCodec`, and the message codec now route through one shared bounded
+  `ByteCursor`. Overrun, negative-take, limit-ceiling, and 64-bit boundary handling are
+  identical to before; the public parse APIs are unchanged.
+- **Directory / chat-directory services** — the two near-clone services collapse onto a
+  shared generic `CommunityDirectoryEngine`. Public `DirectoryService` /
+  `ChatDirectoryService` types and method signatures are unchanged, and the two
+  collections never cross-wire.
+- **Base32 alphabet** — the RFC-4648 lowercase alphabet is centralized to one constant
+  (`HashTag.BASE32_LOWER_CHARS`) referenced by all former call sites.
+- **AEAD framing sizes** — nonce / tag / key byte sizes derive from the libsodium
+  XChaCha20-Poly1305 constants instead of repeated literals.
+
+### Fixed
+
+- **Directory publish on native seal failure (C8)** — both `DirectoryService.publishEntry`
+  and `ChatDirectoryService.publishChatEntry` now map a native AEAD seal failure to the
+  caller's typed `Failed` result instead of letting an uncaught `IllegalStateException`
+  propagate. Previously only `IllegalArgumentException` was caught, so a native seal
+  failure could crash the publish path.
+
+### Removed
+
+- **Dead `destroy()` methods** — `ChatKey.destroy()` and `Identity.destroy()` had no
+  remaining call sites and were removed.
+
 ## [0.8.4] — 2026-06-05
 
 Dispatcher-safety fix for `IdentityStore.loadOrCreate()`: blocking I/O can no longer
