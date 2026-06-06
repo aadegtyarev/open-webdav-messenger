@@ -12,9 +12,12 @@ codec-dedup-and-send-hardening — implement the audit-2026-06-06 quality-sweep 
 
 ## Status
 
-coding
+review
 
 ## Done
+
+- codec-dedup-and-send-hardening (coding complete, branch `chore/audit-2026-06-06-fixups`): all six plan items landed across 4 atomic commits. A1 — three parse cursors (message ByteCursor + the two codec Cursors) collapsed onto one shared bounded `ByteCursor` (default limit = buf.size, +u64), every overrun/reject byte-identical (SC16). A3 — RFC-4648 base32-lower alphabet centralised to `HashTag.BASE32_LOWER_CHARS`, referenced from MessageId/ChangeEntry/CollectionPaths. A4 — `Aead.NONCE_BYTES/TAG_BYTES/KEY_BYTES` derive from the libsodium `AEAD.XCHACHA20POLY1305_IETF_*` constants; `ChatKey.KEY_BYTES` from `Aead.KEY_BYTES`. B5 — `ChatKey.destroy()`/`Identity.destroy()` removed (zero callers, grep-confirmed). A2 — `directory`/`chatdirectory` near-clones collapsed onto shared internals: `CollectionPaths` (name minter), `CommunityDirectoryEngine<E>` (generic publish+read pipeline parameterised by collection + grouping-key + verify fn), `CommunityDirectoryWiring` (Android native+transport). Public service/factory types + test-touched signatures unchanged. C8 — native AEAD seal failure (ISE from aeadEncrypt) now maps to typed Failed at the publish boundary in the shared engine, alongside the existing IAE mapping, caught narrowly. New tests only (5 files): SharedByteCursorTest, CentralisedBase32AlphabetTest, AeadSizeConstantsTest, Directory/ChatDirectorySealFailureTest (+ SealFailingNative helper). ZERO existing-test edits. Pipeline green: `./gradlew test` (189 tests), `ktlintCheck`, `lint`. Docs (architecture/threat-model) deferred to pm-architect per plan. NOT pushed.
+
 
 - chat-directory feature complete → released v0.7.0, PR #1 squash-merged to main (d358b42). Archived to archive/chat-directory-2026-06-04.md.
 - release-ci feature complete: GitHub Actions CI — PR-check workflow (3 JVM gates per PR) + release workflow (version bump → debug APK + auto-tag + GitHub Release with APK, idempotent, one job). Stack-notes GitHub Actions section, architecture "Release flow" rewritten, pm-plan-checker approve + code-review passed (shell-injection-hygiene finding fixed). Released v0.8.0; PR #2 squash-merged (1107d16). LIVE-VALIDATED: pr-checks.yml green on the PR, release.yml green on merge → tag v0.8.0 + GitHub Release + app-debug.apk all present. Backfill tags v0.6.0/v0.7.0 pushed. Archived to archive/release-ci-2026-06-05.md.
@@ -27,12 +30,13 @@ coding
 
 ## Remaining
 
+- codec-dedup-and-send-hardening: review loop (pm-plan-checker Pass 1 → code-review Pass 2), then pm-architect updates docs/architecture.md (record shared cursor + directory/chatdirectory shared-core + base32/AEAD single-source homes) and reviews docs/threat-model.md (expected no posture change; C8 is strictly safer). Then ship (pr-prep) on PM go.
 - Next feature — PM's choice. Roadmap (`.ai-pm/backlog.md`): invite/onboarding (distributes the community key + chat keys; two-layer community vs chat membership) → rotation (rotate-with-auto-replace, member removal) → community (host-governed: meta/community.json owner marker, polling floor) → compression → UI; plus sync follow-ons (retention-window pruning, foreground-service fast-delivery, app-startup wiring) and local-DB-at-rest encryption (SC17/T16).
 - Pending (offered, not yet backlogged): CI action-majors are on Node.js 20 (force-migrated to Node 24 on 2026-06-16, Node 20 removed 2026-09-16) — bump checkout/setup-java/setup-gradle/action-gh-release majors before then.
 
 ## Next step
 
-Wait for PM: pick the next feature (roadmap → invite/onboarding), the Node-20 CI-action bump, or other.
+Review codec-dedup-and-send-hardening: Pass 1 pm-plan-checker (plan-compliance, zero-existing-test-edit invariant), then Pass 2 code-review (technical quality). Then pm-architect docs pass, then ship on PM go.
 
 ## Validation
 
