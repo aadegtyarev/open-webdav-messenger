@@ -51,14 +51,6 @@ class Identity(
 
     fun copyBoxSecret(): ByteArray = boxSecret.copyOf()
 
-    /** Best-effort hygiene: overwrite all secret (and public) key material once the identity is done. */
-    fun destroy() {
-        signPublic.fill(0)
-        signSecret.fill(0)
-        boxPublic.fill(0)
-        boxSecret.fill(0)
-    }
-
     /** Redacted — an Identity must never print its secret material (Security constraints). */
     override fun toString(): String = "Identity(***)"
 

@@ -8,13 +8,16 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-idle
+codec-dedup-and-send-hardening — implement the audit-2026-06-06 quality-sweep "fix now" findings: dedup (shared bounded cursor A1, directory/chatdirectory shared-core A2, base32 alphabet→HashTag A3, AEAD size constants A4), remove dead destroy()×2 (B5), and harden the two directory publish paths to map a native seal failure to typed Failed (C8). Behaviour-preserving + additive; coder must not edit existing tests. Plan: docs/features/codec-dedup-and-send-hardening_plan.md.
 
 ## Status
 
-idle
+shipping — PR #11 open (v0.8.5), awaiting PM merge on GitHub
 
 ## Done
+
+- codec-dedup-and-send-hardening (coding complete, branch `chore/audit-2026-06-06-fixups`): all six plan items landed across 4 atomic commits. A1 — three parse cursors (message ByteCursor + the two codec Cursors) collapsed onto one shared bounded `ByteCursor` (default limit = buf.size, +u64), every overrun/reject byte-identical (SC16). A3 — RFC-4648 base32-lower alphabet centralised to `HashTag.BASE32_LOWER_CHARS`, referenced from MessageId/ChangeEntry/CollectionPaths. A4 — `Aead.NONCE_BYTES/TAG_BYTES/KEY_BYTES` derive from the libsodium `AEAD.XCHACHA20POLY1305_IETF_*` constants; `ChatKey.KEY_BYTES` from `Aead.KEY_BYTES`. B5 — `ChatKey.destroy()`/`Identity.destroy()` removed (zero callers, grep-confirmed). A2 — `directory`/`chatdirectory` near-clones collapsed onto shared internals: `CollectionPaths` (name minter), `CommunityDirectoryEngine<E>` (generic publish+read pipeline parameterised by collection + grouping-key + verify fn), `CommunityDirectoryWiring` (Android native+transport). Public service/factory types + test-touched signatures unchanged. C8 — native AEAD seal failure (ISE from aeadEncrypt) now maps to typed Failed at the publish boundary in the shared engine, alongside the existing IAE mapping, caught narrowly. New tests only (5 files): SharedByteCursorTest, CentralisedBase32AlphabetTest, AeadSizeConstantsTest, Directory/ChatDirectorySealFailureTest (+ SealFailingNative helper). ZERO existing-test edits. Pipeline green: `./gradlew test` (189 tests), `ktlintCheck`, `lint`. Docs (architecture/threat-model) deferred to pm-architect per plan. NOT pushed.
+
 
 - chat-directory feature complete → released v0.7.0, PR #1 squash-merged to main (d358b42). Archived to archive/chat-directory-2026-06-04.md.
 - release-ci feature complete: GitHub Actions CI — PR-check workflow (3 JVM gates per PR) + release workflow (version bump → debug APK + auto-tag + GitHub Release with APK, idempotent, one job). Stack-notes GitHub Actions section, architecture "Release flow" rewritten, pm-plan-checker approve + code-review passed (shell-injection-hygiene finding fixed). Released v0.8.0; PR #2 squash-merged (1107d16). LIVE-VALIDATED: pr-checks.yml green on the PR, release.yml green on merge → tag v0.8.0 + GitHub Release + app-debug.apk all present. Backfill tags v0.6.0/v0.7.0 pushed. Archived to archive/release-ci-2026-06-05.md.
@@ -22,17 +25,20 @@ idle
 - Protocol bump (PR #3, 55efbbf): ai-pm-protocol v2.23.0 → v2.25.1 (submodule e940085 → fc2faec). All additive, no migration; settings.json symlink makes the v2.25.1 hook change active automatic. CI green (with the deflake merged in first).
 - Post-bump audit (full scope, `.ai-pm/audits/audit-2026-06-05.md`): 0 blocking, 3 notes. All 8 features verified protocol-complete (5 earlier substrates clean, SC1–SC20 integral, no migration). Remediated (PR #5, aafb9e0): Note 1 — added `### System invariants` index to architecture.md; Note 2 — product-map intro count fixed. Note 3 — carried forward to future UI feature.
 - Quality-sweep fixups (2026-06-05, PRs #6/#7/#8): 10 findings from full quality sweep; 9 fixed across 3 fixup PRs (finding #5 was false positive). Findings: IAE-crash → typed failure (publishEntry, publishChatEntry, lastSegment); dead-code guard fixed; Keystore wrap() now catches exceptions like unwrap(); OkHttp URL validation in gate(); PropfindParser.factory extracted to object-level; BigEndian helpers deduplicated from 2 codecs. Released v0.8.1/v0.8.2/v0.8.3.
-- Protocol bump v2.25.1 → v2.36.0 (PR pending, `chore/protocol-bump-v2.36.0`): ai-pm-protocol submodule fc2faec → 1cd6156 (tag v2.36.0; relicense AGPL-3.0 → MIT + diagnostic-flow-discipline v2.35.0 + workflow-progressive-disclosure v2.29.0; all additive, no migration). NOTE: an earlier state entry mistakenly claimed this landed in PR #9 (9d6b48d) — it did NOT; PR #9 (bf8f12d) recorded only fc2faec/v2.25.1. The submodule working tree had been advanced to v2.36.0 but never committed; this PR completes the pointer bump. Run `/pm-audit` after merge per maintenance.md.
+- Protocol bump v2.25.1 → v2.36.0 (PR #10 MERGED, squash a92650c): ai-pm-protocol submodule fc2faec → 1cd6156 (tag v2.36.0; relicense AGPL-3.0 → MIT + diagnostic-flow-discipline v2.35.0 + workflow-progressive-disclosure v2.29.0; all additive, no migration). Completed a half-done bump (working tree was at v2.36.0 but the pointer was never committed) + corrected a stale state entry that wrongly attributed it to PR #9. CI green; no app version bump (release.yml no-op at unchanged v0.8.4). Local main was 73 behind origin before this — now synced.
+- Full post-bump audit (audit-2026-06-06, PM-initiated full): 0 blocking, 2 doc-currency notes — both remediated (product-map gained identity-store-io-dispatch row; README dropped detekt + Tink mentions per decisions 7 & 1). First-run full-tree quality sweep (high depth): complexity finder clean (no AI-minimum violations); 10 findings triaged — D10 agreeChatKey chat-id-binding backlogged as a feature blocker; B6/B7/C9 accept-with-context/descoped; A1–A4/B5/C8 → codec-dedup-and-send-hardening (below).
+- codec-dedup-and-send-hardening (review-complete, branch `chore/audit-2026-06-06-fixups`, NOT pushed): all six plan items landed. Pass 1 plan-checker approve (zero existing-test edits verified); Pass 2 code-review high/3-angle: 0 correctness findings, behaviour-preserving, C8 closes a latent uncaught-seal-failure gap. Docs updated (architecture decision 14 + module map; threat-model Last reviewed 2026-06-06 + T26). Pipeline green (189 tests). One non-blocking cleanup follow-up noted in the review: collection-segment literal not yet single-sourced across the thin *Paths faces.
 - identity-store-io-dispatch (PR #9, bf8f12d): `IdentityStore.loadOrCreate()` made dispatcher-safe — `suspend fun` + `withContext(Dispatchers.IO)` + `kotlinx Mutex` replacing `synchronized`. `@WorkerThread` added to `load()`, `store()`, `has()`, `remove()`. Mutex non-reentrancy documented. Plan-checker: approve. Code review: 2 PLAUSIBLE findings fixed. Released v0.8.4.
 
 ## Remaining
 
+- codec-dedup-and-send-hardening: review loop (pm-plan-checker Pass 1 → code-review Pass 2), then pm-architect updates docs/architecture.md (record shared cursor + directory/chatdirectory shared-core + base32/AEAD single-source homes) and reviews docs/threat-model.md (expected no posture change; C8 is strictly safer). Then ship (pr-prep) on PM go.
 - Next feature — PM's choice. Roadmap (`.ai-pm/backlog.md`): invite/onboarding (distributes the community key + chat keys; two-layer community vs chat membership) → rotation (rotate-with-auto-replace, member removal) → community (host-governed: meta/community.json owner marker, polling floor) → compression → UI; plus sync follow-ons (retention-window pruning, foreground-service fast-delivery, app-startup wiring) and local-DB-at-rest encryption (SC17/T16).
 - Pending (offered, not yet backlogged): CI action-majors are on Node.js 20 (force-migrated to Node 24 on 2026-06-16, Node 20 removed 2026-09-16) — bump checkout/setup-java/setup-gradle/action-gh-release majors before then.
 
 ## Next step
 
-Wait for PM: pick the next feature (roadmap → invite/onboarding), the Node-20 CI-action bump, or other.
+codec-dedup-and-send-hardening is review-complete and docs-updated on branch `chore/audit-2026-06-06-fixups`. Awaiting PM go for the ship gate (pr-prep: CHANGELOG + version bump + push + PR, then PM merges on GitHub). The branch bundles the whole 2026-06-06 audit: doc-currency fixups, audit report + sweep, the D10 backlog blocker, and the codec-dedup feature.
 
 ## Validation
 

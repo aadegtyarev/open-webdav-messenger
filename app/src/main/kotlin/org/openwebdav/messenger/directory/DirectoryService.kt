@@ -2,19 +2,15 @@ package org.openwebdav.messenger.directory
 
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.identity.Identity
-import org.openwebdav.messenger.protocol.Envelope
 import org.openwebdav.messenger.protocol.Hex
-import org.openwebdav.messenger.transport.InboxEntry
-import org.openwebdav.messenger.transport.ReadResult
-import org.openwebdav.messenger.transport.WebDavResult
 import org.openwebdav.messenger.transport.WebDavTransport
 
 /**
  * The §10 community-user-directory orchestration seam (`docs/features/directory_plan.md` → Contracts;
- * `docs/protocol/webdav-layout.md` §10). Pure orchestration over [WebDavTransport] (verbs),
- * [DirectoryCrypto] (seal/open + sign/verify), and [DirectoryPaths] (collection + content-addressed
- * name) — no HTTP, no SQL, no crypto in this class (it composes the lower layers, staying inside the
- * file/function-size limits). Two operations, both typed and never-throwing:
+ * `docs/protocol/webdav-layout.md` §10). A thin §10-named face over the shared
+ * [CommunityDirectoryEngine] (the publish + read pipelines it shares with the §11 chat directory) plus
+ * [DirectoryCrypto] (seal/open + sign/verify). No HTTP, no SQL, no crypto in this class. Two operations,
+ * both typed and never-throwing:
  *
  *  - [publishEntry] — seal the member's signed entry under the community key and write it once to the
  *    `directory/` collection as a content-addressed append-only file (§10.4). Idempotent on identical
@@ -28,15 +24,23 @@ import org.openwebdav.messenger.transport.WebDavTransport
  * are recomputed from the on-disk source of truth per read (§10.6; the Room cache is the UI feature's).
  */
 class DirectoryService internal constructor(
-    private val transport: WebDavTransport,
+    transport: WebDavTransport,
     private val crypto: DirectoryCrypto,
 ) {
+    private val engine =
+        CommunityDirectoryEngine<DirectoryEntry>(
+            transport = transport,
+            paths = CollectionPaths(DirectoryPaths.DIRECTORY),
+            verify = ::verifyEntry,
+        )
+
     /**
      * §10.4 publish: build the entry from [identity]'s two public keys + [displayName] at
      * [versionCounter], Ed25519-sign it, AEAD-seal under [communityKey], and PUT it to the
      * content-addressed path (after an idempotent `MKCOL` of `directory/`). The signing **secret** is
      * read from [identity] in-memory and never leaves; only public keys are published (SC5). Returns a
-     * typed [PublishOutcome] — never throws.
+     * typed [PublishOutcome] — never throws (an invalid parameter or a native seal failure both degrade
+     * to [PublishOutcome.Failed], C8).
      *
      * @param versionCounter the signed per-author monotonic supersede coordinate (§10.5); the caller
      *   increments it per re-publish. A re-publish of identical (displayName, keys, versionCounter)
@@ -50,34 +54,26 @@ class DirectoryService internal constructor(
         communityKey: ChatKey,
     ): PublishOutcome {
         val signingSecret = identity.copySignSecret()
-        val envelopeBytes =
-            try {
-                crypto.sealEntry(
-                    displayName = displayName,
-                    signingPublic = identity.copySignPublic(),
-                    boxPublic = identity.copyBoxPublic(),
-                    versionCounter = versionCounter,
-                    signingSecret = signingSecret,
-                    communityKey = communityKey,
-                )
-            } catch (e: IllegalArgumentException) {
-                // DirectoryEntryCodec.signAndSerialize validates entry parameters with require(); an
-                // invalid displayName / key size / versionCounter throws IAE. Convert to a typed
-                // failure so the "never throws" contract of publishEntry is upheld.
-                return PublishOutcome.Failed("invalid entry parameters: ${e.message}")
-            } finally {
-                // The signing secret was copied out of the Keystore-backed identity for the in-memory
-                // sign; wipe our copy as soon as the seal is done (Security constraints / SC5 family).
-                signingSecret.fill(0)
-            }
-        if (transport.ensureCollection(DirectoryPaths.DIRECTORY) !is WebDavResult.Success) {
-            return PublishOutcome.Failed("could not ensure directory/ collection (transport back-off)")
-        }
-        val entryName = DirectoryPaths.entryName(envelopeBytes)
-        return when (transport.write(DirectoryPaths.entryPath(entryName), envelopeBytes)) {
-            is WebDavResult.Success -> PublishOutcome.Published(entryName)
-            else -> PublishOutcome.Failed("could not write directory entry (transport back-off)")
-        }
+        return engine.publish(
+            seal = {
+                try {
+                    crypto.sealEntry(
+                        displayName = displayName,
+                        signingPublic = identity.copySignPublic(),
+                        boxPublic = identity.copyBoxPublic(),
+                        versionCounter = versionCounter,
+                        signingSecret = signingSecret,
+                        communityKey = communityKey,
+                    )
+                } finally {
+                    // The signing secret was copied out of the Keystore-backed identity for the in-memory
+                    // sign; wipe our copy as soon as the seal is done (Security constraints / SC5 family).
+                    signingSecret.fill(0)
+                }
+            },
+            published = { PublishOutcome.Published(it) },
+            failed = { PublishOutcome.Failed(it) },
+        )
     }
 
     /**
@@ -87,76 +83,32 @@ class DirectoryService internal constructor(
      * dropped, never wedging the read (flat-trust degradation). Never throws.
      */
     suspend fun readDirectory(communityKey: ChatKey): DirectoryReadResult {
-        val entries =
-            when (val listed = transport.list(DirectoryPaths.DIRECTORY)) {
-                is WebDavResult.Success -> listed.value
-                else -> return DirectoryReadResult(entries = emptyList(), rejectedCount = 0, listingFailed = true)
-            }
-        val resolver = SupersedeResolver<DirectoryEntry>()
-        var rejected = 0
-        for (entry in entries) {
-            when (val outcome = fetchAndVerify(entry, communityKey)) {
-                is FetchOutcome.Verified ->
-                    // §10.5: group by the verified signing-pubkey (hex-keyed for a stable map key).
-                    resolver.offer(
-                        groupingKey = Hex.encode(outcome.entry.copySigningPublicKey()),
-                        value = outcome.entry,
-                        versionCounter = outcome.versionCounter,
-                        entryName = outcome.entryName,
-                    )
-                FetchOutcome.Dropped -> rejected++
-                FetchOutcome.NotReady -> rejected++ // transient (incomplete upload / hash mismatch) — counted, retried next read
-            }
-        }
-        return DirectoryReadResult(entries = resolver.resolved(), rejectedCount = rejected)
+        val outcome = engine.read(communityKey)
+        return DirectoryReadResult(
+            entries = outcome.entries,
+            rejectedCount = outcome.rejectedCount,
+            listingFailed = outcome.listingFailed,
+        )
     }
 
     /**
-     * §10.6 per-entry path: validate the name (SC16 / reject-don't-guess), `GET` with the §3/§10.6
-     * content-hash check, re-frame, AEAD-open with the community key, §10.3-parse + verify. A non-`none`
-     * codec is rejected explicitly (this feature inflates only `codec-id = 0x00`, like the sync reader).
+     * Open + §10.3-verify one envelope into a verified [DirectoryEntry] grouped by its verified
+     * signing-pubkey hex (§10.5: an entry signed by a DIFFERENT key can never win for a member — the
+     * security invariant), or a typed drop (wrong key / bad sig / malformed, §10.6).
      */
-    private suspend fun fetchAndVerify(
-        entry: InboxEntry,
+    private fun verifyEntry(
         communityKey: ChatKey,
-    ): FetchOutcome {
-        if (entry.isCollection) return FetchOutcome.Dropped
-        // SC16 / reject-don't-guess: a name outside the §10.4 grammar is dropped before any GET (it is
-        // never dereferenced — path-traversal-safe by construction).
-        if (!DirectoryPaths.isWellFormedEntryName(entry.name)) return FetchOutcome.Dropped
-        val path = DirectoryPaths.entryPath(entry.name)
-        val blobResult =
-            when (val read = transport.readContentAddressed(path, entry.name)) {
-                is WebDavResult.Success ->
-                    when (val r = read.value) {
-                        is ReadResult.Ready -> r
-                        ReadResult.NotReady -> return FetchOutcome.NotReady
-                    }
-                else -> return FetchOutcome.NotReady // 429 / timeout / transport error → retry next read
-            }
-        if (blobResult.codecId != Envelope.CODEC_NONE) return FetchOutcome.Dropped
-        val envelopeBytes = Envelope.frame(blobResult.codecId, blobResult.blob)
-        return when (val parsed = crypto.openEntry(envelopeBytes, communityKey)) {
+        envelopeBytes: ByteArray,
+    ): VerifyResult<DirectoryEntry> =
+        when (val parsed = crypto.openEntry(envelopeBytes, communityKey)) {
             is DirectoryParseResult.Parsed -> {
                 val p = parsed.entry
-                FetchOutcome.Verified(
-                    entry = DirectoryEntry(p.displayName, p.signingPublic, p.boxPublic),
+                VerifyResult.Verified(
+                    value = DirectoryEntry(p.displayName, p.signingPublic, p.boxPublic),
+                    groupingKey = Hex.encode(p.signingPublic),
                     versionCounter = p.versionCounter,
-                    entryName = entry.name,
                 )
             }
-            is DirectoryParseResult.Rejected -> FetchOutcome.Dropped // wrong key / bad sig / malformed (§10.6)
+            is DirectoryParseResult.Rejected -> VerifyResult.Dropped
         }
-    }
-
-    /** One entry's read outcome inside [readDirectory]. */
-    private sealed interface FetchOutcome {
-        data class Verified(val entry: DirectoryEntry, val versionCounter: Long, val entryName: String) : FetchOutcome
-
-        /** Permanently rejected: wrong/absent key, bad signature, malformed, foreign name, bad codec (§10.6). */
-        data object Dropped : FetchOutcome
-
-        /** Transient: incomplete upload / content-hash mismatch / transport back-off — retried next read. */
-        data object NotReady : FetchOutcome
-    }
 }
