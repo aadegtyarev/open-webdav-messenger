@@ -7,13 +7,17 @@ A simple, end-to-end encrypted text messenger for Android that uses a public clo
 ## Quick start
 
 ```bash
-# Android app — build with Gradle (toolchain details filled as the project takes shape)
+# Android app — build the debug APK with Gradle (JDK is resolved by the Gradle Java toolchain).
 ./gradlew assembleDebug
 ```
 
+Install the APK on a device and open it: the first screen lets you **create a community**
+(if you host the cloud disk) or **join one by an invite** (a string or a QR code). What the
+app does, for whom, and its current limits live in [`docs/product.md`](docs/product.md).
+
 ## Architecture
 
-Native Android (Kotlin + Jetpack Compose). Background polling via WorkManager, WebDAV transport over OkHttp, audited crypto primitives (libsodium), local cache in SQLite/Room. The cloud disk is treated as an untrusted transport — private chat content never leaves the device unencrypted.
+Native Android (Kotlin + a Jetpack Compose chat surface). Background polling via WorkManager, WebDAV transport over OkHttp, audited crypto primitives (libsodium), local cache in SQLite/Room. The cloud disk is treated as an untrusted transport — private chat content never leaves the device unencrypted.
 
 See `docs/architecture.md` for full decisions and constraints.
 
