@@ -23,12 +23,12 @@ import java.io.File
 class ChatKeyStore(
     private val context: Context,
     private val native: NativeCrypto,
-) {
+) : ChatKeyStorePort {
     /**
      * Wrap [chatKey] under the Keystore key and persist the wrapped blob for [chatId]. Overwrites any
      * existing stored key for that chat (atomic write). The raw key bytes are zeroized after wrapping.
      */
-    fun store(
+    override fun store(
         chatId: String,
         chatKey: ChatKey,
     ) {
@@ -46,7 +46,7 @@ class ChatKeyStore(
      * blob is treated as absent here — the policy difference from `IdentityStore`. The returned [ChatKey]
      * holds the raw bytes only in memory; the on-disk blob stays wrapped.
      */
-    fun load(chatId: String): ChatKey? =
+    override fun load(chatId: String): ChatKey? =
         when (val result = wrapper(chatId).unwrap()) {
             is UnwrapResult.None -> null
             is UnwrapResult.Unrecoverable -> null // re-derivable: treat as absent (policy)

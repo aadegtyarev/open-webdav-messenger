@@ -11,7 +11,10 @@ import org.openwebdav.messenger.crypto.NativeCrypto
  *
  * Provides the public-key primitives the directory / private-chat / rotation features consume:
  *  - [generateIdentity] — two distinct keypairs (Ed25519 sign + X25519 box).
- *  - [agreeChatKey] — X25519 DH → KDF → [ChatKey] (the **fourth** key source for the existing AEAD).
+ *  - [deriveRemoteChatKey] — X25519 DH → **chat-id-bound** KDF → [ChatKey] (the **fourth** key source
+ *    for the existing AEAD; distinct per chat-id, the production per-chat derivation).
+ *  - [agreeChatKey] — the bare pairwise DH → KDF → [ChatKey], superseded-for-chat-keys by
+ *    [deriveRemoteChatKey] (its output is not chat-id-bound; kept as a tested primitive only).
  *  - [seal] / [openSealed] — anonymous sealed box (the rotation primitive; sender-unauthenticated).
  *  - [sign] / [verify] — Ed25519 detached signatures (hard reject on failure).
  *  - [fingerprint] — symmetric BLAKE2b safety number over both parties' public identities.
@@ -45,8 +48,15 @@ class IdentityCrypto(private val native: NativeCrypto) {
     }
 
     /**
-     * Derive the symmetric [ChatKey] shared with a peer from my X25519 secret key and the peer's
-     * X25519 public key: `crypto_box_beforenm` shared secret → **KDF** → [ChatKey] (decision 10).
+     * The **bare pairwise** DH primitive: `crypto_box_beforenm` shared secret → keyed-BLAKE2b over a
+     * fixed (non-chat-id-bound) context `owdm/x25519-chatkey/v1` → [ChatKey] (decision 10).
+     *
+     * **Superseded for chat-key use by [deriveRemoteChatKey].** Its output is the same for *every* chat
+     * between a given identity pair (the v1 context carries no chat-id), so it MUST NOT be used directly
+     * as a per-chat AEAD key — two distinct chats between the same pair would share one key (blocker D10).
+     * Production derives per-chat keys via [deriveRemoteChatKey]; this remains as the tested bare
+     * pairwise primitive only (no production caller). A compile-time misuse guard — a distinct return
+     * type for the bare pairwise output — is a deferred hardening (it would touch this primitive's tests).
      *
      * The raw DH output is NEVER used directly as the AEAD key — it is run through a keyed BLAKE2b KDF
      * (https://doc.libsodium.org/public-key_cryptography/authenticated_encryption ; the "do not feed
@@ -56,12 +66,50 @@ class IdentityCrypto(private val native: NativeCrypto) {
     fun agreeChatKey(
         myBoxSecret: ByteArray,
         peerBoxPublic: ByteArray,
+    ): ChatKey = deriveFromDh(myBoxSecret, peerBoxPublic, CHATKEY_KDF_CONTEXT)
+
+    /**
+     * The production per-chat DH derivation (the D10 fix): `crypto_box_beforenm` shared secret →
+     * keyed-BLAKE2b over a **chat-id-bound** message → 32-byte [ChatKey], distinct per [chatId].
+     *
+     * The keyed-hash **message** is `"owdm/x25519-chatkey/v2" ‖ 0x1F ‖ chatId` — a new v2 domain-
+     * separation context, an explicit `0x1F` Unit-Separator, then the chat-id's full bytes (byte-
+     * identical in spirit to `KeySources.knownKey`'s `KNOWN_KEY_CONSTANT ‖ 0x1F ‖ chatId`). Because the
+     * fixed v2 context never contains `0x1F`, `(ctx, chatId)` has exactly one parse — no two chat-ids
+     * collide by concatenation (https://doc.libsodium.org/hashing/generic_hashing). The DH shared secret
+     * is the keyed-BLAKE2b **key**, so the raw DH output is NEVER the AEAD key
+     * (https://doc.libsodium.org/public-key_cryptography/authenticated_encryption).
+     *
+     * **No per-chat salt:** the load-bearing property is that both members derive the SAME key from
+     * **public inputs only** (their own box secret + the peer's box public + the public chat-id), with no
+     * secret exchanged over any channel. A random salt would itself be a shared secret to distribute,
+     * defeating that property; the chat-id is the public, mutually-known differentiator (the same
+     * reasoning `KeySources.saltForChat` applies). Symmetric across the two parties for a fixed chat-id.
+     * The shared-secret buffer and the derived intermediate are zeroized before return.
+     */
+    fun deriveRemoteChatKey(
+        myBoxSecret: ByteArray,
+        peerBoxPublic: ByteArray,
+        chatId: String,
+    ): ChatKey {
+        // context ‖ 0x1F ‖ chatId — fixed leading context, explicit separator, trailing variable chat-id.
+        val message = REMOTE_CHATKEY_KDF_CONTEXT + byteArrayOf(DOMAIN_SEPARATOR) + chatId.toByteArray(Charsets.UTF_8)
+        return deriveFromDh(myBoxSecret, peerBoxPublic, message)
+    }
+
+    /**
+     * Shared DH→KDF body: `crypto_box_beforenm` → keyed BLAKE2b over [contextMessage], keyed by the DH
+     * shared secret, to 32 bytes (turns the non-uniform DH output into a uniformly-distributed AEAD key).
+     * The shared secret and the derived intermediate are zeroized in `finally`.
+     */
+    private fun deriveFromDh(
+        myBoxSecret: ByteArray,
+        peerBoxPublic: ByteArray,
+        contextMessage: ByteArray,
     ): ChatKey {
         val shared = native.boxBeforeNm(peerBoxPublic, myBoxSecret)
         try {
-            // KDF: keyed BLAKE2b over a fixed context, keyed by the DH shared secret, to 32 bytes.
-            // This turns the (non-uniform) DH output into a uniformly-distributed AEAD key.
-            val derived = native.keyedHash(CHATKEY_KDF_CONTEXT, shared, ChatKey.KEY_BYTES)
+            val derived = native.keyedHash(contextMessage, shared, ChatKey.KEY_BYTES)
             try {
                 return ChatKey.fromBytes(derived)
             } finally {
@@ -107,7 +155,11 @@ class IdentityCrypto(private val native: NativeCrypto) {
         try {
             return openSealed(blob, boxPub, boxSec)
         } finally {
+            // Wipe both copies pulled out of the identity. boxSec is secret; boxPub is wiped too for
+            // uniformity (same discipline as generateIdentity), matching the sibling secret-wipe contract.
+            // Both are local — never returned — so this changes no caller-observable behaviour.
             boxSec.fill(0)
+            boxPub.fill(0)
         }
     }
 
@@ -171,8 +223,27 @@ class IdentityCrypto(private val native: NativeCrypto) {
     }
 
     companion object {
-        /** Domain-separation context, keyed-hashed by the DH shared secret to derive the ChatKey. */
+        /**
+         * Domain-separation context for the **bare pairwise** [agreeChatKey] (no chat-id). Fixed v1 —
+         * carries no per-chat differentiator, which is exactly why its output is not a per-chat key.
+         */
         private val CHATKEY_KDF_CONTEXT: ByteArray = "owdm/x25519-chatkey/v1".toByteArray(Charsets.UTF_8)
+
+        /**
+         * Domain-separation context for the **chat-id-bound** [deriveRemoteChatKey] (the D10 fix). The
+         * **v2** bump marks the new chat-id-bound purpose explicitly (the "distinct versioned context per
+         * derivation purpose" rule, https://doc.libsodium.org/hashing/generic_hashing). Nothing is
+         * persisted under v1 (the v1 [agreeChatKey] has no production caller), so v2 is a pure additive
+         * change with no on-disk migration. The chat-id is appended after a [DOMAIN_SEPARATOR].
+         */
+        private val REMOTE_CHATKEY_KDF_CONTEXT: ByteArray = "owdm/x25519-chatkey/v2".toByteArray(Charsets.UTF_8)
+
+        /**
+         * ASCII Unit Separator (0x1F) between the fixed v2 context and the variable-length chat-id in
+         * [deriveRemoteChatKey] — the same canonicalization idiom as `KeySources.knownKey`, so no two
+         * (context, chatId) pairs can collide by concatenation.
+         */
+        private const val DOMAIN_SEPARATOR: Byte = 0x1F
 
         /** Domain-separation context for a single party's fingerprint. */
         private val PER_PARTY_CONTEXT: ByteArray = "owdm/identity-fp/party/v1".toByteArray(Charsets.UTF_8)
