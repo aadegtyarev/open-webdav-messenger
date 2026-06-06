@@ -8,11 +8,11 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-community-keyed-public-tier — PM security-model decisions 2026-06-06 (branch `feature/community-keyed-public-tier`): (1) retire the world-readable public-chat tier → "public" chats use the community key (readable by all onboarded members, sealed from the disk operator); the well-known public-chat key is removed, no key in source. (2) source-repo secret leakage — new SC21 (no secrets in source/git history, absolute) + threat T27 + a gitleaks secret-scan CI gate. Docs via pm-architect; gitleaks gate + 2 KDoc fixes via coder; validator wiring (CLAUDE.md + stack-notes) by orchestrator.
+x25519-identity (remote private chats + D10 fix) — PM-approved plan 2026-06-06, in CODE (branch `feature/x25519-identity`, recut fresh from main dbdd8e2 after v0.8.5/v0.8.6 shipped). Add `deriveRemoteChatKey` (DH + chat-id-bound KDF v2, fixing blocker D10) + a remote-private-chat key provisioning seam (directory peer + chat-id → derive → ChatKeyStore.store). Backend, no UI; additive — coder must not edit existing tests (agreeChatKey signature stays stable). Plan: docs/features/x25519-identity_plan.md; arch note: .ai-pm/arch/x25519-identity_arch.md.
 
 ## Status
 
-review-complete — ready to ship (gitleaks gate manually reviewed; docs owner-validated; awaiting PM go for pr-prep)
+coding
 
 ## Done
 
