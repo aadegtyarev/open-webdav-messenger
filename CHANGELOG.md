@@ -7,6 +7,30 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.9.0] — 2026-06-06
+
+A new production capability — remote private chats — plus a key-isolation fix. Still
+a backend substrate: the verification UI and chat screens land with a later feature.
+The security review found no correctness issues; the net direction is tightening (no
+security claim weakened).
+
+### Added
+
+- **Remote private chats — start a sealed chat with someone you already share a disk
+  with, no secret passed between you.** A member can now establish a private chat with
+  a peer discovered through the directory: the app combines the peer's public key with
+  the chat identifier to derive the chat key on each side independently, so nothing
+  secret ever travels over the disk or any other channel. A native-crypto failure
+  surfaces as a typed failure result rather than a crash.
+
+### Fixed
+
+- **Two private chats between the same pair of people no longer share a key.** Keys
+  derived from a key-agreement handshake are now bound to the specific chat identifier,
+  so each chat gets a distinct key. Previously two chats between the same identity pair
+  could derive the same key (issue D10). The bare pairwise key-agreement primitive
+  keeps its existing signature; only the chat-key derivation changed.
+
 ## [0.8.6] — 2026-06-06
 
 Security-model hardening from a PM-directed decision (2026-06-06) — no functional
