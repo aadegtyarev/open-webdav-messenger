@@ -24,9 +24,6 @@ internal object ChangeEntry {
     /** §9.2: chat-tag length in Base32 characters. */
     private const val CHAT_TAG_LEN = 16
 
-    /** §9.2 chat-tag alphabet (RFC 4648 Base32 lowercase, no padding). */
-    private val CHAT_TAG_CHARS = ('a'..'z').toSet() + ('2'..'7').toSet()
-
     /** §9.2: `b32lower(SHA-256(utf8(chat-id)))[0:16]` — which chat changed (filename-safe, fixed-length). */
     fun chatTag(chatId: String): String = HashTag.tag(chatId, CHAT_TAG_LEN)
 
@@ -49,7 +46,7 @@ internal object ChangeEntry {
         val chatTag = name.substring(0, sep)
         val orderToken = name.substring(sep + 1)
         if (orderToken.length != OrderToken.LENGTH) return null
-        if (chatTag.any { it !in CHAT_TAG_CHARS }) return null
+        if (chatTag.any { it !in HashTag.BASE32_LOWER_CHARS }) return null
         if (orderToken.any { it !in HashTag.ORDER_TOKEN_CHARS }) return null
         return Parsed(chatTag, orderToken)
     }

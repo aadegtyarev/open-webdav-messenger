@@ -30,17 +30,16 @@ class ChatKey private constructor(private val bytes: ByteArray) {
      */
     fun export(): ByteArray = bytes.copyOf()
 
-    /** Overwrite the key material with zeros. Best-effort hygiene once the key is no longer needed. */
-    fun destroy() {
-        bytes.fill(0)
-    }
-
     /** Redacted — a ChatKey must never print its material (Security constraints). */
     override fun toString(): String = "ChatKey(***)"
 
     companion object {
-        /** XChaCha20-Poly1305 key length (libsodium `crypto_aead_xchacha20poly1305_ietf_KEYBYTES`). */
-        const val KEY_BYTES = 32
+        /**
+         * XChaCha20-Poly1305 key length (libsodium `crypto_aead_xchacha20poly1305_ietf_KEYBYTES`).
+         * Single-sourced from [Aead.KEY_BYTES] (the libsodium-derived home) so the key width and the
+         * AEAD framing cannot drift apart.
+         */
+        val KEY_BYTES = Aead.KEY_BYTES
 
         /**
          * Wrap [raw] as a [ChatKey]. The bytes are defensively copied; the caller may zeroize its

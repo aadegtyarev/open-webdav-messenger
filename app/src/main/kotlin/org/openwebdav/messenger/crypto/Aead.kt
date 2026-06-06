@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.crypto
 
+import com.goterl.lazysodium.interfaces.AEAD
 import org.openwebdav.messenger.protocol.Envelope
 
 /**
@@ -81,11 +82,25 @@ class Aead(private val native: NativeCrypto) {
     }
 
     companion object {
-        /** §5.1: 24-byte (192-bit) XChaCha20 nonce — safe to pick at random. */
-        const val NONCE_BYTES = 24
+        /**
+         * §5.1: 24-byte (192-bit) XChaCha20 nonce — safe to pick at random. Single-sourced from
+         * libsodium's `crypto_aead_xchacha20poly1305_ietf_NPUBBYTES` (the value `LazySodiumCrypto`
+         * already validates the nonce width against), so the framing size and the native call agree
+         * by construction and cannot drift.
+         */
+        const val NONCE_BYTES = AEAD.XCHACHA20POLY1305_IETF_NPUBBYTES
 
-        /** §5.1: 16-byte Poly1305 tag appended by libsodium's combined mode. */
-        const val TAG_BYTES = 16
+        /**
+         * §5.1: 16-byte Poly1305 tag appended by libsodium's combined mode. Single-sourced from
+         * libsodium's `crypto_aead_xchacha20poly1305_ietf_ABYTES`.
+         */
+        const val TAG_BYTES = AEAD.XCHACHA20POLY1305_IETF_ABYTES
+
+        /**
+         * §5.1: 32-byte XChaCha20-Poly1305 key. Single-sourced from libsodium's
+         * `crypto_aead_xchacha20poly1305_ietf_KEYBYTES`; [ChatKey.KEY_BYTES] derives from this home.
+         */
+        const val KEY_BYTES = AEAD.XCHACHA20POLY1305_IETF_KEYBYTES
 
         /**
          * §5: the 8-byte envelope header bound as AAD. Single source of truth — references the

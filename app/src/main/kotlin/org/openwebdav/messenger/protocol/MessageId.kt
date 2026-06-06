@@ -20,9 +20,6 @@ internal object MessageId {
     /** §4: order-token length in characters (the §2 prefix before the `~`). */
     private const val ORDER_TOKEN_LEN = 29
 
-    /** §2: content-hash alphabet (RFC 4648 Base32 lowercase, no padding). */
-    private val CONTENT_HASH_CHARS = ('a'..'z').toSet() + ('2'..'7').toSet()
-
     /** §1.2: recipient-inbox-id length in Base32 characters. */
     private const val INBOX_ID_LEN = 26
 
@@ -70,7 +67,7 @@ internal object MessageId {
         if (orderToken.length != ORDER_TOKEN_LEN) return false
         if (orderToken.any { it !in HashTag.ORDER_TOKEN_CHARS }) return false
         // splitMessageId already pins CONTENT_HASH_LEN; re-check the alphabet here.
-        return contentHash.all { it in CONTENT_HASH_CHARS }
+        return contentHash.all { it in HashTag.BASE32_LOWER_CHARS }
     }
 
     /**

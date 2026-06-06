@@ -18,6 +18,15 @@ internal object HashTag {
     /** §4 order-token alphabet (`ts-millis` "-" `sender-tag` "-" `seq`): `[0-9a-z-]`. */
     val ORDER_TOKEN_CHARS: Set<Char> = ('0'..'9').toSet() + ('a'..'z').toSet() + '-'
 
+    /**
+     * The RFC 4648 Base32 **lowercase** alphabet (`[a-z2-7]`, no padding) — the single output charset of
+     * [tag] / [Base32.encodeBase32Lower] and the well-formed-name gate for every content-addressed
+     * name: the §2 content-hash, the §9.2 chat-tag, and the §10.4 / §11.4 directory entry-names.
+     * One definition (was re-minted in `MessageId`, `ChangeEntry`, `DirectoryPaths`, `ChatDirectoryPaths`).
+     * Source: RFC 4648 §6 "Base 32 Encoding" (the 32-symbol set `A–Z 2–7`), here lowercased.
+     */
+    val BASE32_LOWER_CHARS: Set<Char> = ('a'..'z').toSet() + ('2'..'7').toSet()
+
     /** `b32lower(SHA-256([bytes]))[0:length]` — the shared tag function (hash over raw bytes). */
     fun tag(
         bytes: ByteArray,
