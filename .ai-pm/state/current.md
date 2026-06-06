@@ -12,7 +12,7 @@ x25519-identity (remote private chats + D10 fix) — PM-approved plan 2026-06-06
 
 ## Status
 
-coding (x25519-identity implementation complete — pipeline green; awaiting review)
+review-complete — ready to ship (Pass 1 approve + Pass 2 code-review passed; docs updated by pm-architect; D10 blocker marked resolved; awaiting PM go for pr-prep)
 
 ## Done
 

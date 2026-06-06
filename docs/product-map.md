@@ -50,3 +50,4 @@ _No contracts yet._
 | [release-ci](features/release-ci_plan.md) | 2026-06-05 | [R](../.ai-pm/reviews/release-ci_review.md) |
 | [identity-store-io-dispatch](features/identity-store-io-dispatch_plan.md) | 2026-06-05 | [R](../.ai-pm/reviews/identity-store-io-dispatch_review.md) |
 | [codec-dedup-and-send-hardening](features/codec-dedup-and-send-hardening_plan.md) | 2026-06-06 | [R](../.ai-pm/reviews/codec-dedup-and-send-hardening_review.md) |
+| [x25519-identity](features/x25519-identity_plan.md) | 2026-06-06 | [R](../.ai-pm/reviews/x25519-identity_review.md) |
