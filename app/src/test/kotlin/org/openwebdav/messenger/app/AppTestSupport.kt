@@ -60,6 +60,53 @@ internal object AppTestSupport {
         )
 }
 
+/**
+ * A reusable recording [OnboardingService.Deps] for the ViewModel/onboarding JVM tests — captures what was
+ * persisted + reconfigured, backed by real libsodium [KeySources] + an in-memory chat-key store. Mirrors the
+ * device-bound seams without the Keystore (which runs only under `connectedAndroidTest`). Used by the
+ * `JoinViewModel` / `CreateCommunityViewModel` Compose tests; `OnboardingServiceTest` keeps its own copy.
+ */
+internal class RecordingOnboardingDeps(
+    private val identity: Identity,
+    private val chatIdToMint: String = "minted-chat-id-0000000001",
+) : OnboardingService.Deps {
+    val chatKeyStore = InMemoryChatKeyStore()
+    var savedConfig: ConnectionConfig? = null
+    var savedChatId: String? = null
+    var savedCommunityName: String? = null
+    var reconfiguredChatId: String? = null
+    var reconfiguredKey: ChatKey? = null
+
+    override fun keySources(): KeySources = AppTestSupport.keySources()
+
+    override fun chatKeyStore() = chatKeyStore
+
+    override fun saveConfig(
+        config: ConnectionConfig,
+        chatId: String,
+        communityName: String,
+    ) {
+        savedConfig = config
+        savedChatId = chatId
+        savedCommunityName = communityName
+    }
+
+    override suspend fun ensureIdentity(): Identity = identity
+
+    override fun newChatId(): String = chatIdToMint
+
+    override fun reconfigure(
+        config: ConnectionConfig,
+        chatId: String,
+        communityName: String,
+        chatKey: ChatKey,
+        identity: Identity,
+    ) {
+        reconfiguredChatId = chatId
+        reconfiguredKey = chatKey
+    }
+}
+
 /** JVM in-memory [ChatKeyStorePort] — the same seam `ChatKeyStore` implements on device. */
 internal class InMemoryChatKeyStore : ChatKeyStorePort {
     private val keys = ConcurrentHashMap<String, ByteArray>()

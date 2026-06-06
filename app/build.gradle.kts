@@ -77,6 +77,19 @@ android {
             // Robolectric needs the merged Android resources/manifest available to JVM unit tests
             // so it can supply a Context for Room in-memory DBs and the WorkManager TestDriver.
             isIncludeAndroidResources = true
+            all {
+                // The Compose createComposeRule tests launch the empty ComponentActivity host that
+                // compose-ui-test-manifest contributes via debugImplementation (so the host stays out of
+                // the release APK). That activity is only in the debug merged manifest, so the
+                // screen-level UI tests run in the debug unit-test variant only; release unit tests would
+                // fail to resolve the host. Skip them in testReleaseUnitTest — the debug run is canonical.
+                if (it.name == "testReleaseUnitTest") {
+                    it.exclude("**/ui/onboarding/CreateCommunityScreenTest*")
+                    it.exclude("**/ui/onboarding/JoinScreenTest*")
+                    it.exclude("**/ui/invite/InviteScreenTest*")
+                    it.exclude("**/ui/feed/ChatFeedScreenTest*")
+                }
+            }
         }
     }
 
@@ -165,10 +178,12 @@ dependencies {
     testImplementation(libs.lazysodium.java)
     testImplementation(libs.jna.jar)
     // Compose UI tests via createComposeRule run under Robolectric on the JVM (stack-notes Compose
-    // testing). The test manifest supplies an empty activity host for the rule.
+    // testing). The test manifest supplies the empty ComponentActivity host the rule launches; it must
+    // be a debugImplementation so its <activity> declaration merges into the debug variant manifest
+    // Robolectric reads (a testImplementation manifest is not merged, so the rule can't resolve the host).
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)
-    testImplementation(libs.compose.ui.test.manifest)
+    debugImplementation(libs.compose.ui.test.manifest)
     // QR decode (MultiFormatReader over a BinaryBitmap) is JVM-testable with zxing core; the scan
     // wrapper's live camera path is a manual on-device step (stack-notes QR-scan).
     testImplementation(libs.zxing.core)

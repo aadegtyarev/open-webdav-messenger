@@ -12,7 +12,7 @@ ui-chat-surface (the first user-facing feature) — PM-approved plan 2026-06-06,
 
 ## Status
 
-coding — pre-coding gates PASSED: product-readiness advocate `clean` (`.ai-pm/reviews/ui-chat-surface_advocate.md`); arch note written (`.ai-pm/arch/ui-chat-surface_arch.md`, 6 structural choices) + `docs/ui-guide.md` authored. pm-coder running (background) on branch `feature/ui-chat-surface`.
+coding — implementation landed; Pass-1 plan-compliance review (`.ai-pm/reviews/ui-chat-surface_review.md`) returned `request-changes`. pm-coder has now closed the BLOCKING test gaps (camera-fallback test, manifest stack-spec test, the four Compose `createComposeRule` UI tests). Pipeline green (`./gradlew test` + `ktlintCheck` + `lint`). Remaining review items (docs updates, state refresh) are pm-architect / orchestrator scope.
 
 ## Done
 
@@ -21,17 +21,18 @@ coding — pre-coding gates PASSED: product-readiness advocate `clean` (`.ai-pm/
 - Stack-notes extended (pm-stack-researcher, 2026-06-06): QR generate (`com.google.zxing:core`) + scan (`com.journeyapps:zxing-android-embedded`) + CAMERA permission idiom; ML Kit rejected (proprietary + Play-Services); no new validator.
 - Backlog updated: reserved-owner-marker design note (owner-migration base); new future feature "app self-update via the community disk" (security-bearing, owner-signed APK).
 - Prior task x25519-identity shipped as v0.9.0 (PR #13, merged to main 73e3045).
+- pm-coder: ui-chat-surface implementation landed (commits 0ad4d09 / d2e79c2 / 5742519).
+- pm-coder: Pass-1 review test gaps closed — `JoinViewModelTest.camera_denied_falls_back_to_paste`, `ManifestCameraStackSpecTest.manifest_declares_camera_not_required`, and the four Compose `createComposeRule` UI tests (CreateCommunityScreenTest / JoinScreenTest / InviteScreenTest / ChatFeedScreenTest). compose-ui-test-manifest moved to debugImplementation; release unit tests exclude the screen tests (debug-only manifest host). Pipeline green.
 
 ## Remaining
 
-- pm-architect: produce the arch note (`.ai-pm/arch/ui-chat-surface_arch.md`) for the structural choices (app-startup wiring home, invite codec home, role model, scanner integration, reserved `meta/community.json` owner-marker seam, ViewModel/state layout) AND author the blank `docs/ui-guide.md`.
-- pm-product-advocate (per-feature): run against the plan + contract + product.md + user-journeys; resolve any gaps with the PM (one AskUserQuestion pass).
-- pm-coder: implement per plan (+ arch note + ui-guide). Additive only; never touch existing tests.
-- Post-coding: pm-architect updates docs (ui-guide refresh, user-journeys, architecture decisions incl. reserved owner-marker seam + deps, threat-model rows + Last reviewed, README quick-start). Then review loop: pm-plan-checker Pass 1 → code-review Pass 2. Then regenerate product-map + append contract Built/changed-by. Then ship (pr-prep) on PM go.
+- pm-architect: post-coding doc updates the plan's "Docs to update" requires — `docs/architecture.md` (wiring + at-rest storage + `owdm1:` format + reserved owner-marker + ZXing deps), `docs/threat-model.md` (bearer-invite + device-local secret storage + CAMERA + untrusted-text rows; bump Last reviewed), `docs/user-journeys.md` (onboarding journey), `README.md` (quick-start). (Review Blocking item 4.)
+- Review loop: re-run pm-plan-checker Pass 1 to confirm the closed test gaps, then code-review Pass 2.
+- Then regenerate product-map + append contract Built/changed-by. Then ship (pr-prep) on PM go.
 
 ## Next step
 
-Run pm-architect (arch note + ui-guide) and pm-product-advocate; relay any advocate gaps to the PM; then hand off to pm-coder.
+Re-run pm-plan-checker (Pass 1) to confirm the test gaps are closed, and spawn pm-architect for the post-coding doc updates (Blocking item 4).
 
 ## Validation
 
