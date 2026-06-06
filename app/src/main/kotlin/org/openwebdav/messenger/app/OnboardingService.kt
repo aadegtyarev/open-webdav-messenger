@@ -9,7 +9,6 @@ import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
-import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.transport.ConnectionConfig
 
 /**
@@ -102,7 +101,7 @@ internal class OnboardingService(
         identity: Identity,
     ) {
         deps.chatKeyStore().store(chatId, chatKey)
-        deps.configStore().save(config, chatId, communityName)
+        deps.saveConfig(config, chatId, communityName)
         deps.reconfigure(config, chatId, communityName, chatKey, identity)
     }
 
@@ -114,7 +113,12 @@ internal class OnboardingService(
 
         fun chatKeyStore(): ChatKeyStorePort
 
-        fun configStore(): ConnectionConfigStore
+        /** Persist the config + joined-chat marker (Keystore-wrapped in production; SC4). */
+        fun saveConfig(
+            config: ConnectionConfig,
+            chatId: String,
+            communityName: String,
+        )
 
         suspend fun ensureIdentity(): Identity
 

@@ -80,7 +80,13 @@ internal object AppContainer {
 
             override fun chatKeyStore(): ChatKeyStorePort = crypto.chatKeyStore(requireContext())
 
-            override fun configStore(): ConnectionConfigStore = ConnectionConfigStore(requireContext())
+            override fun saveConfig(
+                config: ConnectionConfig,
+                chatId: String,
+                communityName: String,
+            ) {
+                ConnectionConfigStore(requireContext()).save(config, chatId, communityName)
+            }
 
             override suspend fun ensureIdentity(): Identity = identityFactory.identityStore(requireContext()).loadOrCreate()
 
