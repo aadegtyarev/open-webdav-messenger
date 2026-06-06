@@ -12,7 +12,7 @@ codec-dedup-and-send-hardening — implement the audit-2026-06-06 quality-sweep 
 
 ## Status
 
-review-complete — ready to ship (awaiting PM go for pr-prep)
+shipping — PR #11 open (v0.8.5), awaiting PM merge on GitHub
 
 ## Done
 
