@@ -13,7 +13,7 @@ A simple, end-to-end encrypted text messenger for Android that uses a public clo
 
 ## Architecture
 
-Native Android (Kotlin + Jetpack Compose). Background polling via WorkManager, WebDAV transport over OkHttp, audited crypto primitives (libsodium/Tink), local cache in SQLite/Room. The cloud disk is treated as an untrusted transport — private chat content never leaves the device unencrypted.
+Native Android (Kotlin + Jetpack Compose). Background polling via WorkManager, WebDAV transport over OkHttp, audited crypto primitives (libsodium), local cache in SQLite/Room. The cloud disk is treated as an untrusted transport — private chat content never leaves the device unencrypted.
 
 See `docs/architecture.md` for full decisions and constraints.
 
@@ -21,7 +21,8 @@ See `docs/architecture.md` for full decisions and constraints.
 
 ```bash
 ./gradlew test
-./gradlew ktlintCheck detekt
+./gradlew ktlintCheck
+./gradlew lint
 ```
 
 See `CLAUDE.md` for AI-assisted development workflow.
