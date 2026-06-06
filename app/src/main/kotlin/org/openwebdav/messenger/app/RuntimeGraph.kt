@@ -5,6 +5,7 @@ import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.sync.SyncEngine
+import org.openwebdav.messenger.transport.ConnectionConfig
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -28,6 +29,7 @@ internal class RuntimeGraph(
     val engine: SyncEngine,
     val store: MessageStore,
     val envelope: MessageEnvelope,
+    val config: ConnectionConfig,
     val chatId: String,
     val communityName: String,
     val chatKey: ChatKey,

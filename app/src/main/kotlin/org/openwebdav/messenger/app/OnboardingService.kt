@@ -50,7 +50,12 @@ internal class OnboardingService(
         withContext(ioDispatcher) {
             if (!isHttps(baseUrl)) return@withContext CreateResult.CleartextRefused
             val config =
-                ConnectionConfig(baseUrl = baseUrl.trim(), username = username.trim(), appPassword = appPassword, chatRoot = chatRoot.trim())
+                ConnectionConfig(
+                    baseUrl = baseUrl.trim(),
+                    username = username.trim(),
+                    appPassword = appPassword,
+                    chatRoot = chatRoot.trim(),
+                )
             val identity = deps.ensureIdentity()
             val chatId = deps.newChatId()
             val chatKey = deps.keySources().newRandomKey()

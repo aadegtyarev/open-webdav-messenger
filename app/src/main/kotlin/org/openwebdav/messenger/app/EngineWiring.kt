@@ -168,6 +168,7 @@ internal class AndroidDeps(private val appContext: Context) : EngineWiring.Deps 
             engine = engine,
             store = store,
             envelope = envelope,
+            config = config,
             chatId = chatId,
             communityName = communityName,
             chatKey = chatKey,

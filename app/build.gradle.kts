@@ -135,8 +135,10 @@ dependencies {
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.viewmodel.compose)
+    implementation(libs.lifecycle.runtime.compose)
     // ui-tooling is debug-only (Compose @Preview rendering); never shipped in release.
     debugImplementation(libs.compose.ui.tooling)
 

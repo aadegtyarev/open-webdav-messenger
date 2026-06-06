@@ -6,6 +6,8 @@ import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
+import org.openwebdav.messenger.invite.InviteCodec
+import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.protocol.Base32
@@ -43,6 +45,31 @@ internal object AppContainer {
 
     /** The live engine graph for the joined chat, or `null` if nothing is joined yet. */
     fun runtimeGraph(): RuntimeGraph? = EngineWiring.current()
+
+    /**
+     * Build the `owdm1:` invite for the [graph]'s joined chat (the owner shares it). Role-agnostic at the
+     * code level (any holder of the config + key can mint one — plan: "let any member invite" is later just
+     * a UI toggle). Off the UI thread (the codec gzips/base64s on its own dispatcher). The raw key bytes
+     * are wiped after framing — they live in the returned string only (a bearer token, never logged).
+     */
+    suspend fun buildInvite(graph: RuntimeGraph): String {
+        val raw = graph.chatKey.export()
+        return try {
+            InviteCodec().encode(
+                InviteToken(
+                    baseUrl = graph.config.baseUrl,
+                    username = graph.config.username,
+                    appPassword = graph.config.appPassword,
+                    chatRoot = graph.config.chatRoot,
+                    chatId = graph.chatId,
+                    chatKey = raw,
+                    communityName = graph.communityName,
+                ),
+            )
+        } finally {
+            raw.fill(0)
+        }
+    }
 
     private fun requireContext(): Context = appContext ?: error("AppContainer.bind(context) not called")
 
