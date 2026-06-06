@@ -12,7 +12,7 @@ codec-dedup-and-send-hardening — implement the audit-2026-06-06 quality-sweep 
 
 ## Status
 
-review
+review-complete — ready to ship (awaiting PM go for pr-prep)
 
 ## Done
 
@@ -25,7 +25,9 @@ review
 - Protocol bump (PR #3, 55efbbf): ai-pm-protocol v2.23.0 → v2.25.1 (submodule e940085 → fc2faec). All additive, no migration; settings.json symlink makes the v2.25.1 hook change active automatic. CI green (with the deflake merged in first).
 - Post-bump audit (full scope, `.ai-pm/audits/audit-2026-06-05.md`): 0 blocking, 3 notes. All 8 features verified protocol-complete (5 earlier substrates clean, SC1–SC20 integral, no migration). Remediated (PR #5, aafb9e0): Note 1 — added `### System invariants` index to architecture.md; Note 2 — product-map intro count fixed. Note 3 — carried forward to future UI feature.
 - Quality-sweep fixups (2026-06-05, PRs #6/#7/#8): 10 findings from full quality sweep; 9 fixed across 3 fixup PRs (finding #5 was false positive). Findings: IAE-crash → typed failure (publishEntry, publishChatEntry, lastSegment); dead-code guard fixed; Keystore wrap() now catches exceptions like unwrap(); OkHttp URL validation in gate(); PropfindParser.factory extracted to object-level; BigEndian helpers deduplicated from 2 codecs. Released v0.8.1/v0.8.2/v0.8.3.
-- Protocol bump v2.25.1 → v2.36.0 (PR pending, `chore/protocol-bump-v2.36.0`): ai-pm-protocol submodule fc2faec → 1cd6156 (tag v2.36.0; relicense AGPL-3.0 → MIT + diagnostic-flow-discipline v2.35.0 + workflow-progressive-disclosure v2.29.0; all additive, no migration). NOTE: an earlier state entry mistakenly claimed this landed in PR #9 (9d6b48d) — it did NOT; PR #9 (bf8f12d) recorded only fc2faec/v2.25.1. The submodule working tree had been advanced to v2.36.0 but never committed; this PR completes the pointer bump. Run `/pm-audit` after merge per maintenance.md.
+- Protocol bump v2.25.1 → v2.36.0 (PR #10 MERGED, squash a92650c): ai-pm-protocol submodule fc2faec → 1cd6156 (tag v2.36.0; relicense AGPL-3.0 → MIT + diagnostic-flow-discipline v2.35.0 + workflow-progressive-disclosure v2.29.0; all additive, no migration). Completed a half-done bump (working tree was at v2.36.0 but the pointer was never committed) + corrected a stale state entry that wrongly attributed it to PR #9. CI green; no app version bump (release.yml no-op at unchanged v0.8.4). Local main was 73 behind origin before this — now synced.
+- Full post-bump audit (audit-2026-06-06, PM-initiated full): 0 blocking, 2 doc-currency notes — both remediated (product-map gained identity-store-io-dispatch row; README dropped detekt + Tink mentions per decisions 7 & 1). First-run full-tree quality sweep (high depth): complexity finder clean (no AI-minimum violations); 10 findings triaged — D10 agreeChatKey chat-id-binding backlogged as a feature blocker; B6/B7/C9 accept-with-context/descoped; A1–A4/B5/C8 → codec-dedup-and-send-hardening (below).
+- codec-dedup-and-send-hardening (review-complete, branch `chore/audit-2026-06-06-fixups`, NOT pushed): all six plan items landed. Pass 1 plan-checker approve (zero existing-test edits verified); Pass 2 code-review high/3-angle: 0 correctness findings, behaviour-preserving, C8 closes a latent uncaught-seal-failure gap. Docs updated (architecture decision 14 + module map; threat-model Last reviewed 2026-06-06 + T26). Pipeline green (189 tests). One non-blocking cleanup follow-up noted in the review: collection-segment literal not yet single-sourced across the thin *Paths faces.
 - identity-store-io-dispatch (PR #9, bf8f12d): `IdentityStore.loadOrCreate()` made dispatcher-safe — `suspend fun` + `withContext(Dispatchers.IO)` + `kotlinx Mutex` replacing `synchronized`. `@WorkerThread` added to `load()`, `store()`, `has()`, `remove()`. Mutex non-reentrancy documented. Plan-checker: approve. Code review: 2 PLAUSIBLE findings fixed. Released v0.8.4.
 
 ## Remaining
@@ -36,7 +38,7 @@ review
 
 ## Next step
 
-Review codec-dedup-and-send-hardening: Pass 1 pm-plan-checker (plan-compliance, zero-existing-test-edit invariant), then Pass 2 code-review (technical quality). Then pm-architect docs pass, then ship on PM go.
+codec-dedup-and-send-hardening is review-complete and docs-updated on branch `chore/audit-2026-06-06-fixups`. Awaiting PM go for the ship gate (pr-prep: CHANGELOG + version bump + push + PR, then PM merges on GitHub). The branch bundles the whole 2026-06-06 audit: doc-currency fixups, audit report + sweep, the D10 backlog blocker, and the codec-dedup feature.
 
 ## Validation
 
