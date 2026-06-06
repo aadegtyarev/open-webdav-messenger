@@ -2,6 +2,7 @@ package org.openwebdav.messenger.chatdirectory
 
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.message.BigEndian
+import org.openwebdav.messenger.message.ByteCursor
 import java.io.ByteArrayOutputStream
 
 /**
@@ -92,7 +93,7 @@ internal class ChatDescriptorCodec(private val identity: IdentityCrypto) {
             return reject(ChatRejectReason.MALFORMED)
         }
         val signatureStart = payload.size - ChatDescriptorFormat.SIGNATURE_BYTES
-        val cursor = Cursor(payload, signatureStart)
+        val cursor = ByteCursor(payload, signatureStart)
 
         val version = cursor.u8() ?: return reject(ChatRejectReason.MALFORMED)
         if (version.toByte() != ChatDescriptorFormat.ENTRY_VERSION) return reject(ChatRejectReason.UNKNOWN_VERSION)
@@ -142,47 +143,6 @@ internal class ChatDescriptorCodec(private val identity: IdentityCrypto) {
         }
 
     private fun reject(reason: ChatRejectReason): ChatParseResult = ChatParseResult.Rejected(reason)
-
-    /**
-     * A bounds-checked forward reader over the inner payload, bounded at [limit] (the start of the
-     * trailing signature) so a read never crosses into the signature bytes. Every read validates the
-     * span against [limit] and returns `null` on overrun instead of throwing (§11.3 reject-don't-guess;
-     * stack-notes Kotlin null-safety: no `!!` on parse paths). Big-endian. Mirrors the §10.3 `Cursor`.
-     */
-    private class Cursor(private val buf: ByteArray, private val limit: Int) {
-        var pos: Int = 0
-            private set
-
-        private val remaining: Int get() = limit - pos
-
-        fun take(n: Int): ByteArray? {
-            if (n < 0 || n > remaining) return null
-            val out = buf.copyOfRange(pos, pos + n)
-            pos += n
-            return out
-        }
-
-        fun u8(): Int? {
-            if (remaining < 1) return null
-            return buf[pos++].toInt() and 0xFF
-        }
-
-        fun u16(): Int? {
-            if (remaining < 2) return null
-            val hi = buf[pos].toInt() and 0xFF
-            val lo = buf[pos + 1].toInt() and 0xFF
-            pos += 2
-            return (hi shl 8) or lo
-        }
-
-        fun u64(): Long? {
-            if (remaining < 8) return null
-            var result = 0L
-            for (i in 0 until 8) result = (result shl 8) or (buf[pos + i].toLong() and 0xFF)
-            pos += 8
-            return result
-        }
-    }
 }
 
 /** The fields recovered from a §11.3 inner payload after a successful parse + signature verify. */
