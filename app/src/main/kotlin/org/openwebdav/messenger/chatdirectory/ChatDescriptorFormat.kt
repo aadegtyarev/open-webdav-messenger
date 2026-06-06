@@ -53,7 +53,11 @@ internal object ChatDescriptorFormat {
      */
     const val KIND_DM: Int = 0x00
 
-    /** §11.3 `access` byte: a public chat (well-known/shared key — explicitly NOT secret). */
+    /**
+     * §11.3 `access` byte: a public chat — readable by every onboarded community member under the
+     * community key, sealed from the disk operator (public *within the community*, not world-readable;
+     * architecture decision 9 revision / SC2, 2026-06-06).
+     */
     const val ACCESS_PUBLIC: Int = 0x00
 
     /** §11.3 `access` byte: a private chat (content key out-of-band; never in the directory). */

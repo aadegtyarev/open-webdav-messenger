@@ -23,7 +23,11 @@ enum class ChatKind {
  * any byte outside this enum is a typed rejection on read.
  */
 enum class ChatAccess {
-    /** A public chat — well-known/shared key, explicitly NOT secret (anyone with the link can read). */
+    /**
+     * A public chat — readable by every onboarded community member under the community key, sealed from
+     * the disk operator. "Public" means public *within the community*, not private to specific members;
+     * it is NOT world-readable (architecture decision 9 revision / SC2, 2026-06-06).
+     */
     PUBLIC,
 
     /** A private chat — its content key is out-of-band and NEVER in the directory (existence + title only). */
