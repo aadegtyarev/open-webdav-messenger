@@ -8,11 +8,11 @@ PM reads this when curious about progress; PM never edits it. Agents read it as 
 
 ## Task
 
-idle
+codec-dedup-and-send-hardening — implement the audit-2026-06-06 quality-sweep "fix now" findings: dedup (shared bounded cursor A1, directory/chatdirectory shared-core A2, base32 alphabet→HashTag A3, AEAD size constants A4), remove dead destroy()×2 (B5), and harden the two directory publish paths to map a native seal failure to typed Failed (C8). Behaviour-preserving + additive; coder must not edit existing tests. Plan: docs/features/codec-dedup-and-send-hardening_plan.md.
 
 ## Status
 
-idle
+coding
 
 ## Done
 
