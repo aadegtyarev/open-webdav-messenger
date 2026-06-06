@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ui-chat-surface: a minimal Material3 base theme. The Compose Material3 theme (light/dark
+         colour scheme) is supplied in code (ui/theme); this XML theme only sets the window
+         background/no-action-bar host so the Activity launches into the Compose surface. -->
+    <style name="Theme.OpenWebDavMessenger" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

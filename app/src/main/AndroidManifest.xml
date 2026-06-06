@@ -2,12 +2,33 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- ui-chat-surface: CAMERA is needed only for the optional QR-scan join path. The paste path
+         is the mandated fallback, so the feature is declared NOT required — the app stays installable
+         on camera-less devices (stack-notes Runtime CAMERA permission: required="false"). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
 
     <application
         android:name=".OpenWebDavMessengerApp"
         android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="false" />
+        android:theme="@style/Theme.OpenWebDavMessenger"
+        android:usesCleartextTraffic="false">
+
+        <!-- The single launcher Activity hosting the Compose chat surface (ui-chat-surface feature). -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.OpenWebDavMessenger">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
 
 </manifest>
