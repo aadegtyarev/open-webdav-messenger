@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.ktlint)
     alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.compose.compiler)
 }
 
 // Portable JDK selection: Gradle auto-detects an installed JDK 17 (or provisions one via the
@@ -33,6 +34,12 @@ android {
         versionName = "0.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // ui-chat-surface feature: the Compose UI build feature. The Compose compiler is supplied by the
+    // org.jetbrains.kotlin.plugin.compose plugin (Kotlin 2.0.x), so no composeOptions block is needed.
+    buildFeatures {
+        compose = true
     }
 
     // The checked-in Room schema JSON is part of the androidTest assets so MigrationTestHelper can
@@ -120,6 +127,25 @@ dependencies {
     kapt(libs.room.compiler)
     implementation(libs.work.runtime)
 
+    // ui-chat-surface feature: Jetpack Compose (BOM-aligned), the Activity-Compose host, and the
+    // lifecycle ViewModel-Compose binding (per-screen ViewModels, state hoisted — arch note Choice 4).
+    val composeBom = platform(libs.compose.bom)
+    implementation(composeBom)
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.graphics)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material3)
+    implementation(libs.activity.compose)
+    implementation(libs.lifecycle.viewmodel.compose)
+    // ui-tooling is debug-only (Compose @Preview rendering); never shipped in release.
+    debugImplementation(libs.compose.ui.tooling)
+
+    // QR: pure-Java generation (no native .so) + camera scan (no Play Services, no native .so).
+    // Scan view is wrapped in a Compose AndroidView; the paste path is the mandated fallback
+    // (stack-notes QR-generate / QR-scan; arch note Choice 5).
+    implementation(libs.zxing.core)
+    implementation(libs.zxing.embedded)
+
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)
@@ -136,6 +162,14 @@ dependencies {
     // in `./gradlew test` (the host has libsodium.so.23 installed). JNA plain jar (not @aar).
     testImplementation(libs.lazysodium.java)
     testImplementation(libs.jna.jar)
+    // Compose UI tests via createComposeRule run under Robolectric on the JVM (stack-notes Compose
+    // testing). The test manifest supplies an empty activity host for the rule.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.compose.ui.test.manifest)
+    // QR decode (MultiFormatReader over a BinaryBitmap) is JVM-testable with zxing core; the scan
+    // wrapper's live camera path is a manual on-device step (stack-notes QR-scan).
+    testImplementation(libs.zxing.core)
 
     // Instrumented (connectedAndroidTest): native .so ABI load + Android Keystore wrap/unwrap.
     androidTestImplementation(libs.androidx.test.runner)
