@@ -126,4 +126,6 @@ All 10 findings + 3 cleanups fixed and verified (pipeline green, 232 tests):
 10. ✓ `EngineWiring.reconfigure` `check(::deps.isInitialized)`; resolved structurally by readiness ordering.
 Cleanups: ✓ `AndroidDeps` reuses AppContainer's shared factories/store; ✓ `InviteToken.CHAT_KEY_BYTES = Aead.KEY_BYTES`; ✓ `keystore.StoredConnection` replaces the duplicate `StoredConnectionView`.
 
-## Code review: COMPLETE — all findings resolved in `1c289d3`. Pipeline green. Ready for ship gate.
+## Code review: 2026-06-07 — passed
+
+All Pass-2 findings resolved in `1c289d3`; pipeline green (232 tests, ktlint, lint).
