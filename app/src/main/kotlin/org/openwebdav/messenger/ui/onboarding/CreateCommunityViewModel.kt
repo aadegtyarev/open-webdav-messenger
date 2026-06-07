@@ -38,14 +38,22 @@ internal class CreateCommunityViewModel(
         if (s.submitting) return
         _state.update { it.copy(submitting = true, urlError = null, generalError = null) }
         viewModelScope.launch {
+            // Create does Keystore wrap + identity-ensure + key-gen + transport build, any of which can throw
+            // (Keystore/TransportFactory/IO). Without this guard a throw leaves `submitting` stuck forever and
+            // can crash the app via the uncaught coroutine exception (review finding 5).
             val result =
-                onboarding.createCommunity(
-                    baseUrl = s.baseUrl,
-                    username = s.username,
-                    appPassword = s.appPassword,
-                    chatRoot = s.chatRoot,
-                    communityName = s.communityName,
-                )
+                try {
+                    onboarding.createCommunity(
+                        baseUrl = s.baseUrl,
+                        username = s.username,
+                        appPassword = s.appPassword,
+                        chatRoot = s.chatRoot,
+                        communityName = s.communityName,
+                    )
+                } catch (_: Exception) {
+                    _state.update { it.copy(submitting = false, generalError = CREATE_FAILED_MESSAGE) }
+                    return@launch
+                }
             when (result) {
                 is OnboardingService.CreateResult.CleartextRefused ->
                     _state.update { it.copy(submitting = false, urlError = HTTPS_REQUIRED_MESSAGE) }
@@ -85,5 +93,8 @@ internal class CreateCommunityViewModel(
     companion object {
         /** Plain-language SC13 refusal (ui-guide: inline, non-technical). */
         const val HTTPS_REQUIRED_MESSAGE = "Use an https:// address — your password must travel encrypted."
+
+        /** Plain-language message when create fails (disk unreachable / device error). */
+        const val CREATE_FAILED_MESSAGE = "Couldn't create the community right now — check your details and try again."
     }
 }

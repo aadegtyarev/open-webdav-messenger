@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.app
 
 import android.content.Context
+import kotlinx.coroutines.flow.StateFlow
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
@@ -13,6 +14,7 @@ import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.transport.ConnectionConfig
 import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The process-scoped holder the UI layer reaches for the composed app services (`ui-chat-surface` arch
@@ -29,15 +31,41 @@ internal object AppContainer {
 
     private val crypto by lazy { CryptoFactory() }
     private val identityFactory by lazy { IdentityFactory() }
+    private val configStore by lazy { ConnectionConfigStore(requireContext()) }
+    private val warmStarted = AtomicBoolean(false)
+
+    /**
+     * Process-start readiness — `false` until [warmStart] has resolved the start graph. The UI collects
+     * this to show a brief loading state instead of racing the async warm-start (start-destination race fix).
+     */
+    val ready: StateFlow<Boolean> get() = EngineWiring.ready
 
     /** Bind the application context (idempotent). Called from `Application.onCreate()` before [warmStart]. */
     fun bind(context: Context) {
         if (appContext == null) appContext = context.applicationContext
     }
 
-    /** Process-start engine wiring (reads the persisted config off the main thread; arch note Choice 1). */
+    /**
+     * Process-start engine wiring (reads the persisted config off the main thread; arch note Choice 1).
+     * Idempotent — a second call (e.g. a cold-start `SyncWorker` that beat the `Application`'s launch) is a
+     * no-op, so the runner is installed exactly once before either path reads it.
+     */
     fun warmStart() {
-        EngineWiring.initialize(requireContext())
+        if (warmStarted.compareAndSet(false, true)) {
+            EngineWiring.initialize(
+                AndroidDeps(requireContext(), crypto, identityFactory, configStore),
+            )
+        }
+    }
+
+    /**
+     * Ensure process-start wiring has run, then suspend until it has resolved the graph. The cold-start
+     * [org.openwebdav.messenger.sync.SyncWorker] calls this before reading the installed runner so a poll
+     * in a freshly-started process does not silently no-op over the default runner (review finding 2).
+     */
+    suspend fun ensureWarmStarted() {
+        warmStart()
+        EngineWiring.awaitReady()
     }
 
     /** The composed onboarding service (owner-create / member-join). */
@@ -85,7 +113,7 @@ internal object AppContainer {
                 chatId: String,
                 communityName: String,
             ) {
-                ConnectionConfigStore(requireContext()).save(config, chatId, communityName)
+                configStore.save(config, chatId, communityName)
             }
 
             override suspend fun ensureIdentity(): Identity = identityFactory.identityStore(requireContext()).loadOrCreate()

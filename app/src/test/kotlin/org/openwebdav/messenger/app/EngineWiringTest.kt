@@ -16,6 +16,7 @@ import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.CycleOutcome
@@ -89,7 +90,7 @@ class EngineWiringTest {
     @Test
     fun relaunch_with_saved_config_reinstalls_runner() =
         runTest {
-            val stored = EngineWiring.StoredConnectionView(SyncTestSupport.config(server), chatId, "Community")
+            val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
             val deps = JvmDeps(stored = stored)
             EngineWiring.initialize(deps)
 
@@ -124,11 +125,11 @@ class EngineWiringTest {
 
     /** A JVM [EngineWiring.Deps] backed by real libsodium + MockWebServer + in-memory Room. */
     private inner class JvmDeps(
-        private val stored: EngineWiring.StoredConnectionView?,
+        private val stored: StoredConnection?,
     ) : EngineWiring.Deps {
         var scheduled = false
 
-        override fun loadStoredConnection(): EngineWiring.StoredConnectionView? = stored
+        override fun loadStoredConnection(): StoredConnection? = stored
 
         override fun loadChatKey(chatId: String): ChatKey = chatKey
 

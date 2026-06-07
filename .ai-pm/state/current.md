@@ -12,7 +12,7 @@ ui-chat-surface (the first user-facing feature) — PM-approved plan 2026-06-06,
 
 ## Status
 
-coding — implementation landed; Pass-1 plan-compliance review (`.ai-pm/reviews/ui-chat-surface_review.md`) returned `request-changes`. pm-coder has now closed the BLOCKING test gaps (camera-fallback test, manifest stack-spec test, the four Compose `createComposeRule` UI tests). Pipeline green (`./gradlew test` + `ktlintCheck` + `lint`). Remaining review items (docs updates, state refresh) are pm-architect / orchestrator scope.
+review — Pass-1 plan-compliance `approve` and Pass-2 code-review complete. pm-coder has now fixed ALL Pass-2 code-review findings (1–10 + cleanups a/b/c) from `.ai-pm/reviews/ui-chat-surface_review.md` "Code review findings". Pipeline green (`./gradlew test` + `ktlintCheck` + `lint`). Ready for re-review / ship on PM go.
 
 ## Done
 
@@ -23,16 +23,17 @@ coding — implementation landed; Pass-1 plan-compliance review (`.ai-pm/reviews
 - Prior task x25519-identity shipped as v0.9.0 (PR #13, merged to main 73e3045).
 - pm-coder: ui-chat-surface implementation landed (commits 0ad4d09 / d2e79c2 / 5742519).
 - pm-coder: Pass-1 review test gaps closed — `JoinViewModelTest.camera_denied_falls_back_to_paste`, `ManifestCameraStackSpecTest.manifest_declares_camera_not_required`, and the four Compose `createComposeRule` UI tests (CreateCommunityScreenTest / JoinScreenTest / InviteScreenTest / ChatFeedScreenTest). compose-ui-test-manifest moved to debugImplementation; release unit tests exclude the screen tests (debug-only manifest host). Pipeline green.
+- pm-coder: Pass-2 code-review findings 1–10 + cleanups (a/b/c) fixed. Async-init readiness (StateFlow `EngineWiring.ready`; AppRoot loading-then-route; SyncWorker `ensureWarmStarted`; reconfigure guard); gunzip 64 KB inflate cap; failure paths on Join/Create/Send/Invite ViewModels; QR text-only fallback; feed auto-scroll guard; scanner ON_START/ON_STOP lifecycle; shared factories in AndroidDeps; `InviteToken.CHAT_KEY_BYTES = Aead.KEY_BYTES`; `keystore.StoredConnection` reused across the Deps seam. New tests added per fixed behavior; pipeline green.
 
 ## Remaining
 
-- pm-architect: post-coding doc updates the plan's "Docs to update" requires — `docs/architecture.md` (wiring + at-rest storage + `owdm1:` format + reserved owner-marker + ZXing deps), `docs/threat-model.md` (bearer-invite + device-local secret storage + CAMERA + untrusted-text rows; bump Last reviewed), `docs/user-journeys.md` (onboarding journey), `README.md` (quick-start). (Review Blocking item 4.)
-- Review loop: re-run pm-plan-checker Pass 1 to confirm the closed test gaps, then code-review Pass 2.
-- Then regenerate product-map + append contract Built/changed-by. Then ship (pr-prep) on PM go.
+- Orchestrator: re-review (pm-plan-checker / code-review re-stamp) then ship (pr-prep) on PM go.
+- Then regenerate product-map + append contract Built/changed-by.
+- Note: docs updates (architecture decision 15, threat-model T28–T31, user-journeys, README) already landed earlier in `fae5cd3` (pm-architect) per the Pass-1 review.
 
 ## Next step
 
-Re-run pm-plan-checker (Pass 1) to confirm the test gaps are closed, and spawn pm-architect for the post-coding doc updates (Blocking item 4).
+Re-review the Pass-2 fixes (code-review re-stamp), then ship on PM go.
 
 ## Validation
 

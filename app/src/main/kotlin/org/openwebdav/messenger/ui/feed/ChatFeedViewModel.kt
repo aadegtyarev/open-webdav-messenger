@@ -40,16 +40,35 @@ internal class ChatFeedViewModel(
     private val _draft = MutableStateFlow("")
     val draft: StateFlow<String> = _draft
 
+    private val _sendError = MutableStateFlow<String?>(null)
+
+    /** A transient send-failure message, or `null`. Cleared when the draft changes or a send succeeds. */
+    val sendError: StateFlow<String?> = _sendError
+
     fun onDraft(v: String) {
         _draft.value = v
+        _sendError.value = null
     }
 
-    /** Send the current draft; clears it optimistically (the local echo appears via the Room Flow). */
+    /**
+     * Send the current draft. The draft is cleared only AFTER the send succeeds; if seal/persist throws
+     * (e.g. an unreachable disk before the local echo is stored) the typed text is restored and a
+     * plain-language error surfaces, so the user never silently loses what they wrote (review finding 8).
+     */
     fun send() {
         val text = _draft.value
         if (text.isBlank()) return
         _draft.value = ""
-        viewModelScope.launch { sendService.send(text) }
+        _sendError.value = null
+        viewModelScope.launch {
+            try {
+                sendService.send(text)
+            } catch (_: Exception) {
+                // Restore only if the user hasn't started typing again, so a fast retry isn't clobbered.
+                if (_draft.value.isBlank()) _draft.value = text
+                _sendError.value = SEND_FAILED_MESSAGE
+            }
+        }
     }
 
     private fun MessageEntity.toFeedRow(): FeedRow =
@@ -68,7 +87,10 @@ internal class ChatFeedViewModel(
         val isMine: Boolean,
     )
 
-    private companion object {
-        const val STOP_TIMEOUT_MILLIS = 5_000L
+    companion object {
+        /** Plain-language send-failure message (ui-guide: inline, non-technical). */
+        const val SEND_FAILED_MESSAGE = "Couldn't send — check your connection and try again."
+
+        private const val STOP_TIMEOUT_MILLIS = 5_000L
     }
 }

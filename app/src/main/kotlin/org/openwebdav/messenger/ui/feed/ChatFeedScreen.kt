@@ -47,11 +47,17 @@ internal fun ChatFeedScreen(
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
+    val sendError by viewModel.sendError.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 
-    // Keep the latest message in view as the feed grows (ui-guide: scrolled to the latest on open).
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    // Auto-scroll only when the user is already at/near the bottom — otherwise a background-poll message
+    // would yank the viewport down and fight a user reading scroll-back (review finding 7). Key on the last
+    // message id (not the size) so re-emissions that don't add a new tail message don't re-trigger.
+    val lastMessageId = messages.lastOrNull()?.messageId
+    LaunchedEffect(lastMessageId) {
+        if (messages.isNotEmpty() && listState.isAtBottom()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
     }
 
     Scaffold(
@@ -68,6 +74,7 @@ internal fun ChatFeedScreen(
         bottomBar = {
             Composer(
                 draft = draft,
+                sendError = sendError,
                 onDraft = viewModel::onDraft,
                 onSend = viewModel::send,
             )
@@ -91,6 +98,19 @@ internal fun ChatFeedScreen(
     }
 }
 
+/**
+ * Whether the feed is scrolled to (or within [NEAR_BOTTOM_SLACK] rows of) the bottom. When nothing has been
+ * laid out yet (first open) this is `true`, so the feed still scrolls to the latest message on open; once
+ * the user scrolls up to read history it becomes `false`, so an inbound message no longer yanks the viewport.
+ */
+private fun androidx.compose.foundation.lazy.LazyListState.isAtBottom(): Boolean {
+    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return true
+    val totalItems = layoutInfo.totalItemsCount
+    return totalItems == 0 || lastVisible.index >= totalItems - 1 - NEAR_BOTTOM_SLACK
+}
+
+private const val NEAR_BOTTOM_SLACK = 2
+
 @Composable
 private fun MessageRow(row: ChatFeedViewModel.FeedRow) {
     val align = if (row.isMine) Alignment.End else Alignment.Start
@@ -104,25 +124,36 @@ private fun MessageRow(row: ChatFeedViewModel.FeedRow) {
 @Composable
 private fun Composer(
     draft: String,
+    sendError: String?,
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = onDraft,
-            placeholder = { Text("Message") },
-            modifier = Modifier.weight(1f).semantics { contentDescription = "Message" },
-        )
-        IconButton(
-            onClick = onSend,
-            enabled = draft.isNotBlank(),
-            modifier = Modifier.semantics { contentDescription = "Send" },
+    Column(modifier = Modifier.fillMaxWidth()) {
+        sendError?.let {
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
+            OutlinedTextField(
+                value = draft,
+                onValueChange = onDraft,
+                placeholder = { Text("Message") },
+                modifier = Modifier.weight(1f).semantics { contentDescription = "Message" },
+            )
+            IconButton(
+                onClick = onSend,
+                enabled = draft.isNotBlank(),
+                modifier = Modifier.semantics { contentDescription = "Send" },
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
+            }
         }
     }
 }

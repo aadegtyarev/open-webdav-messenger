@@ -1,5 +1,7 @@
 package org.openwebdav.messenger.invite
 
+import org.openwebdav.messenger.crypto.Aead
+
 /**
  * The self-contained invite a community owner hands to a joining member (`ui-chat-surface` plan →
  * Contracts: "An invite token codec"). It bundles everything a member needs to silently configure the
@@ -62,7 +64,7 @@ internal data class InviteToken(
     }
 
     companion object {
-        /** The raw chat-key width — single-sourced semantics with `crypto.ChatKey.KEY_BYTES` (32). */
-        const val CHAT_KEY_BYTES = 32
+        /** The raw chat-key width — single-sourced from [Aead.KEY_BYTES] (the libsodium-derived home). */
+        const val CHAT_KEY_BYTES = Aead.KEY_BYTES
     }
 }

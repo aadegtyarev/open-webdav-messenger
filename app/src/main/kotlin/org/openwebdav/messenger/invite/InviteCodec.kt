@@ -88,9 +88,25 @@ internal class InviteCodec(
         return out.toByteArray()
     }
 
+    /**
+     * Inflate [bytes] with a hard output cap ([MAX_INFLATED_BYTES]). The input is attacker-controlled (a
+     * scanned/pasted foreign token), so an unbounded inflate is a decompression-bomb DoS — a few-hundred-byte
+     * payload can inflate to gigabytes and OOM the process before the reject-don't-guess validation runs.
+     * Reading one byte past the cap is a typed rejection (return `null`), never an OOM (review finding 3).
+     */
     private fun gunzip(bytes: ByteArray): ByteArray? =
         try {
-            InflaterInputStream(bytes.inputStream(), Inflater()).use { it.readBytes() }
+            InflaterInputStream(bytes.inputStream(), Inflater()).use { input ->
+                val out = ByteArrayOutputStream()
+                val buffer = ByteArray(INFLATE_BUFFER_BYTES)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (out.size() + read > MAX_INFLATED_BYTES) return null // over the cap — reject, never OOM
+                    out.write(buffer, 0, read)
+                }
+                out.toByteArray()
+            }
         } catch (_: java.util.zip.ZipException) {
             null // bad gzip stream — reject-don't-guess
         } catch (_: java.io.IOException) {
@@ -114,6 +130,15 @@ internal class InviteCodec(
     companion object {
         /** The token scheme prefix. Decode rejects anything not starting with it (a foreign QR). */
         const val PREFIX = "owdm1:"
+
+        /**
+         * The hard cap on inflated invite-payload size. A real `owdm1:` payload is a few hundred bytes; 64 KB
+         * is far above any legitimate token yet bounds the decompression-bomb DoS surface (review finding 3).
+         */
+        internal const val MAX_INFLATED_BYTES = 64 * 1024
+
+        /** The read-buffer size for the bounded inflate loop. */
+        private const val INFLATE_BUFFER_BYTES = 4096
 
         /** The JSON `v` field value — a second version guard inside the payload (reject on mismatch). */
         private const val FORMAT_VERSION = "1"

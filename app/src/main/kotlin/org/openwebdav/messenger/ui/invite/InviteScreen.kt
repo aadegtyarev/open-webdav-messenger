@@ -92,6 +92,13 @@ internal fun InviteScreen(
                 )
             }
 
+            if (state.qrUnavailable) {
+                Text(
+                    InviteViewModel.QR_UNAVAILABLE_MESSAGE,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+
             state.inviteString?.let { invite ->
                 Text("Invite string", style = MaterialTheme.typography.titleMedium)
                 SelectionContainer {

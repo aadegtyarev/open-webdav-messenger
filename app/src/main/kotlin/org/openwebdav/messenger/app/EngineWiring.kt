@@ -2,6 +2,10 @@ package org.openwebdav.messenger.app
 
 import android.content.Context
 import androidx.work.WorkManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.data.MessageStore
@@ -10,6 +14,7 @@ import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.identity.IdentityLoadResult
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
+import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.ChatSubscription
@@ -47,22 +52,34 @@ internal object EngineWiring {
     @Volatile
     private lateinit var deps: Deps
 
+    private val _ready = MutableStateFlow(false)
+
+    /**
+     * Process-start readiness — `false` until [initialize] has read the persisted config and resolved the
+     * start graph (or confirmed none). The UI collects this and shows a brief loading state instead of
+     * racing the async warm-start; once `true`, [current] reflects the resolved graph (fixes the
+     * start-destination race — arch note Choice 1 behavioral risk).
+     */
+    val ready: StateFlow<Boolean> = _ready.asStateFlow()
+
     /** The composed graph for the joined chat, or `null` if no config exists yet (no chat joined). */
     fun current(): RuntimeGraph? = graph
 
-    /**
-     * Process-start wiring with the production [Deps] (native crypto + Keystore + WorkManager). Called
-     * from the `Application` on a background coroutine (Keystore/IO must not run on the main thread).
-     */
-    fun initialize(context: Context) {
-        initialize(AndroidDeps(context.applicationContext))
+    /** Suspend until process-start [initialize] has resolved the graph (used by the cold-start poll path). */
+    suspend fun awaitReady() {
+        ready.first { it }
     }
 
-    /** Process-start wiring with an injected [Deps] — the test seam (JVM-backed substrates). */
+    /**
+     * Process-start wiring with the given [Deps]. In production [AppContainer] passes [AndroidDeps] built
+     * from its single shared factories; tests pass a JVM-backed seam. Called from the `Application` on a
+     * background coroutine (Keystore/IO must not run on the main thread).
+     */
     fun initialize(injected: Deps) {
         deps = injected
         graph = null
         rebuildFromStore()
+        _ready.value = true
     }
 
     /**
@@ -77,6 +94,10 @@ internal object EngineWiring {
         chatKey: ChatKey,
         identity: Identity,
     ) {
+        // Onboarding can only run after the UI is shown, which waits on [ready] (i.e. after [initialize]
+        // assigned [deps]); this guard makes the narrow process-start window explicit rather than letting
+        // a lateinit access throw if a reconfigure ever raced ahead of warm-start.
+        check(::deps.isInitialized) { "EngineWiring.reconfigure before initialize" }
         graph = deps.buildGraph(config, chatId, communityName, chatKey, identity)
         installAndSchedule(graph!!)
     }
@@ -101,7 +122,7 @@ internal object EngineWiring {
 
     /** The device-bound seam the wiring composes through — overridable in JVM tests. */
     internal interface Deps {
-        fun loadStoredConnection(): StoredConnectionView?
+        fun loadStoredConnection(): StoredConnection?
 
         fun loadChatKey(chatId: String): ChatKey?
 
@@ -117,27 +138,23 @@ internal object EngineWiring {
 
         fun schedulePoll()
     }
-
-    /** The config + joined-chat marker the wiring needs at start (a thin view over the store result). */
-    internal data class StoredConnectionView(
-        val config: ConnectionConfig,
-        val chatId: String,
-        val communityName: String,
-    )
 }
 
 /**
  * Production [EngineWiring.Deps]: native-backed crypto/identity factories, the Keystore-wrapped config +
  * chat-key stores, the Room message store, and the WorkManager scheduler. Constructs the one shared
  * [SyncEngine] both runtime paths use.
+ *
+ * The [crypto] / [identityFactory] / [configStore] are passed in so this reuses [AppContainer]'s single
+ * process-scoped instances rather than re-constructing its own (AppContainer is the single holder).
  */
-internal class AndroidDeps(private val appContext: Context) : EngineWiring.Deps {
-    private val crypto = CryptoFactory()
-    private val identityFactory = IdentityFactory()
-    private val configStore = ConnectionConfigStore(appContext)
-
-    override fun loadStoredConnection(): EngineWiring.StoredConnectionView? =
-        configStore.load()?.let { EngineWiring.StoredConnectionView(it.config, it.chatId, it.communityName) }
+internal class AndroidDeps(
+    private val appContext: Context,
+    private val crypto: CryptoFactory,
+    private val identityFactory: IdentityFactory,
+    private val configStore: ConnectionConfigStore,
+) : EngineWiring.Deps {
+    override fun loadStoredConnection(): StoredConnection? = configStore.load()
 
     override fun loadChatKey(chatId: String): ChatKey? = crypto.chatKeyStore(appContext).load(chatId)
 

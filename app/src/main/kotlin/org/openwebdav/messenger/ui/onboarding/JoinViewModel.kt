@@ -43,7 +43,17 @@ internal class JoinViewModel(
         if (_state.value.joining) return
         _state.update { it.copy(joining = true, error = null) }
         viewModelScope.launch {
-            when (val result = onboarding.joinFromInvite(invite)) {
+            // The join does Keystore wrap + identity-ensure + engine build, any of which can throw (a
+            // structurally-valid invite to an unreachable/failing disk). Without this guard a throw leaves
+            // `joining` stuck forever and can crash the app via the uncaught coroutine exception (finding 4).
+            val result =
+                try {
+                    onboarding.joinFromInvite(invite)
+                } catch (_: Exception) {
+                    _state.update { it.copy(joining = false, error = JOIN_FAILED_MESSAGE) }
+                    return@launch
+                }
+            when (result) {
                 is OnboardingService.JoinResult.Invalid ->
                     _state.update { it.copy(joining = false, error = INVALID_INVITE_MESSAGE) }
 
@@ -68,5 +78,8 @@ internal class JoinViewModel(
     companion object {
         /** Plain-language broken/foreign-invite message (ui-guide error display; Scenario 4). */
         const val INVALID_INVITE_MESSAGE = "This invite isn't valid — check it and try again."
+
+        /** Plain-language message when a valid invite fails to apply (disk unreachable / device error). */
+        const val JOIN_FAILED_MESSAGE = "Couldn't join right now — check your connection and try again."
     }
 }

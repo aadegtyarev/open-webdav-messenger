@@ -88,6 +88,8 @@ android {
                     it.exclude("**/ui/onboarding/JoinScreenTest*")
                     it.exclude("**/ui/invite/InviteScreenTest*")
                     it.exclude("**/ui/feed/ChatFeedScreenTest*")
+                    it.exclude("**/ui/feed/ChatFeedAutoScrollTest*")
+                    it.exclude("**/ui/AppRootTest*")
                 }
             }
         }
