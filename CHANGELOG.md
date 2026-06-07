@@ -7,6 +7,37 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.10.0] — 2026-06-07
+
+The first version you can actually talk in. Until now the app was a backend substrate
+with no screens; this release adds the full chat surface in Jetpack Compose — the path
+from "open the app" to "send a message" now exists end to end. Still pre-1.0: the
+on-device gate (instrumented tests + a live-camera QR scan) is run by hand before merge,
+so behavior may still shift in later minors.
+
+### Added
+
+- **A chat surface you can use.** Open the app, create a community or join one via an
+  invite, see the invite as both a copyable string and a QR code, and read and send
+  messages in a live feed with a composer. This is the first end-user screen flow.
+- **Invites that travel by string or QR.** A community invite is a compact `owdm1:`
+  bearer token you can paste to a friend or let them scan as a QR code — no account,
+  no server lookup.
+- **Connection settings stay on your device, encrypted.** WebDAV connection config is
+  wrapped by the Android Keystore so it never sits in plaintext on disk.
+
+### Changed
+
+- **Onboarding and app wiring rebuilt around the new UI.** The composition root
+  (engine wiring) and onboarding service now drive the Compose screens.
+
+### Fixed
+
+- **Hardened the new surface against rough edges found in review.** A start-screen
+  routing race, a decompression-bomb cap on decoding malformed invites, error paths in
+  the chat view-model, feed auto-scroll, draft handling when a send fails, and the QR
+  scanner's camera lifecycle.
+
 ## [0.9.0] — 2026-06-06
 
 A new production capability — remote private chats — plus a key-isolation fix. Still
