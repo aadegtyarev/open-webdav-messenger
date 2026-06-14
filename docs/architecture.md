@@ -27,7 +27,7 @@ Message path: typed → signed (Ed25519) → compressed (DEFLATE) → AEAD-encry
 |---|---|---|
 | Language | Kotlin | Native Android, null-safety, coroutines |
 | UI | Jetpack Compose | Declarative, full chat-surface control |
-| Background sync | WorkManager | OS-friendly periodic polling (15-min floor) |
+| Background sync | WorkManager + opt-in foreground service | OS-friendly periodic polling (15-min floor); fast mode via `FastPollService` with persistent notification for sub-15-min delivery |
 | Transport | WebDAV over OkHttp | PROPFIND/GET/PUT/DELETE, 429 back-off |
 | Crypto | libsodium (lazysodium-android) | Argon2id + XChaCha20-Poly1305 AEAD (Tink lacks password-KDF) |
 | Key storage | Android Keystore (direct) | Hardware-backed wrap; `security-crypto` deprecated |
@@ -83,7 +83,7 @@ One line per decision. Detail in git history. OPEN items flagged (Operator to de
 3. **Aggregated sync:** shared `log/` + per-member `changes/` + retention window (replaced v1 per-recipient inbox fan-out).
 4. **Compression (Implemented — 2026-06-14):** DEFLATE (`java.util.zip`), compress-then-encrypt, per-message independent, codec-id in envelope.
 5. **Markdown rendering:** hand-rolled `AnnotatedString` parser for 6 elements (smallest untrusted-input surface).
-6. **PARTIALLY RESOLVED** — Polling: WorkManager background floor implemented, foreground-service fast mode deferred. Static analysis: ktlint chosen (detekt not used). **OPEN** — CI emulator for `connectedAndroidTest`.
+6. **RESOLVED** — Polling: WorkManager background floor (default) + opt-in foreground service (`FastPollService`, `foregroundServiceType="dataSync"`) for sub-15-min delivery. Static analysis: ktlint chosen (detekt not used). **OPEN** — CI emulator for `connectedAndroidTest`.
 7. **Crypto substrate:** 3 key sources (random/passphrase/DH); public-chat = community-key (world-readable tier retired 2026-06-06).
 8. **Identity substrate:** Ed25519 (signing) + X25519 (box) keypairs; DH→KDF→ChatKey; sealed-box; BLAKE2b fingerprint.
 9. **Message model:** versioned TLV plaintext; per-message Ed25519 signature; reaction = first-class msg kind (0..4); reject-don't-guess.
@@ -117,7 +117,7 @@ Package root: `org.openwebdav.messenger` under `app/src/main/kotlin/`.
 | `directory/` | Implemented | Community user directory — signed/sealed entries |
 | `chatdirectory/` | Implemented | Community chat directory — group-only descriptors |
 | `data/` | Implemented | Room local cache — history + sync cursors |
-| `sync/` | Implemented | Poll-cycle: send (log+changes), poll, background scheduling |
+| `sync/` | Implemented | Poll-cycle: send (log+changes), poll, background scheduling, opt-in foreground fast-poll |
 | `codec/` | Implemented | DEFLATE compress/inflate, bounded decompression |
 | `markdown/` | Planned | Hand-rolled 6-element `AnnotatedString` parser |
 | `ui/` | Planned | Compose chat surface |

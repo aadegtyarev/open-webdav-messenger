@@ -10,7 +10,7 @@ Open WebDAV Messenger is a native Android text messenger that has **no server of
 
 **Privacy-conscious people and small private groups** who already have a cloud disk (Yandex.Disk, Nextcloud, etc.) and want to chat without trusting a messenger operator or running their own server. The customer is someone who is willing to configure a WebDAV connection and share a passphrase out-of-band in exchange for a serverless chat with no operator reading their messages.
 
-**Who it is NOT for:** people who need instant (sub-15-minute) message delivery, people who won't configure a WebDAV disk, and people who need iOS (Android only).
+**Who it is NOT for:** people who won't configure a WebDAV disk, and people who need iOS (Android only). Sub-15-minute delivery is available as an opt-in foreground service (with a persistent notification), so the product now serves users who want faster polling at the cost of a visible notification; the default remains the battery-friendly WorkManager ~15-min floor.
 
 ## 2. Problem — from their point of view
 
@@ -37,7 +37,7 @@ The customer removes the need for a dedicated chat server or trusting a third-pa
 
 **Across devices:** a user's chat history lives on their device in a local Room database (unbounded, offline-available). Messages also live on the shared WebDAV disk for a retention window (e.g. 2–4 weeks, configurable), so a second device joining the same chat can catch up within that window.
 
-**Across sessions:** the app polls the disk in the background (WorkManager, ~15-min floor). Between polls, the local history keeps the chat responsive offline. On reconnect, missed messages are caught up automatically within the retention window.
+**Across sessions:** the app polls the disk in the background (WorkManager, ~15-min floor). An opt-in foreground service (`FastPollService`, off by default) polls at user-configurable sub-15-min intervals with a persistent notification. Between polls, the local history keeps the chat responsive offline. On reconnect, missed messages are caught up automatically within the retention window.
 
 **When a user loses access:**
 - **Lost device:** a new device can be set up with the same WebDAV credential + chat passphrase to re-join. Messages within the retention window are catchable from the disk; messages only on the lost device are gone.
@@ -63,12 +63,12 @@ The customer removes the need for a dedicated chat server or trusting a third-pa
 - **Who funds it:** solo hobby project; no funding, no monetization. No server costs — the user pays their own cloud disk (free tier sufficient for text).
 - **Licensing:** AGPL-3.0 — copyleft, source stays open.
 - **Compliance:** GDPR/privacy responsibility rests with the user (they control the disk and the keys). The app processes no data on any server.
-- **Constraints:** native Android only (no iOS); no push notifications; background delivery bounded by Android platform floors (~15 min).
+- **Constraints:** native Android only (no iOS); no push notifications; default background delivery bounded by Android platform floors (~15 min); opt-in foreground service available for sub-15-min delivery (persistent notification required by Android, OFF by default).
 
 ## 7. The case against *(conclude)*
 
-**Strongest reason this will not succeed:** the onboarding friction is too high. A user must (1) install an APK not from a store, (2) create a WebDAV app-password, (3) configure a URL + credential, (4) agree on a passphrase out-of-band with every contact, and (5) accept quarter-hour delivery latency. Each of these steps loses a cohort of potential users; together they filter to near-zero. A messenger lives or dies on network effects — and this one makes joining the network the hardest part.
+**Strongest reason this will not succeed:** the onboarding friction is too high. A user must (1) install an APK not from a store, (2) create a WebDAV app-password, (3) configure a URL + credential, (4) agree on a passphrase out-of-band with every contact, and (5) accept quarter-hour delivery latency. Each of these steps loses a cohort of potential users; together they filter to near-zero. A messenger lives or dies on network effects — and this one makes joining the network the hardest part. Sub-15-min delivery is now available as an opt-in foreground service, but the persistent notification that Android requires for it is itself a drop-off point.
 
-**Who this is wrong for:** anyone who values convenience over sovereignty; anyone who cannot configure a WebDAV disk; anyone who expects instant delivery; anyone on iOS; anyone who needs a chat they can invite a non-technical friend to in 30 seconds.
+**Who this is wrong for:** anyone who values convenience over sovereignty; anyone who cannot configure a WebDAV disk; anyone who expects instant delivery without a persistent notification; anyone on iOS; anyone who needs a chat they can invite a non-technical friend to in 30 seconds.
 
-**Stop signals:** (a) No real user completes the onboarding flow end-to-end within a month of the first UI release. (b) The Android platform further restricts background execution to the point where 15-minute polling becomes once-per-day, making the app unusable without a foreground service notification that users reject. (c) A cloud-disk provider (Yandex) changes their WebDAV API in a breaking way with no notice and no recourse — the single-provider dependency kills the transport.
+**Stop signals:** (a) No real user completes the onboarding flow end-to-end within a month of the first UI release. (b) The Android platform further restricts background execution to the point where 15-minute polling becomes once-per-day, making the app unusable without a foreground service notification — the foreground service addresses this, but user rejection of the persistent notification is the compensating risk. (c) A cloud-disk provider (Yandex) changes their WebDAV API in a breaking way with no notice and no recourse — the single-provider dependency kills the transport.

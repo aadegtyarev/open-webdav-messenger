@@ -73,6 +73,7 @@ Each row: threat → affected assets → likelihood/impact → mitigation (SCn I
 | T25 | Chat-directory metadata exposure to disk operator | A5 | M/L | SC19, SC1 |
 | T26 | Native AEAD seal failure crashes publish path | A7 | L/L | SC14 |
 | T27 | Secret material committed to source tree / git history | A2, A3, A4 | L/H | SC21 |
+| T28 | Foreground fast-poll service drains device battery | A7 | M/L | Explicit user opt-in; persistent notification visible at all times; OFF by default; user can disable at any time. The battery cost is the user-visible trade-off for sub-15-min delivery. No new security surface — the service reuses the existing [SyncRunner] seam, adds no new network paths or data flows. |
 
 Likelihood/Impact: L/M/H.
 
