@@ -28,7 +28,7 @@
 |---|---|---|
 | Device ↔ WebDAV disk | app → untrusted cloud server | AEAD ciphertext only; keys/passphrases never cross (SC1/SC3/SC4/SC5). TLS (SC13). Bounded reads + path-traversal rejection (SC14/SC16). |
 | App ↔ Android Keystore | app → device-local secure storage | All secret key material Keystore-wrapped, device-local, never on disk/log (SC4/SC5). |
-| App ↔ local Room DB | app → device-local app-private SQLite | Decrypted history app-private, never on disk; carries no keys (SC17). DB not separately app-encrypted at rest — relies on OS device-lock. |
+| App ↔ local Room DB | app → device-local app-private SQLite | Decrypted history app-private + SQLCipher-encrypted at rest (Keystore-wrapped AES-256 key), never on WebDAV disk; carries no keys (SC17). |
 | Member ↔ member | one member → another, over shared AEAD key | Shared key cannot distinguish members; per-message Ed25519 signature authenticates sender (SC15). Content-addressed append-only files resist silent in-place tampering (SC11). |
 | Out-of-band invite channel | host → joining member (QR/string, off-disk) | Bearer secret delivered outside the disk; never on disk in the clear. No per-invite revocation in MVP. |
 
@@ -61,7 +61,7 @@ Each row: threat → affected assets → likelihood/impact → mitigation (SCn I
 | T13 | Member reads a chat they are not keyed into | A1 | M/M | SC1, SC11 |
 | T14 | User over-shares in a community-wide chat | A1, A5 | M/L | SC2, SC19 |
 | T15 | Hand-rolled or misused crypto (nonce reuse, key reuse) | A1, A2, A3 | L/H | SC9, SC1, SC10 |
-| T16 | Decrypted history readable at rest on lost/unlocked device | A1 | M/M | SC17 |
+| T16 | Decrypted history readable at rest on lost/unlocked device | A1 | L/M | SC17 |
 | T17 | Longer operator exposure from retention window | A1, A5 | M/M | SC1, SC3 |
 | T18 | Change-index leaks per-member activity metadata | A5 | M/L | SC1 |
 | T19 | Member over-polls, degrades shared 429 budget | A7 | L/M | (assumption, no SCn) |
@@ -88,7 +88,7 @@ Likelihood/Impact: L/M/H.
 - **Private-group existence/title visible to community** — by design; content key never in directory (T24).
 - **Offline longer than retention window** — messages older than the window are unrecoverable from the disk.
 - **Cooperative polling-floor enforcement** — honest-client assumption; no enforced rate limit (T19).
-- **Physical access to an unlocked device** — OS device-lock is the user's responsibility (T16).
+- **Physical access to an unlocked device** — OS device-lock is the user's responsibility. Local Room DB is now SQLCipher-encrypted at rest (SC17, decision 13), raising the unlock bar to "unlocked device + Keystore extraction"; T16 likelihood reduced M→L.
 - **Nation-state / endpoint compromise** — compromised OS, malicious keyboard, rooted device, Keystore/CSPRNG subversion is out of scope.
 
 ## 6. Currently exposed *(the conclusion)*

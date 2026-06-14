@@ -6,10 +6,12 @@ import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import net.sqlcipher.database.SupportFactory
 import org.junit.Assert.assertNotNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.openwebdav.messenger.keystore.HistoryKeyStore
 
 /**
  * room_migration_tested (`docs/features/sync_plan.md` Test plan; stack-notes Room migrations) — the
@@ -38,16 +40,23 @@ class MessengerDatabaseMigrationTest {
         helper.createDatabase(TEST_DB, 1).close()
     }
 
-    /** Open the real Room database and round-trip a write/read on-device (native SQLite). */
+    /** Open the real Room database (SQLCipher-encrypted) and round-trip a write/read on-device. */
     @Test
     fun opensRealDatabaseAndPersists() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val db = Room.databaseBuilder(context, MessengerDatabase::class.java, REAL_DB).build()
+        val historyKeyStore = HistoryKeyStore(context)
+        val key = historyKeyStore.getOrCreateKey()
+        val factory = SupportFactory(key)
+        val db =
+            Room.databaseBuilder(context, MessengerDatabase::class.java, REAL_DB)
+                .openHelperFactory(factory)
+                .build()
         try {
-            // Smoke: the schema is usable on-device (DAO objects are obtainable; the DB opens).
+            // Smoke: the schema is usable on-device with encryption (DAO objects are obtainable).
             assertNotNull(db.messageDao())
             assertNotNull(db.syncCursorDao())
         } finally {
+            key.fill(0)
             db.close()
             context.deleteDatabase(REAL_DB)
         }

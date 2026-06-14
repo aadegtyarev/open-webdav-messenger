@@ -31,7 +31,7 @@ Message path: typed → signed (Ed25519) → compressed (DEFLATE) → AEAD-encry
 | Transport | WebDAV over OkHttp | PROPFIND/GET/PUT/DELETE, 429 back-off |
 | Crypto | libsodium (lazysodium-android) | Argon2id + XChaCha20-Poly1305 AEAD (Tink lacks password-KDF) |
 | Key storage | Android Keystore (direct) | Hardware-backed wrap; `security-crypto` deprecated |
-| Local cache | SQLite via Room | Offline-first history, suspend/Flow |
+| Local cache | SQLite via Room + SQLCipher at-rest encryption | Offline-first history, suspend/Flow, Keystore-wrapped AES-256 DB key |
 | Compression | `java.util.zip` DEFLATE | Zero-dependency, compress-then-encrypt |
 | Markdown | Hand-rolled `AnnotatedString` parser | 6-element subset, smallest surface |
 
@@ -68,7 +68,7 @@ Stable `SCn` IDs — the threat model references these by ID. Full prose in git 
 | SC14 | Bounded reads: 1 MiB GET + TLV field-count cap; typed reject |
 | SC15 | Per-message Ed25519 signature; hard reject on verify failure |
 | SC16 | Path-traversal rejection: safe alphabet, no `/`/`..`; reject, never dereference |
-| SC17 | Local history: device-local app-private Room DB, never on disk; DB encryption accepted limit |
+| SC17 | Local history: device-local app-private Room DB, encrypted at rest via SQLCipher + Keystore-wrapped AES-256 key |
 | SC18 | Directory entries Ed25519-signed (hard reject), community-key-sealed; sig = authorship, not name↔human |
 | SC19 | Community key: community-wide symmetric, independent of disk credential, never on disk/logged |
 | SC20 | DMs never in chat directory; `dm` hard reject on read (social-graph privacy) |
@@ -90,6 +90,7 @@ One line per decision. Detail in git history. OPEN items flagged (Operator to de
 10. **Directory substrate:** community user directory — self-signed/community-key-sealed entries; superseded per signing-pubkey.
 11. **Chat directory substrate:** group-only (DMs hard-rejected); self-signed/community-key-sealed; superseded per chat-id.
 12. **Codec dedup:** shared parse cursor + shared community-directory engine + single-source constant homes.
+13. **Local history encryption (Implemented — 2026-06-14):** Room DB encrypted at rest via SQLCipher + Keystore-wrapped AES-256 key; unencrypted→encrypted migration on first upgrade (ATTACH + sqlcipher_export).
 
 ## Architectural constraints
 
