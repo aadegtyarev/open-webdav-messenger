@@ -154,7 +154,7 @@ internal class AndroidDeps(
     private val identityFactory: IdentityFactory,
     private val configStore: ConnectionConfigStore,
 ) : EngineWiring.Deps {
-    override fun loadStoredConnection(): StoredConnection? = configStore.load()
+    override fun loadStoredConnection(): StoredConnection? = configStore.loadStored()
 
     override fun loadChatKey(chatId: String): ChatKey? = crypto.chatKeyStore(appContext).load(chatId)
 

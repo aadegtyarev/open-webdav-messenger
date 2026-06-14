@@ -1,6 +1,8 @@
 package org.openwebdav.messenger
 
 import android.app.Application
+import android.util.Log
+import androidx.work.WorkManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,11 +23,26 @@ import org.openwebdav.messenger.sync.FastPollManager
 class OpenWebDavMessengerApp : Application() {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    companion object {
+        private const val TAG = "OWDMApp"
+    }
+
     override fun onCreate() {
         super.onCreate()
         AppContainer.bind(this)
         // Off the main thread: the wiring unwraps Keystore-backed secrets and may touch Room/IO.
-        appScope.launch { AppContainer.warmStart() }
-        FastPollManager.restoreIfEnabled(this)
+        appScope.launch {
+            try {
+                AppContainer.warmStart()
+            } catch (e: Exception) {
+                Log.e(TAG, "warmStart failed", e)
+            }
+        }
+        try {
+            FastPollManager.restoreIfEnabled(this, WorkManager.getInstance(this))
+        } catch (_: IllegalStateException) {
+            // WorkManager not initialized (e.g. in test environments) — fast polling
+            // will be restored when the first SyncWorker is scheduled.
+        }
     }
 }

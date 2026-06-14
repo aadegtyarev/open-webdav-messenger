@@ -3,38 +3,47 @@ package org.openwebdav.messenger.keystore
 import android.content.Context
 import org.openwebdav.messenger.export.ExportableConnectionConfigStore
 import org.openwebdav.messenger.transport.ConnectionConfig
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.io.File
 
 /**
- * Device-local, Keystore-wrapped storage of the WebDAV [ConnectionConfig]
- * (base URL, username, app-password, chat-root).
+ * Device-local, Keystore-wrapped storage of the WebDAV [ConnectionConfig] (URL + username + app-password
+ * + chat-root) plus the joined community chat-id and community name (`ui-chat-surface` plan → Contracts:
+ * "A secure on-device store for the WebDAV connection config"; arch note Choice 3).
  *
- * The stored blob is Keystore-wrapped so the app-password is never in plaintext on disk.
- * The wrap/unwrap mechanics live in the shared [KeystoreWrapper] under a distinct alias
- * ([WRAP_KEY_ALIAS]), separate from the chat-key, identity, and history stores.
+ * Built exactly like [ChatKeyStore] / `IdentityStore`: the serialized config bytes are wrapped via the
+ * shared [KeystoreWrapper] under a **distinct alias** ([WRAP_KEY_ALIAS]) and a distinct file, so it never
+ * disturbs the chat-key / identity blobs. The whole blob — including the secret **app-password** — is
+ * device-local, app-private, **never written to the WebDAV disk and never logged** (SC4; `androidx.security`
+ * EncryptedSharedPreferences is deprecated and not used). The random chat key continues to live in the
+ * existing Keystore-wrapped [ChatKeyStore], keyed by chat-id; this store holds only the config + the
+ * joined-chat marker.
  *
- * Policy: the connection config can be re-entered by the user, so an unrecoverable blob
- * is treated as absent (same re-derivable policy as [ChatKeyStore]).
- *
- * Android-only — exercised by connectedAndroidTest (Keystore is device-backed).
+ * Android-only — exercised by `connectedAndroidTest` (Keystore is device-backed; cannot run on the JVM).
+ * The serialize/deserialize round-trip is JVM-testable in isolation (no Keystore) where needed.
  */
-class ConnectionConfigStore(context: Context) : ExportableConnectionConfigStore {
-    /**
-     * Wrap and persist [config]. The app-password is serialized as part of the config and
-     * is never in plaintext on disk. Overwrites any existing stored config atomically.
-     */
-    override fun store(config: ConnectionConfig) {
-        val serialized = serialize(config)
+internal class ConnectionConfigStore(
+    private val context: Context,
+) : ExportableConnectionConfigStore {
+    /** Persist [config] + the [chatId] / [communityName] of the joined community chat (atomic, wrapped). */
+    fun save(
+        config: ConnectionConfig,
+        chatId: String,
+        communityName: String,
+    ) {
+        val serialized = serialize(config, chatId, communityName)
         try {
-            wrapper.wrap(serialized)
+            wrapper().wrap(serialized)
         } finally {
             serialized.fill(0)
         }
     }
 
-    /** Load and unwrap the stored config, or null if none stored or blob is unrecoverable. */
-    override fun load(): ConnectionConfig? {
-        return when (val result = wrapper.unwrap()) {
+    /** Load the stored config + joined-chat marker, or `null` if none is stored or the blob is unrecoverable. */
+    fun loadStored(): StoredConnection? =
+        when (val result = wrapper().unwrap()) {
             is UnwrapResult.None -> null
             is UnwrapResult.Unrecoverable -> null
             is UnwrapResult.Unwrapped -> {
@@ -46,57 +55,81 @@ class ConnectionConfigStore(context: Context) : ExportableConnectionConfigStore 
                 }
             }
         }
+
+    /** ExportableConnectionConfigStore: load just the [ConnectionConfig], discarding chatId/communityName. */
+    override fun load(): ConnectionConfig? = loadStored()?.config
+
+    /** ExportableConnectionConfigStore: store a bare config (restore path — no chatId/communityName yet). */
+    override fun store(config: ConnectionConfig) {
+        save(config, chatId = "", communityName = "")
     }
 
     /** Whether a wrapped config blob exists. */
-    fun has(): Boolean = wrapper.exists()
+    fun has(): Boolean = wrapper().exists()
 
-    /** Delete the stored config. */
-    fun remove() {
-        wrapper.delete()
+    /** Delete the stored config (e.g. on an explicit reset). */
+    fun clear() {
+        wrapper().delete()
     }
 
-    /** The raw wrapped-on-disk bytes — for tests. */
-    internal fun rawStoredBlob(): ByteArray? = wrapper.rawBlob()
+    private fun wrapper(): KeystoreWrapper = KeystoreWrapper(WRAP_KEY_ALIAS, File(configDir(), CONFIG_FILE))
 
-    private val wrapper =
-        KeystoreWrapper(
-            WRAP_KEY_ALIAS,
-            File(context.filesDir, CONFIG_DIR).let { dir ->
-                dir.mkdirs()
-                File(dir, CONFIG_FILE)
-            },
-        )
+    private fun configDir(): File = File(context.filesDir, CONFIG_DIR).apply { mkdirs() }
 
-    private companion object {
-        /** Distinct from chat-key, identity, history, and community-key aliases. */
-        private const val WRAP_KEY_ALIAS = "owdm.connection.wrap.v1"
+    companion object {
+        /** Distinct from the chat-key (`owdm.chatkey.wrap.v1`) and identity (`owdm.identity.wrap.v1`) aliases. */
+        private const val WRAP_KEY_ALIAS = "owdm.connconfig.wrap.v1"
+        private const val CONFIG_DIR = "connconfig"
+        private const val CONFIG_FILE = "config.bin"
 
-        private const val CONFIG_DIR = "connection"
-        private const val CONFIG_FILE = "connection_config.bin"
+        /** A version byte at the head of the blob so a future field change is reject-don't-guess. */
+        private const val BLOB_VERSION = 1
 
-        // Simple fixed-field serialization: each field on its own line, length-prefixed.
-        // Field separator is US (0x1F) — not valid in URLs or credentials.
-
-        private fun serialize(config: ConnectionConfig): ByteArray {
-            val sb = StringBuilder()
-            sb.append(config.baseUrl).append('\u001F')
-            sb.append(config.username).append('\u001F')
-            sb.append(config.appPassword).append('\u001F')
-            sb.append(config.chatRoot)
-            return sb.toString().toByteArray(Charsets.UTF_8)
+        /** Serialize the config + joined-chat marker to a length-prefixed byte layout (in-memory only). */
+        internal fun serialize(
+            config: ConnectionConfig,
+            chatId: String,
+            communityName: String,
+        ): ByteArray {
+            val out = ByteArrayOutputStream()
+            DataOutputStream(out).use { d ->
+                d.writeByte(BLOB_VERSION)
+                d.writeUTF(config.baseUrl)
+                d.writeUTF(config.username)
+                d.writeUTF(config.appPassword)
+                d.writeUTF(config.chatRoot)
+                d.writeUTF(chatId)
+                d.writeUTF(communityName)
+            }
+            return out.toByteArray()
         }
 
-        private fun deserialize(bytes: ByteArray): ConnectionConfig? {
-            val s = String(bytes, Charsets.UTF_8)
-            val parts = s.split('\u001F')
-            if (parts.size != 4) return null
-            return ConnectionConfig(
-                baseUrl = parts[0],
-                username = parts[1],
-                appPassword = parts[2],
-                chatRoot = parts[3],
-            )
-        }
+        /** Deserialize a blob written by [serialize], or `null` if the layout/version is wrong. */
+        internal fun deserialize(bytes: ByteArray): StoredConnection? =
+            try {
+                DataInputStream(bytes.inputStream()).use { d ->
+                    if (d.readByte().toInt() != BLOB_VERSION) return null
+                    val config =
+                        ConnectionConfig(
+                            baseUrl = d.readUTF(),
+                            username = d.readUTF(),
+                            appPassword = d.readUTF(),
+                            chatRoot = d.readUTF(),
+                        )
+                    StoredConnection(config, chatId = d.readUTF(), communityName = d.readUTF())
+                }
+            } catch (_: java.io.IOException) {
+                null
+            }
     }
 }
+
+/**
+ * The decoded contents of [ConnectionConfigStore]: the WebDAV [config], plus the joined community chat-id
+ * and community name. Holds the secret app-password (inside [config], which redacts it in `toString`).
+ */
+internal data class StoredConnection(
+    val config: ConnectionConfig,
+    val chatId: String,
+    val communityName: String,
+)
