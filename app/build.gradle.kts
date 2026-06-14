@@ -30,7 +30,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 15
-        versionName = "0.10.0"
+        versionName = "0.11.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -119,6 +119,8 @@ dependencies {
     implementation(libs.paging.runtime)
     kapt(libs.room.compiler)
     implementation(libs.work.runtime)
+    // local-history-encryption: encrypts the local Room DB at rest via SQLCipher.
+    implementation(libs.sqlcipher)
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)

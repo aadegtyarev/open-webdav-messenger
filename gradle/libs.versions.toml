@@ -31,6 +31,9 @@ paging = "3.3.6"
 # in-memory DBs and the WorkManager TestDriver run under `./gradlew test` (the validators the
 # plan pins to `test`), without an emulator. Test-only; never shipped.
 robolectric = "4.13"
+# local-history-encryption (2026-06-14): SQLCipher encrypts the local Room DB at rest.
+# 4.5.4 is the latest published version on Maven Central (Apr 2023).
+sqlcipher = "4.5.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -64,6 +67,8 @@ paging-runtime = { group = "androidx.paging", name = "paging-runtime", version.r
 work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 work-testing = { group = "androidx.work", name = "work-testing", version.ref = "work" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+# SQLCipher for Android — encrypts the local Room DB at rest (local-history-encryption).
+sqlcipher = { group = "net.zetetic", name = "android-database-sqlcipher", version.ref = "sqlcipher" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
