@@ -11,7 +11,7 @@ package org.openwebdav.messenger.transport
  * @param appPassword App password for Files/WebDAV (NOT the account password) — stack-notes OkHttp/WebDAV.
  * @param chatRoot Folder the credential is scoped to (§1.1). Relative to [baseUrl]; no leading/trailing slash.
  */
-internal data class ConnectionConfig(
+data class ConnectionConfig(
     val baseUrl: String,
     val username: String,
     val appPassword: String,

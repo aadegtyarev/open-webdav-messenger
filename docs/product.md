@@ -37,10 +37,13 @@ The customer removes the need for a dedicated chat server or trusting a third-pa
 
 **Across devices:** a user's chat history lives on their device in a local Room database (unbounded, offline-available). Messages also live on the shared WebDAV disk for a retention window (e.g. 2–4 weeks, configurable), so a second device joining the same chat can catch up within that window.
 
+**Device-loss recovery:** the app provides an **export/restore** mechanism: the user can export all device-local secrets (connection config, community key, chat keys, identity keypair) as a password-encrypted blob via the Android Share sheet, and restore it on a new device with the same password. The export password is mandatory — a device-bound key cannot be transferred across devices. The export blob leaves the device only through the user's chosen share target. Identity secret keys are included so the user retains their full account identity after restore.
+
 **Across sessions:** the app polls the disk in the background (WorkManager, ~15-min floor). An opt-in foreground service (`FastPollService`, off by default) polls at user-configurable sub-15-min intervals with a persistent notification. Between polls, the local history keeps the chat responsive offline. On reconnect, missed messages are caught up automatically within the retention window.
 
 **When a user loses access:**
-- **Lost device:** a new device can be set up with the same WebDAV credential + chat passphrase to re-join. Messages within the retention window are catchable from the disk; messages only on the lost device are gone.
+- **Lost device:** use the export blob + password to restore on a new device. Messages within the retention window are catchable from the disk; messages only on the lost device are gone.
+- **Lost export password:** the export IS the recovery path — without it, a lost device means lost account secrets. A new identity + re-join is required.
 - **Lost passphrase:** the passphrase IS the key — there is no recovery. The user must be re-invited or the chat re-keyed (future rotation feature).
 - **Lost disk credential:** the host/owner can create a new app-password and distribute it out-of-band. The old credential must be rotated (future feature).
 

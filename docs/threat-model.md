@@ -2,7 +2,7 @@
 
 > The one home for **who attacks this product and what they can take** — kept current; a security-relevant feature plan cites the named actor / boundary / asset it touches.
 
-**Last reviewed:** 2026-06-06
+**Last reviewed:** 2026-06-14
 
 ## 1. Actors — who attacks, and why
 
@@ -21,6 +21,7 @@
 - **A5: Membership / social-graph metadata** — who is in which chat, who talks to whom, when, message volume/timing/structure on disk. Deliberately not fully protected in the MVP.
 - **A6: Message integrity & authorship** — guarantee that content is untampered and authored by the claimed member (SC15 signature; content-addressing SC11).
 - **A7: Availability of message delivery** — ability to send/receive within retention window. Bounded by no-server, rate-limited, finite-retention design.
+- **A8: Export blob — encrypted secret bundle** — the password-encrypted bundle carrying all device-local secrets (connection config, community key, chat keys, identity keypair) as a base64 blob. Compromise grants full account takeover including impersonation (the identity secret keys are inside). Mitigated by Argon2id memory-hard KDF (64 MiB INTERACTIVE preset) and password-strength nudge in UI; the blob leaves the device only through the user's chosen Share-sheet target.
 
 ## 3. Trust boundaries — where untrusted meets trusted
 
@@ -74,6 +75,7 @@ Each row: threat → affected assets → likelihood/impact → mitigation (SCn I
 | T26 | Native AEAD seal failure crashes publish path | A7 | L/L | SC14 |
 | T27 | Secret material committed to source tree / git history | A2, A3, A4 | L/H | SC21 |
 | T28 | Foreground fast-poll service drains device battery | A7 | M/L | Explicit user opt-in; persistent notification visible at all times; OFF by default; user can disable at any time. The battery cost is the user-visible trade-off for sub-15-min delivery. No new security surface — the service reuses the existing [SyncRunner] seam, adds no new network paths or data flows. |
+| T29 | Offline brute-force of weak export password → full account takeover including impersonation | A1, A2, A3, A4, A8 | M/H | Argon2id INTERACTIVE preset (64 MiB memory-hard) makes brute-force expensive per guess; password-strength nudge in UI (min 8 chars). The export blob carries the identity secret keys (complete restore = the product need), so a cracked password grants impersonation capability — this is a documented, accepted risk. Mitigation: user education (strong password), Argon2id memory hardness slows GPU/ASIC attacks. |
 
 Likelihood/Impact: L/M/H.
 
@@ -97,3 +99,4 @@ Likelihood/Impact: L/M/H.
 **Strongest unmitigated threat:** a malicious community insider with the shared WebDAV credential can **delete every message and every directory/file on the shared disk at any time, with no technical prevention and no recovery mechanism.** Under the flat-trust model (SC11, Topology A), all members share one disk identity — there is no per-author access control, no append-only enforcement at the transport layer, and no witness/replica that could restore deleted content. AEAD and signatures detect tampering of surviving files, but they do not prevent deletion and cannot reconstruct what was deleted. The only defense is social: the members who held local copies of the deleted messages still have them in their Room history (SC17), so content is not lost for active members — but a new member joining after a mass deletion sees an empty chat. This is the cost of the "no server, one credential" design, accepted consciously; deletion resistance via a witnessed/replicated log is a future feature.
 
 **What was never assessed:** `[?]` — side-channel analysis of the polling pattern (can the disk operator infer who a member is chatting with from the timing and size of their `changes/` reads?); `[?]` — formal verification of the append-only/content-addressing integrity under concurrent writers; `[?] — measurable with current transport and sync layers (429 back-off is implemented, window is reserved in webdav-layout §1.4); not yet measured.`
+`[?]` — the export blob's Argon2id INTERACTIVE preset (64 MiB) is well-studied individually, but the full export path (JSON serialization, magic-header framing, base64 encoding, Share-sheet exit) has not been audited end-to-end. No formal analysis of whether the encryption-then-encode path leaks any structural information through the base64 length.`

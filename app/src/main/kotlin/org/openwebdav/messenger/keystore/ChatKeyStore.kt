@@ -3,6 +3,7 @@ package org.openwebdav.messenger.keystore
 import android.content.Context
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.NativeCrypto
+import org.openwebdav.messenger.export.ExportableChatKeyStore
 import org.openwebdav.messenger.protocol.Base32
 import java.io.File
 
@@ -23,10 +24,11 @@ import java.io.File
 class ChatKeyStore(
     private val context: Context,
     private val native: NativeCrypto,
-) : ChatKeyStorePort {
+) : ChatKeyStorePort, ExportableChatKeyStore {
     /**
      * Wrap [chatKey] under the Keystore key and persist the wrapped blob for [chatId]. Overwrites any
      * existing stored key for that chat (atomic write). The raw key bytes are zeroized after wrapping.
+     * Also records the chatId in the sidecar index so [listChatIds] can enumerate stored keys.
      */
     override fun store(
         chatId: String,
@@ -35,6 +37,7 @@ class ChatKeyStore(
         val raw = chatKey.copyBytes()
         try {
             wrapper(chatId).wrap(raw)
+            addToIndex(chatId)
         } finally {
             raw.fill(0)
         }
@@ -60,12 +63,32 @@ class ChatKeyStore(
             }
         }
 
+    /**
+     * List all chat-ids for which a wrapped key is currently stored. The index is a best-effort
+     * sidecar file — a missing index entry for a valid key file returns it on the next [store] call
+     * for that chatId only. No secret material lives in the index (chat-ids are not secret).
+     */
+    override fun listChatIds(): List<String> {
+        val idx = indexFile()
+        if (!idx.exists()) return emptyList()
+        return try {
+            idx.readLines()
+                .mapNotNull { line ->
+                    val chatId = line.substringBefore('\t')
+                    if (chatId.isNotEmpty() && has(chatId)) chatId else null
+                }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     /** Whether a wrapped key is stored for [chatId]. */
     fun has(chatId: String): Boolean = wrapper(chatId).exists()
 
     /** Delete the stored wrapped key for [chatId] (e.g. on leaving a chat). */
     fun remove(chatId: String) {
         wrapper(chatId).delete()
+        removeFromIndex(chatId)
     }
 
     /** The raw wrapped-on-disk bytes for [chatId] — for tests asserting the raw key is NOT in plaintext. */
@@ -85,9 +108,45 @@ class ChatKeyStore(
         return File(dir, "k_$token.bin")
     }
 
+    // -- sidecar index: chat-id → filename-token mapping (not secret; plaintext on disk) -------
+
+    private fun indexFile(): File =
+        File(context.filesDir, KEY_DIR).apply { mkdirs() }.let { dir ->
+            File(dir, INDEX_FILE_NAME)
+        }
+
+    private fun addToIndex(chatId: String) {
+        val file = indexFile()
+        val lines = if (file.exists()) file.readLines().toMutableList() else mutableListOf()
+        val entry = "$chatId\t"
+        lines.removeAll { it.startsWith(entry) || it.startsWith("$chatId\t") }
+        lines.add(entry)
+        try {
+            file.writeText(lines.joinToString("\n") + "\n")
+        } catch (_: Exception) {
+            // Best-effort: the key file is already written; a missing index entry just means
+            // the chat won't be in listChatIds(), not data loss.
+        }
+    }
+
+    private fun removeFromIndex(chatId: String) {
+        val file = indexFile()
+        if (!file.exists()) return
+        try {
+            val lines =
+                file.readLines().filter { line ->
+                    !line.startsWith("$chatId\t")
+                }
+            file.writeText(lines.joinToString("\n").let { if (it.isNotEmpty()) it + "\n" else it })
+        } catch (_: Exception) {
+            // Best-effort.
+        }
+    }
+
     companion object {
         private const val WRAP_KEY_ALIAS = "owdm.chatkey.wrap.v1"
         private const val KEY_DIR = "chatkeys"
+        private const val INDEX_FILE_NAME = "chat_ids.txt"
 
         /**
          * BLAKE2b digest length for the filename token. 16 bytes = 128 bits is far beyond collision

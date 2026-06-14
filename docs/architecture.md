@@ -91,6 +91,7 @@ One line per decision. Detail in git history. OPEN items flagged (Operator to de
 11. **Chat directory substrate:** group-only (DMs hard-rejected); self-signed/community-key-sealed; superseded per chat-id.
 12. **Codec dedup:** shared parse cursor + shared community-directory engine + single-source constant homes.
 13. **Local history encryption (Implemented — 2026-06-14):** Room DB encrypted at rest via SQLCipher + Keystore-wrapped AES-256 key; unencrypted→encrypted migration on first upgrade (ATTACH + sqlcipher_export).
+14. **Account export/restore (Implemented — 2026-06-14):** password-encrypted backup of all device-local secrets (connection config, community key, chat keys, identity keypair) via Argon2id→XChaCha20-Poly1305, base64 blob shareable through Android Share sheet. Password is mandatory — a device-bound Keystore key cannot carry cross-device. Identity secret keys are included in the export (complete restore); a cracked export password grants impersonation capability (mitigated by Argon2id INTERACTIVE preset, 64 MiB memory-hard). Restore is all-or-nothing: every validation failure (wrong password, tampered blob, wrong version) is a typed rejection, never a partial restore.
 
 ## Architectural constraints
 
@@ -118,9 +119,9 @@ Package root: `org.openwebdav.messenger` under `app/src/main/kotlin/`.
 | `chatdirectory/` | Implemented | Community chat directory — group-only descriptors |
 | `data/` | Implemented | Room local cache — history + sync cursors |
 | `sync/` | Implemented | Poll-cycle: send (log+changes), poll, background scheduling, opt-in foreground fast-poll |
-| `codec/` | Implemented | DEFLATE compress/inflate, bounded decompression |
+| `export/` | Implemented | Account export/restore: password-encrypted backup of all device-local secrets |
+| `ui/` | Implemented | ExportRestoreActivity (temporary launcher); Compose chat surface planned |
 | `markdown/` | Planned | Hand-rolled 6-element `AnnotatedString` parser |
-| `ui/` | Planned | Compose chat surface |
 
 ## Extension points
 
