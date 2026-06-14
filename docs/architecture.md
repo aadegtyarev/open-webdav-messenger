@@ -19,7 +19,7 @@ Device (Android)
                     WebDAV Cloud Disk (untrusted — ciphertext only)
 ```
 
-Message path: typed → compressed (DEFLATE) → signed (Ed25519) → AEAD-encrypted (XChaCha20-Poly1305) → content-addressed file name → PUT to `log/` on disk → per-member `changes/` entry written → peers poll `changes/` → fetch new `log/` → verify → decrypt → decompress → persist to Room → UI.
+Message path: typed → signed (Ed25519) → compressed (DEFLATE) → AEAD-encrypted (XChaCha20-Poly1305) → content-addressed file name → PUT to `log/` on disk → per-member `changes/` entry written → peers poll `changes/` → fetch new `log/` → decrypt → decompress → verify → persist to Room → UI.
 
 ## Tech stack
 
@@ -81,7 +81,7 @@ One line per decision. Detail in git history. OPEN items flagged (Operator to de
 1. **Crypto library:** libsodium-only (Argon2id + XChaCha20-Poly1305); Tink lacks password-KDF.
 2. **Disk topology:** Topology A — one shared WebDAV credential per chat (all members = one disk identity).
 3. **Aggregated sync:** shared `log/` + per-member `changes/` + retention window (replaced v1 per-recipient inbox fan-out).
-4. **Compression:** DEFLATE (`java.util.zip`), compress-then-encrypt, per-message independent, codec-id in envelope.
+4. **Compression (Implemented — 2026-06-14):** DEFLATE (`java.util.zip`), compress-then-encrypt, per-message independent, codec-id in envelope.
 5. **Markdown rendering:** hand-rolled `AnnotatedString` parser for 6 elements (smallest untrusted-input surface).
 6. **PARTIALLY RESOLVED** — Polling: WorkManager background floor implemented, foreground-service fast mode deferred. Static analysis: ktlint chosen (detekt not used). **OPEN** — CI emulator for `connectedAndroidTest`.
 7. **Crypto substrate:** 3 key sources (random/passphrase/DH); public-chat = community-key (world-readable tier retired 2026-06-06).
@@ -117,7 +117,7 @@ Package root: `org.openwebdav.messenger` under `app/src/main/kotlin/`.
 | `chatdirectory/` | Implemented | Community chat directory — group-only descriptors |
 | `data/` | Implemented | Room local cache — history + sync cursors |
 | `sync/` | Implemented | Poll-cycle: send (log+changes), poll, background scheduling |
-| `codec/` | Planned | DEFLATE compress/inflate, bounded decompression |
+| `codec/` | Implemented | DEFLATE compress/inflate, bounded decompression |
 | `markdown/` | Planned | Hand-rolled 6-element `AnnotatedString` parser |
 | `ui/` | Planned | Compose chat surface |
 

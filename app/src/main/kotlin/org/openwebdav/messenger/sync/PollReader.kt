@@ -229,9 +229,10 @@ internal class PollReader(
      * AEAD-open + §8 parse/verify the §5 [blob] under [chatKey] and persist on success. The §5.1 AAD is
      * the 8-byte header; the transport exposes the REAL on-disk [codecId] ([ReadResult.Ready.codecId]),
      * so the header is rebuilt faithfully ([Envelope.frame]) instead of assuming `0x00` (review finding
-     * 4). This feature supports only `codec-id = 0x00 (none)`: a non-zero (e.g. deflate) codec is a typed
-     * [FetchStep.Rejected] with an explicit reason — NOT a silent AEAD AAD-mismatch drop. AEAD/signature
-     * failures are likewise [FetchStep.Rejected] (forged/tampered — cycle continues, scenario 3).
+     * 4). Codec dispatch (decompress if `codec-id = 0x01 deflate`) now lives inside [MessageEnvelope.open]
+     * — this method no longer manually rejects a non-none codec; the envelope layer handles it. AEAD /
+     * decompression / signature failures all surface as [FetchStep.Rejected] (forged/tampered — the cycle
+     * continues, scenario 3).
      */
     private suspend fun validateAndStore(
         name: String,
@@ -239,9 +240,6 @@ internal class PollReader(
         codecId: Byte,
         chatKey: ChatKey,
     ): FetchStep {
-        // §5/§5.1 reject-with-reason: this feature inflates only codec-none. A non-none codec (deflate is
-        // the compression feature's job) is rejected explicitly — never silently dropped by AAD mismatch.
-        if (codecId != Envelope.CODEC_NONE) return FetchStep.Rejected
         val envelopeBytes = Envelope.frame(codecId, blob)
         return when (val parsed = envelope.open(envelopeBytes, chatKey)) {
             is ParseResult.Parsed -> {

@@ -1,5 +1,9 @@
 package org.openwebdav.messenger.message
 
+import org.openwebdav.messenger.codec.Codec
+import org.openwebdav.messenger.codec.CompressionCodec
+import org.openwebdav.messenger.codec.DecompressResult
+import org.openwebdav.messenger.codec.DeflateCodec
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.crypto.OpenResult
@@ -7,10 +11,14 @@ import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.protocol.MessageId
 
 /**
- * Composes the §8 message model with the §5/§5.1 crypto substrate (`docs/protocol/webdav-layout.md`):
- * the build path is `serialize → signAndSerialize → MessageCrypto.sealEnvelope`, and the open path is
- * `MessageCrypto.openEnvelope → MessageParser.parse`. The signed+serialized §8 plaintext is EXACTLY
- * the bytes the AEAD seals/opens (§8 relationship-to-outer-frame; `codec-id = 0x00`).
+ * Composes the §8 message model with the §5/§5.1 crypto substrate and the codec layer
+ * (`docs/protocol/webdav-layout.md`): the build path is `serialize → signAndSerialize →
+ * compress(DEFLATE) → MessageCrypto.sealEnvelope(codec-id=0x01)`, and the open path is
+ * `MessageCrypto.openEnvelope → decompress → MessageParser.parse`.
+ *
+ * The codec sits BETWEEN serialization and AEAD seal (compress-then-encrypt, decision #4). On open
+ * the codec-id is read from the envelope header (§5 byte 5) and the matching decompression runs
+ * before signature verify and parse. For MVP the sender always uses DEFLATE (hardcoded).
  *
  * This is the seam the `sync` feature will call to turn a typed [Message] into envelope bytes to `PUT`,
  * and a `GET` body back into a typed [Message]. It does NOT write to disk; it exposes [contentName] —
@@ -28,10 +36,12 @@ class MessageEnvelope internal constructor(
     private val messageCrypto: MessageCrypto,
     private val serializer: MessageSerializer,
     private val parser: MessageParser,
+    private val codec: CompressionCodec,
 ) {
     /**
-     * Serialize + §8.3-sign [message] with [senderSignSecret], then AEAD-seal under [chatKey] into a
-     * complete envelope file (`header8 ‖ blob`). The returned bytes are exactly what the transport `PUT`s.
+     * Serialize + §8.3-sign [message] with [senderSignSecret], compress with DEFLATE, then AEAD-seal
+     * under [chatKey] into a complete envelope file (`header8 ‖ blob`) with `codec-id = 0x01 (deflate)`.
+     * The returned bytes are exactly what the transport `PUT`s.
      */
     fun seal(
         message: Message,
@@ -39,21 +49,30 @@ class MessageEnvelope internal constructor(
         senderSignSecret: ByteArray,
     ): ByteArray {
         val plaintext = serializer.signAndSerialize(message, senderSignSecret)
-        return messageCrypto.sealEnvelope(chatKey, plaintext)
+        val compressed = codec.compress(plaintext)
+        return messageCrypto.sealEnvelope(chatKey, compressed, Codec.DEFLATE.id)
     }
 
     /**
-     * AEAD-open [envelopeBytes] under [chatKey], then §8-parse + §8.3-verify the plaintext. Returns
-     * [ParseResult.Rejected] with [RejectReason.MALFORMED] when the AEAD itself rejects (wrong key,
-     * tampered header/ciphertext, truncated blob) — the message layer surfaces a single typed failure,
-     * never a crash (plan interaction `crypto_roundtrip_cross_key`).
+     * AEAD-open [envelopeBytes] under [chatKey], then decompress (according to the on-disk codec-id),
+     * then §8-parse + §8.3-verify the plaintext. Returns [ParseResult.Rejected] with [RejectReason.MALFORMED]
+     * when the AEAD itself rejects (wrong key, tampered header/ciphertext, truncated blob) or when
+     * decompression fails (corrupted/malformed compressed data, oversize output — SC7) — the message
+     * layer surfaces a single typed failure, never a crash (plan interaction `crypto_roundtrip_cross_key`).
      */
     fun open(
         envelopeBytes: ByteArray,
         chatKey: ChatKey,
     ): ParseResult =
         when (val opened = messageCrypto.openEnvelope(chatKey, envelopeBytes)) {
-            is OpenResult.Opened -> parser.parse(opened.bytes)
+            is OpenResult.Opened -> {
+                val plaintext =
+                    when (val d = decompressSafe(opened.codecId, opened.bytes)) {
+                        is DecompressResult.Ok -> d.bytes
+                        DecompressResult.Rejected -> return ParseResult.Rejected(RejectReason.MALFORMED)
+                    }
+                parser.parse(plaintext)
+            }
             OpenResult.Rejected -> ParseResult.Rejected(RejectReason.MALFORMED)
         }
 
@@ -64,8 +83,30 @@ class MessageEnvelope internal constructor(
      */
     fun contentName(envelopeBytes: ByteArray): String = MessageId.contentHash(envelopeBytes)
 
+    /**
+     * Map a codec-id byte to the matching decompress call (or pass-through for NONE). An unknown codec-id
+     * is a typed rejection — reject-don't-guess (§7). A decompression failure (corrupted data / oversize)
+     * is likewise a typed rejection (SC7 bounded decompression).
+     */
+    private fun decompressSafe(
+        codecId: Byte,
+        bytes: ByteArray,
+    ): DecompressResult {
+        val c =
+            try {
+                Codec.fromId(codecId)
+            } catch (e: IllegalArgumentException) {
+                return DecompressResult.Rejected // unknown codec → reject
+            }
+        return when (c) {
+            Codec.NONE -> DecompressResult.Ok(bytes)
+            Codec.DEFLATE -> codec.decompress(bytes)
+        }
+    }
+
     companion object {
-        /** Wire a [MessageEnvelope] from the shared substrates (the seam the `sync` feature constructs). */
+        /** Wire a [MessageEnvelope] from the shared substrates with DEFLATE compression (the seam the
+         * `sync` feature constructs). For MVP the codec is always [DeflateCodec] (decision #4). */
         fun create(
             messageCrypto: MessageCrypto,
             identity: IdentityCrypto,
@@ -74,6 +115,7 @@ class MessageEnvelope internal constructor(
                 messageCrypto = messageCrypto,
                 serializer = MessageSerializer(identity),
                 parser = MessageParser(identity),
+                codec = DeflateCodec(),
             )
     }
 }

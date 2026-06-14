@@ -7,6 +7,16 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.10.0] — 2026-06-14
+
+### Added
+
+- DEFLATE compression for message envelope (`codec-id = 0x01`). Messages are compressed
+  with `java.util.zip` (raw DEFLATE, nowrap, BEST_COMPRESSION) before AEAD encryption,
+  reducing bandwidth on rate-limited WebDAV transport. 1 MiB decompression bound guards
+  against zip-bombs. Per-message independent compression prevents CRIME/BREACH-class leaks.
+  New `app/.../codec/` module (CompressionCodec, DeflateCodec, Codec enum).
+
 ## [0.9.0] — 2026-06-06
 
 A new production capability — remote private chats — plus a key-isolation fix. Still
