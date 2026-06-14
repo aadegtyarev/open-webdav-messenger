@@ -45,6 +45,11 @@ object SyncScheduler {
         )
     }
 
+    /** Cancel the periodic poll. Idempotent — safe to call even when nothing is scheduled. */
+    fun cancel(workManager: WorkManager) {
+        workManager.cancelUniqueWork(WORK_NAME)
+    }
+
     /** Default requested interval = the floor; a future settings UI lets the user raise it. */
     const val DEFAULT_INTERVAL_MINUTES = 15L
 }
