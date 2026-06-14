@@ -8,11 +8,14 @@ import org.openwebdav.messenger.protocol.Envelope
  * exception, never silently-wrong bytes (`docs/protocol/webdav-layout.md` §5.1 open/reject discipline).
  */
 sealed interface OpenResult {
-    /** Authentication succeeded; [bytes] is the exact original plaintext. */
-    data class Opened(val bytes: ByteArray) : OpenResult {
-        override fun equals(other: Any?): Boolean = other is Opened && bytes.contentEquals(other.bytes)
+    /** Authentication succeeded; [bytes] is the exact original plaintext. [codecId] is the §5 byte-5
+     * codec-id read from the on-disk envelope header (validated by [Envelope.readFrame]) so the caller
+     * can decompress the plaintext when `codecId != 0x00`. Defaults to [Envelope.CODEC_NONE] so
+     * existing callers that construct [Opened] directly (e.g. codec-none tests) are unaffected. */
+    data class Opened(val bytes: ByteArray, val codecId: Byte = Envelope.CODEC_NONE) : OpenResult {
+        override fun equals(other: Any?): Boolean = other is Opened && bytes.contentEquals(other.bytes) && codecId == other.codecId
 
-        override fun hashCode(): Int = bytes.contentHashCode()
+        override fun hashCode(): Int = 31 * bytes.contentHashCode() + codecId
     }
 
     /**

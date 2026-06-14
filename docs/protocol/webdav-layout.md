@@ -195,7 +195,7 @@ ciphertext-blob = nonce(24 bytes) ‖ AEAD-ciphertext-with-tag
 - **Key source is out of frame.** Which of the key sources (known / random / passphrase / DH — `docs/architecture.md` → decisions 9/10) produced the AEAD key is **not** encoded in the blob or header; it is determined by the chat's configuration (the chat taxonomy, architecture → Behavioral contract). The blob layout is identical for all sources.
 
 - **Plaintext envelope fields** (chat-id, sender identity public key, optional reply-to, body, reaction, send-timestamp) live **inside** this encrypted plaintext, not in this outer frame. A message carries **no inner self-id** — its identity is its §2 file name (§8.6); `reply-to`/`target-id` carry other messages' §2 file names. Their exact structure — a versioned, signed, TLV message format with `kind` ∈ {text, reaction} — is pinned in **§8 (Message plaintext format)** of this document (authored by the `message-model` feature). The outer frame here carries only what a reader needs **before** decryption: magic, versions, codec-id.
-- **Decompression bound (zip-bomb guard):** when the compression feature wires `codec-id = deflate`, the reader MUST bound the inflated size; exceeding the bound is an error path (architecture → Decompression bound). The numeric bound is fixed by the compression feature, not here.
+- **Decompression bound (zip-bomb guard — SC7):** the reader MUST bound the inflated size when `codec-id = deflate`. **The hard bound is 1 MiB (1 048 576 bytes)** — generous headroom for a text-only message while bounding the zip-bomb OOM-DoS surface. Exceeding the bound is an error path (typed rejection; skip, never crash). The same 1 MiB value is the transport's `GET` cap (`MAX_MESSAGE_FILE_BYTES`) and the DEFLATE inflate bound.
 
 ---
 
@@ -239,7 +239,7 @@ Two independent version fields, so path layout and byte framing can evolve separ
 >
 > **Relationship to the outer frame.** These bytes are exactly the plaintext fed to `Aead.seal` and returned by `Aead.open` (§5.1). They are **confidentiality-protected** (sealed inside the ciphertext-blob) and **integrity-protected as a whole** by the Poly1305 tag over (nonce, header-as-AAD, ciphertext). The per-message Ed25519 signature below is an **additional, in-plaintext** authenticator that distinguishes *which member* sent the message — something the shared AEAD key cannot do (§8.3).
 >
-> **Codec.** For this feature `codec-id` stays **`0x00` (none)** — the plaintext below is **not** compressed. Compression is a later feature that may set `codec-id = 0x01`; when it does, the bytes in this section are what gets DEFLATE'd before sealing and inflated after opening. Nothing in §8 changes when compression turns on.
+> **Codec (implemented — `codec-id = 0x01`, deflate).** The compression feature (2026-06-14) wires `codec-id = 0x01` (raw DEFLATE, RFC 1951, nowrap — no zlib/gzip header) into the message write path: the signed plaintext below is DEFLATE-compressed BEFORE AEAD seal (compress-then-encrypt, decision #4), and inflated AFTER AEAD open BEFORE signature verify and parse. The bytes in this section are exactly the signed payload that gets compressed; nothing in §8's TLV format changes. The decompression bound is 1 MiB (§5.1 SC7). Directory and chat-directory entries (§10/§11) keep `codec-id = 0x00 (none)` — compression is applied only to messages.
 
 ### 8.1 Design rules
 
