@@ -4,23 +4,34 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
 
     <application
         android:name=".OpenWebDavMessengerApp"
         android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:theme="@style/Theme.OpenWebDavMessenger"
         android:usesCleartextTraffic="false">
 
         <activity
-            android:name=".ui.ExportRestoreActivity"
+            android:name=".ui.MainActivity"
             android:exported="true"
-            android:label="@string/export_restore_title">
+            android:label="@string/app_name"
+            android:theme="@style/Theme.OpenWebDavMessenger">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ui.ExportRestoreActivity"
+            android:exported="true"
+            android:label="@string/export_restore_title" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
