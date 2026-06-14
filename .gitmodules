@@ -1,3 +1,0 @@
-[submodule ".ai-pm/tooling"]
-	path = .ai-pm/tooling
-	url = git@github.com:aadegtyarev/ai-pm-protocol.git

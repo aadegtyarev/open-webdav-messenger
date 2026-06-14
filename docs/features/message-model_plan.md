@@ -80,9 +80,9 @@ The message-model composes with crypto + identity (shared key material + the AEA
 
 ## Docs to update
 
-- **`docs/protocol/webdav-layout.md`** (owner: `pm-architect`): author a new section specifying the **inner message plaintext format** (versioned; kind tag {text, reaction}; field layout for each kind incl. sender identity public key + Ed25519 signature; reaction index space 0..4; reply-to optional; reject-don't-guess on unknown version/kind). Distinct from §5 (outer envelope framing) — this is the structure inside the ciphertext.
-- **`docs/architecture.md`** (owner: `pm-architect`): record a decision "Message model — signed plaintext inside the envelope" (per-message Ed25519 signature for intra-chat sender authentication; reaction as a message kind with a 0..4 index; reply as a field). Resolve the Behavioral-contract message-envelope `[?]` items this feature fixes (the inner fields list; reaction index space) — or point to the new webdav-layout section.
-- **`CLAUDE.md`** Pipeline: no new validator (existing gates cover it; `connectedAndroidTest` only if any path is device-bound — message-model is pure JVM-testable logic, so likely no new instrumented need beyond the existing native sign/verify already proven).
+- **`docs/protocol/webdav-layout.md`** (owner: `Builder`): author a new section specifying the **inner message plaintext format** (versioned; kind tag {text, reaction}; field layout for each kind incl. sender identity public key + Ed25519 signature; reaction index space 0..4; reply-to optional; reject-don't-guess on unknown version/kind). Distinct from §5 (outer envelope framing) — this is the structure inside the ciphertext.
+- **`docs/architecture.md`** (owner: `Builder`): record a decision "Message model — signed plaintext inside the envelope" (per-message Ed25519 signature for intra-chat sender authentication; reaction as a message kind with a 0..4 index; reply as a field). Resolve the Behavioral-contract message-envelope `[?]` items this feature fixes (the inner fields list; reaction index space) — or point to the new webdav-layout section.
+- **`AGENTS.md`** Pipeline: no new validator (existing gates cover it; `connectedAndroidTest` only if any path is device-bound — message-model is pure JVM-testable logic, so likely no new instrumented need beyond the existing native sign/verify already proven).
 
 ## Out of scope
 

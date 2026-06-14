@@ -28,7 +28,7 @@ class ProtocolPrimitivesTest {
     // §2/§4: message-id = order-token "~" content-hash. The order-token length is the sum of the
     // §4 fixed field widths (ts 11 + "-" + sender-tag 8 + "-" + seq 8 = 29); content-hash is 32;
     // so the message-id is 29 + 1 + 32 = 62. (The §2/§4 "30 chars" / "63" summary annotations are
-    // off by one vs the field widths — flagged to pm-architect as a spec-defect; the field widths
+    // off by one vs the field widths — flagged to the Builder as a spec-defect; the field widths
     // are the precise, load-bearing definitions implemented here.)
     @Test
     fun message_id_is_order_token_tilde_content_hash() {

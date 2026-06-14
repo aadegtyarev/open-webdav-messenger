@@ -40,14 +40,16 @@ _No contracts yet._
 
 | Feature | Done | Review |
 |---|---|---|
-| [webdav-transport](features/webdav-transport_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/webdav-transport_review.md) |
-| [crypto](features/crypto_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/crypto_review.md) |
-| [identity](features/identity_plan.md) | 2026-06-03 | [R](../.ai-pm/reviews/identity_review.md) |
-| [message-model](features/message-model_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/message-model_review.md) |
-| [sync](features/sync_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/sync_review.md) |
-| [directory](features/directory_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/directory_review.md) |
-| [chat-directory](features/chat-directory_plan.md) | 2026-06-04 | [R](../.ai-pm/reviews/chat-directory_review.md) |
-| [release-ci](features/release-ci_plan.md) | 2026-06-05 | [R](../.ai-pm/reviews/release-ci_review.md) |
-| [identity-store-io-dispatch](features/identity-store-io-dispatch_plan.md) | 2026-06-05 | [R](../.ai-pm/reviews/identity-store-io-dispatch_review.md) |
-| [codec-dedup-and-send-hardening](features/codec-dedup-and-send-hardening_plan.md) | 2026-06-06 | [R](../.ai-pm/reviews/codec-dedup-and-send-hardening_review.md) |
-| [x25519-identity](features/x25519-identity_plan.md) | 2026-06-06 | [R](../.ai-pm/reviews/x25519-identity_review.md) |
+| Feature | Done | Review |
+|---|---|---|---|
+| [webdav-transport](features/webdav-transport_plan.md) | 2026-06-03 | (transient, deleted after ship) |
+| [crypto](features/crypto_plan.md) | 2026-06-03 | (transient, deleted after ship) |
+| [identity](features/identity_plan.md) | 2026-06-03 | (transient, deleted after ship) |
+| [message-model](features/message-model_plan.md) | 2026-06-04 | (transient, deleted after ship) |
+| [sync](features/sync_plan.md) | 2026-06-04 | (transient, deleted after ship) |
+| [directory](features/directory_plan.md) | 2026-06-04 | (transient, deleted after ship) |
+| [chat-directory](features/chat-directory_plan.md) | 2026-06-04 | (transient, deleted after ship) |
+| [release-ci](features/release-ci_plan.md) | 2026-06-05 | (transient, deleted after ship) |
+| [identity-store-io-dispatch](features/identity-store-io-dispatch_plan.md) | 2026-06-05 | (transient, deleted after ship) |
+| [codec-dedup-and-send-hardening](features/codec-dedup-and-send-hardening_plan.md) | 2026-06-06 | (transient, deleted after ship) |
+| [x25519-identity](features/x25519-identity_plan.md) | 2026-06-06 | (transient, deleted after ship) |

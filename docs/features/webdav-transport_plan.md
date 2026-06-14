@@ -76,10 +76,10 @@ The transport does network I/O against shared disk state written by multiple pee
 
 ## Docs to update
 
-- **Create `docs/protocol/webdav-layout.md`** (owner: `pm-architect`) — the on-disk protocol layout spec. Authored as the FIRST step of this feature, before transport code, since it is the contract the code implements.
-- **`docs/architecture.md`** (owner: `pm-architect`): pin the `[?]` Behavioral-contract invariants this feature resolves (message-id grammar, inbox/file-naming, ordering token) — either inline or by reference to `webdav-layout.md`; and fix the now-stale "project license is TBD" note in the Dependencies policy → AGPL-3.0.
-- **`CLAUDE.md`** File-layout note: reconcile the "planned" module map against the real tree once code lands (the map currently says it is planned, not observed).
-- **`CLAUDE.md` Pipeline / Open decisions**: record that decision #6 is resolved — ktlint + Android Lint chosen, detekt not used (already the pipeline default; this feature makes it real).
+- **Create `docs/protocol/webdav-layout.md`** (owner: `Builder`) — the on-disk protocol layout spec. Authored as the FIRST step of this feature, before transport code, since it is the contract the code implements.
+- **`docs/architecture.md`** (owner: `Builder`): pin the `[?]` Behavioral-contract invariants this feature resolves (message-id grammar, inbox/file-naming, ordering token) — either inline or by reference to `webdav-layout.md`; and fix the now-stale "project license is TBD" note in the Dependencies policy → AGPL-3.0.
+- **`AGENTS.md`** File-layout note: reconcile the "planned" module map against the real tree once code lands (the map currently says it is planned, not observed).
+- **`AGENTS.md` Pipeline / Open decisions**: record that decision #6 is resolved — ktlint + Android Lint chosen, detekt not used (already the pipeline default; this feature makes it real).
 
 ## Out of scope
 

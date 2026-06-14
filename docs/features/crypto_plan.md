@@ -83,12 +83,12 @@ Crypto integrates with the envelope/transport seam and shared key state; not iso
 
 ## Docs to update
 
-- **`docs/protocol/webdav-layout.md` §5** (owner: `pm-architect`): fill the reserved crypto decisions — `blob = nonce(24) ‖ AEAD-ciphertext+tag`, the 8-byte header as AAD, XChaCha20-Poly1305, codec-id stays 0x00.
-- **`docs/architecture.md`** (owner: `pm-architect`):
+- **`docs/protocol/webdav-layout.md` §5** (owner: `Builder`): fill the reserved crypto decisions — `blob = nonce(24) ‖ AEAD-ciphertext+tag`, the 8-byte header as AAD, XChaCha20-Poly1305, codec-id stays 0x00.
+- **`docs/architecture.md`** (owner: `Builder`):
   - **Revise the chat taxonomy** (Behavioral contract `chat-type` enum is currently `{private, public}` — too narrow). New model: **Kind** = `dm` (1:1, always private) | `group` (public or private); **Access** = `public` (group only, known key, not secret) | `private` (random key or passphrase key); **password** optional on private. Record that the substrate exposes three key sources (known / random / passphrase) that these map onto.
   - **Record this feature's decisions**: Argon2id INTERACTIVE preset; passphrase salt deterministic from chat-id (future roster may move to a stored random salt); known-key = KDF(in-app constant ‖ chat-id) (non-secret, no build-secret injection); single-layer AEAD (double-layer rejected — app key is APK-extractable); keys Keystore-wrapped; **the disk app-password must never be a content key** (the disk operator holds it).
   - **Note the planned follow-ons** (so the substrate's seam is understood): **X25519** as a fourth key source enabling remote private chats between members already sharing a disk (publish public keys in a directory → DH → a symmetric key fed to this same AEAD); a **user/chat directory** on the disk for discovery; **invite/onboarding** (string + QR) carrying disk access + chat-id + (for random-key chats) the key. These are separate future features; this feature only makes the substrate ready for them.
-- **`CLAUDE.md` Pipeline**: note `./gradlew connectedAndroidTest` is now an active gate for this feature, run on a connected device/emulator (verifies the native crypto `.so` + Keystore).
+- **`AGENTS.md` Pipeline**: note `./gradlew connectedAndroidTest` is now an active gate for this feature, run on a connected device/emulator (verifies the native crypto `.so` + Keystore).
 
 ## Out of scope
 

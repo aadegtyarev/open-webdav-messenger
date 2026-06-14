@@ -1,7 +1,7 @@
 # Stack notes
 
 Living document. Initialised at bootstrap, extended on every feature that touches a new external system.
-Maintained by `pm-stack-researcher`. Read by `pm-plan`, `pm-architect`, `pm-coder`, `pm-plan-checker`.
+Maintained by the Builder (stack-researcher fold). Read by the Builder (plan/architect/coder folds) and the Reviewer.
 
 **Last full review:** 2026-06-03
 
@@ -9,12 +9,12 @@ Maintained by `pm-stack-researcher`. Read by `pm-plan`, `pm-architect`, `pm-code
 
 ## How this document is used
 
-- **pm-plan** reads it before drafting a plan that touches any listed component. If the feature touches a component that is missing here, `/pm-plan` spawns `pm-stack-researcher` to extend this document **before** continuing.
-- **pm-architect** reads it when proposing variants — stack constraints are part of the trade-off space.
-- **pm-coder** reads it before writing a mapping, handler, schema, or any integration code for a listed component. On contradiction between task and stack-notes, coder stops and escalates — no fallback to WebSearch.
-- **pm-plan-checker** checks every diff against the relevant entries. Code that contradicts an idiom or constraint listed here is **blocking** with a citation back to this file.
+- **Builder (plan fold)** reads it before drafting a plan that touches any listed component. If the feature touches a component that is missing here, the Builder spawns a research pass to extend this document **before** continuing.
+- **Builder (architect fold)** reads it when proposing variants — stack constraints are part of the trade-off space.
+- **Builder (coder fold)** reads it before writing a mapping, handler, schema, or any integration code for a listed component. On contradiction between task and stack-notes, the coder stops and escalates — no fallback to WebSearch.
+- **Reviewer** checks every diff against the relevant entries. Code that contradicts an idiom or constraint listed here is **blocking** with a citation back to this file.
 
-If this document is missing or empty for a component the feature touches — that is a protocol-level defect, not a content gap. `/pm-bootstrap` or `/pm-plan` should have caught it.
+If this document is missing or empty for a component the feature touches — that is a protocol-level defect, not a content gap. The protocol's bootstrap or planning step should have caught it.
 
 ---
 
@@ -269,7 +269,7 @@ If this document is missing or empty for a component the feature touches — tha
 
 ### GitHub Actions (CI — PR checks + release auto-tag)
 
-> CI for a hobby Android app: a PR-checks workflow runs the JVM-side pipeline gates on every pull request, and a release workflow on push to `main` auto-tags and publishes a Release with a built APK. The two load-bearing traps below are project-specific: the **private SSH submodule** (`.ai-pm/tooling`) must NOT be fetched by CI, and a tag pushed with the built-in token does NOT retrigger a tag-triggered workflow.
+> CI for a hobby Android app: a PR-checks workflow runs the JVM-side pipeline gates on every pull request, and a release workflow on push to `main` auto-tags and publishes a Release with a built APK. The two load-bearing traps below are project-specific: the **private SSH submodule** (`.ai-dev/tooling`) must NOT be fetched by CI, and a tag pushed with the built-in token does NOT retrigger a tag-triggered workflow.
 
 - **Role in this project:** Continuous integration. PR checks run `./gradlew test` / `ktlintCheck` / `lint` on every pull request; the release workflow on push to `main` builds the APK, auto-tags, and creates a GitHub Release. Device-gated tests (`connectedAndroidTest`) stay off the fast PR path.
 - **Canonical docs:** GitHub Actions — <https://docs.github.com/en/actions> ; workflow syntax — <https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions>
@@ -278,7 +278,7 @@ If this document is missing or empty for a component the feature touches — tha
   - None new beyond the existing Gradle gates — CI is the *host* that runs `./gradlew test` / `ktlintCheck` / `lint`, not a new validator itself. Optional workflow-lint (`actionlint`) is noted below as available but not mandated for this hobby project. Source: <https://github.com/rhysd/actionlint>
 - **Idioms and constraints** (each item: rule + source URL):
   - **Trigger PR checks on `pull_request`, release on push to `main`.** `on: pull_request` runs the checks workflow for every PR; `on: push: branches: [main]` runs the release workflow when commits land on `main`. These are the two documented event triggers for the PR-gate / release split. Source: <https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#pull_request> ; <https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#push>
-  - **`actions/checkout@v4` does NOT fetch submodules by default — keep it that way.** The action's `submodules` input "defaults to `false`" and only fetches submodules when set to `true`/`recursive`. This project's `.ai-pm/tooling` is a **private SSH submodule** (`git@github.com:aadegtyarev/ai-pm-protocol.git`) that the Gradle build does **not** reference, so CI must **never** set `submodules: recursive` — doing so makes checkout attempt a private SSH fetch that has no key in CI and fails the job. The default `false` is correct. Source: <https://github.com/actions/checkout#usage>
+  - **`actions/checkout@v4` does NOT fetch submodules by default — keep it that way.** The action's `submodules` input "defaults to `false`" and only fetches submodules when set to `true`/`recursive`. This project's `.ai-dev/tooling` is a **private SSH submodule** that the Gradle build does **not** reference, so CI must **never** set `submodules: recursive` — doing so makes checkout attempt a private SSH fetch that has no key in CI and fails the job. The default `false` is correct. Source: <https://github.com/actions/checkout#usage>
   - **Set up JDK 17 (Temurin) with Gradle caching via `actions/setup-java@v4`.** Use `distribution: temurin`, `java-version: '17'`, `cache: gradle` — this matches the project's `jvmToolchain(17)` and caches Gradle dependencies/wrapper between runs. Source: <https://github.com/actions/setup-java#usage>
   - **Run Gradle through `gradle/actions/setup-gradle@v4`.** `gradle/actions/setup-gradle` supersedes the deprecated `gradle/gradle-build-action`; it configures Gradle, caches build state, and performs **Gradle wrapper validation** as a built-in (no separate `gradle/wrapper-validation-action` step needed). Source: <https://github.com/gradle/actions/blob/main/setup-gradle/README.md>
   - **Declare least-privilege `permissions:` — `contents: write` is required to push a tag or create a Release.** When a workflow sets the top-level (or job-level) `permissions:` key, "any permission that is absent ... is set to `none`." The release job that auto-tags / creates a Release therefore must explicitly grant `contents: write`; the PR-checks workflow needs only `contents: read` (or none). Source: <https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication#modifying-the-permissions-for-the-github_token> ; <https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/controlling-permissions-for-github_token>
@@ -293,7 +293,7 @@ If this document is missing or empty for a component the feature touches — tha
 
 ## Validators wired into pipeline
 
-Every validator listed here must be in the project's `Pipeline` block in `CLAUDE.md`. Pipeline runs them as mandatory gates — green pipeline means every listed validator passed.
+Every validator listed here must be in the project's Pipeline block in `AGENTS.md`. Pipeline runs them as mandatory gates — green pipeline means every listed validator passed.
 
 | Validator | Command | Gates |
 |---|---|---|
@@ -319,7 +319,7 @@ For each external system the project integrates with — what local artifact car
 
 >
 > The **public identity directory** introduced by the X25519 identity feature is part of this same WebDAV envelope contract: each directory entry carries a member's **public** Ed25519 (and/or X25519) identity key and is **Ed25519-signed** (verify with `crypto_sign_verify_detached`, reject on -1). Only public keys and signatures cross to the disk — identity **secret** keys stay Keystore-wrapped device-local (see *Android Keystore* component). Sealed-box rotation payloads (one `crypto_box_seal` per remaining member's public key) also live on the disk and must be specified in `docs/protocol/webdav-layout.md`. See the *Crypto — Public-key primitives* sub-section.
-> The WebDAV on-disk protocol layout document does **not yet exist** — it is the load-bearing contract for interoperability and must be authored before transport coding. `pm-plan-checker` should block any transport feature whose plan lacks a reference to this artifact.
+> The WebDAV on-disk protocol layout document is the load-bearing contract for interoperability. The Reviewer should block any transport feature whose plan lacks a reference to this artifact.
 >
 > The **compression codec is part of this envelope contract**, not a separate external system: the on-disk envelope must record which codec compressed the plaintext (or "none") so the reader can inflate before the recipient cannot. Compress-then-encrypt ordering and the codec identifier belong in `docs/protocol/webdav-layout.md`. See the *Traffic compression* component for the ordering invariant and the CRIME/BREACH and untrusted-decompression gotchas. Markdown rendering adds **no** integration contract — it is local UI over already-received message text.
 
@@ -327,6 +327,6 @@ For each external system the project integrates with — what local artifact car
 
 ## How to extend this document
 
-Only `pm-stack-researcher` edits this file. Other agents read it. If `pm-coder` or `pm-plan-checker` notices a missing rule or stale entry, they surface it to the orchestrator — orchestrator spawns `pm-stack-researcher` to update.
+Only the Builder (stack-researcher fold) edits this file. Other roles read it. If the Builder (coder fold) or the Reviewer notices a missing rule or stale entry, they surface it to the Orchestrator — the Orchestrator spawns a research pass to update.
 
 Each rule must cite a source URL. Unsourced claims do not belong here — they are guesses dressed as docs.

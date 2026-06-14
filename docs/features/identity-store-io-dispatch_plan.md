@@ -50,15 +50,15 @@ System behaviors (no UI — `IdentityStore` is a backend substrate; Android Keys
 
 ## Docs to update
 
-- `docs/threat-model.md` — security surface touched (`IdentityStore` wraps secret identity keys; `### Security-relevant surfaces` criterion: cryptography / key management). Verify no new threat rows needed: the change is dispatcher-routing only; the key generation, wrapping, and zeroization logic is unchanged. `pm-architect` to confirm and update the `Last reviewed` timestamp.
+- `docs/threat-model.md` — security surface touched (`IdentityStore` wraps secret identity keys; `### Security-relevant surfaces` criterion: cryptography / key management). Verify no new threat rows needed: the change is dispatcher-routing only; the key generation, wrapping, and zeroization logic is unchanged. `Builder` to confirm and update the `Last reviewed` timestamp.
 
 ## Definition of Done (backend refactor, items 1/2/4/5/7)
 
 1. All four modified scenarios pass in `connectedAndroidTest` (`./gradlew connectedAndroidTest`)
 2. `./gradlew test ktlintCheck lint` green
-4. `.ai-pm/state/current.md` → `Status: done`
+4. `(transient, deleted after ship) .ai-dev/state/current.md` → `Status: done`
 5. Commit message includes `Skips Product Contract: backend refactor, dispatcher-routing only, no user-visible behavior change`
-7. `docs/threat-model.md` updated (pm-architect confirms no new rows, updates timestamp)
+7. `docs/threat-model.md` updated (Builder confirms no new rows, updates timestamp)
 
 ## Out of scope
 

@@ -89,8 +89,8 @@ The identity persists in Keystore (shared mechanism with chat keys) and its outp
 
 ## Docs to update
 
-- **`docs/architecture.md`** (owner: `pm-architect`): record a new decision "Identity substrate (X25519 + Ed25519)" — two distinct keypairs (one identity, fingerprint over both); DH→KDF→ChatKey as the 4th key source; sealed-box as the rotation primitive (with the **sender-unauthenticated** property → the rotation feature MUST Ed25519-sign rotation payloads); identity secret keys Keystore-wrapped. Update decision #9's "follow-on" note so X25519 is recorded as **implemented** (no longer deferred). Add the `app/.../identity/` package to the File-layout module map (planned→implemented once code lands).
-- **`CLAUDE.md`** Pipeline: `connectedAndroidTest` continues as the active device gate (now also covering public-key native paths).
+- **`docs/architecture.md`** (owner: `Builder`): record a new decision "Identity substrate (X25519 + Ed25519)" — two distinct keypairs (one identity, fingerprint over both); DH→KDF→ChatKey as the 4th key source; sealed-box as the rotation primitive (with the **sender-unauthenticated** property → the rotation feature MUST Ed25519-sign rotation payloads); identity secret keys Keystore-wrapped. Update decision #9's "follow-on" note so X25519 is recorded as **implemented** (no longer deferred). Add the `app/.../identity/` package to the File-layout module map (planned→implemented once code lands).
+- **`AGENTS.md`** Pipeline: `connectedAndroidTest` continues as the active device gate (now also covering public-key native paths).
 
 ## Out of scope
 
