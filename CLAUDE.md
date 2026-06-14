@@ -104,3 +104,8 @@ Custom UI — the project builds its own chat surface in Jetpack Compose. Conven
 | `docs/features/` | Past feature plans |
 | `docs/ui-guide.md` | UI conventions (custom Compose chat UI) |
 | `docs/threat-model.md` | Security model (untrusted WebDAV transport, E2E encryption) |
+
+<!-- ai-dev:breadcrumb -->
+This project runs the **ai-dev protocol**; its active platform is **opencode** — this Claude Code session has no protocol wiring yet.
+Run `node .ai-dev/tooling/src/adapter/install.mjs . --platform claude` to wire Claude Code, then offer the Operator the platform switch (`.ai-dev/tooling/src/agents/orchestrator.md` `## Setup`, "Platform switch").
+<!-- /ai-dev:breadcrumb -->
