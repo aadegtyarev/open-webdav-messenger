@@ -7,7 +7,7 @@ import org.openwebdav.messenger.keystore.ChatKeyStorePort
 
 /**
  * The **remote-private-chat key provisioning seam** (`docs/features/x25519-identity_plan.md` → Contracts;
- * arch note `.ai-pm/arch/x25519-identity_arch.md` choice 2). A thin coordinator that establishes a private
+ * arch note (transient `.ai-dev/arch/x25519-identity_arch.md`, deleted after ship) choice 2). A thin coordinator that establishes a private
  * chat with a directory-discovered peer **using public keys alone — no secret exchanged over any channel**:
  *
  *  local [Identity] (its box secret) + a peer's box public key (from a verified [DirectoryEntry]) + a

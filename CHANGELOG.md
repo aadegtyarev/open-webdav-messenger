@@ -55,7 +55,7 @@ did not have before.
   a new threat entry (T27, source-repo secret leakage).
 - **gitleaks secret-scan CI gate.** A new `secret-scan` job in
   `.github/workflows/pr-checks.yml` (pinned gitleaks 8.30.1) scans the full git history
-  and fails the pull request on any finding. It is wired into the CLAUDE.md pipeline and
+  and fails the pull request on any finding. It is wired into the AGENTS.md pipeline and
   the `docs/stack-notes.md` validators table, and runs on every pull request.
 
 ## [0.8.5] — 2026-06-06

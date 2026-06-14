@@ -25,7 +25,7 @@ See `docs/architecture.md` for full decisions and constraints.
 ./gradlew lint
 ```
 
-See `CLAUDE.md` for AI-assisted development workflow.
+See `AGENTS.md` for AI-assisted development workflow.
 
 ## License
 

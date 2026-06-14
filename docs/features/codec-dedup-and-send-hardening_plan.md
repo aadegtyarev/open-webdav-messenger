@@ -1,6 +1,6 @@
 # codec-dedup-and-send-hardening — plan
 
-Source: audit-2026-06-06 quality sweep (`.ai-pm/audits/audit-2026-06-06.md`, `## Quality sweep` section), PM triage 2026-06-06 — findings C8 (send hardening) and A1–A4 + B5 (duplication + cleanly-removable dead code) chosen "fix now". Findings B6/B7/C9 and D10 deliberately excluded (see Out of scope).
+Source: audit-2026-06-06 quality sweep (`(transient, deleted after ship) .ai-dev/audits/audit-2026-06-06.md`, `## Quality sweep` section), PM triage 2026-06-06 — findings C8 (send hardening) and A1–A4 + B5 (duplication + cleanly-removable dead code) chosen "fix now". Findings B6/B7/C9 and D10 deliberately excluded (see Out of scope).
 
 This is an **internal-quality remediation**: a behaviour-preserving refactor plus one defensive failure-path hardening. No user-visible feature change. The overriding constraint, stated once and binding on every task below: **the coder must not edit any existing test.** Every change is either internal (private symbols, behaviour-preserving) or strictly additive, so the full existing suite compiles and passes unchanged; new tests are added for the new behaviour.
 
@@ -62,14 +62,14 @@ The codecs and `HashTag` are pure functions over input bytes (no shared mutable 
 
 ## Docs to update
 
-- `docs/architecture.md`: add a short decision/note recording the shared bounded-cursor and the `directory`/`chatdirectory` shared-core consolidation (so the dedup is a recorded structural decision, not silent), and the single-source homes for the base32 alphabet (`HashTag`) and AEAD sizes (libsodium constants). Updated by `pm-architect` post-coding.
-- `docs/threat-model.md`: **review, expected no posture change.** The shared cursor consolidates SC16-relevant parse code without weakening any bound, and C8 converts a potential crash into a typed failure (strictly safer). `pm-architect` confirms no Threat row changes (or records the C8 robustness improvement if it wants a row). Named here because the change touches a security-relevant parse + crypto-failure surface.
+- `docs/architecture.md`: add a short decision/note recording the shared bounded-cursor and the `directory`/`chatdirectory` shared-core consolidation (so the dedup is a recorded structural decision, not silent), and the single-source homes for the base32 alphabet (`HashTag`) and AEAD sizes (libsodium constants). Updated by `Builder` post-coding.
+- `docs/threat-model.md`: **review, expected no posture change.** The shared cursor consolidates SC16-relevant parse code without weakening any bound, and C8 converts a potential crash into a typed failure (strictly safer). `Builder` confirms no Threat row changes (or records the C8 robustness improvement if it wants a row). Named here because the change touches a security-relevant parse + crypto-failure surface.
 
 ## Out of scope
 
 - **C8 message-build path hardening** — `MessageEnvelope.build` → `sealEnvelope` is **not yet wired to any user-reachable send** (there is no UI / send-orchestration; `SendWriter` takes pre-sealed bytes and has no production caller that seals). Hardening the message build/send path's failure surface belongs to the **send-orchestration / UI feature** that first makes it user-reachable, where the right typed send-failure contract can be designed end-to-end (and tests written for it). This plan hardens only the two directory publish paths, which already own a typed `Failed` contract today.
-- **B6 `ChatKey.export()` removal** — called by ~30 existing tests and intended for the deferred invite/QR feature. Removing it requires editing existing tests (forbidden here) and removes a feature-intended accessor. **Accept-with-context** (recorded in `.ai-pm/backlog.md`): keep until the invite feature lands, which will either consume or retire it with its own test migration.
+- **B6 `ChatKey.export()` removal** — called by ~30 existing tests and intended for the deferred invite/QR feature. Removing it requires editing existing tests (forbidden here) and removes a feature-intended accessor. **Accept-with-context** (recorded in `.ai-dev/backlog.md`): keep until the invite feature lands, which will either consume or retire it with its own test migration.
 - **B7 `ChatPaths` gen-1 helpers** (`INBOX`, `inbox()`, 3-arg `message()`) — called only by existing sync/transport tests. Removing them requires editing those tests (forbidden here). **Accept-with-context**: revisit when the legacy transport tests are next touched.
 - **C9 `Aead.open()` zeroization gap** — the only un-wiped buffers are the recovered plaintext (which **is** the return value and must survive) and the nonce copy (**non-secret** — nonces are public). Wiping adds churn for no security gain. **Descoped** with rationale.
-- **D10 `agreeChatKey` chat-id binding** — already backlogged as a feature blocker (`.ai-pm/backlog.md`, quality-sweep D10); the consuming private-chat/directory/rotation feature owns the fix. Not touched here.
+- **D10 `agreeChatKey` chat-id binding** — already backlogged as a feature blocker (`.ai-dev/backlog.md`, quality-sweep D10); the consuming private-chat/directory/rotation feature owns the fix. Not touched here.
 - **Deferred `importRawKey` / `openSealed` raw-overload wipe consistency** — backlogged with D10; settled by the invite feature. Not touched here.
