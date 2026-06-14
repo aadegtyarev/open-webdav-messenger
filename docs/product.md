@@ -1,6 +1,6 @@
 # Product brief
 
-> The one home for **what this project is and why** — kept current; every feature grounds in it.
+> **Last reviewed:** 2026-06-14. The one home for **what this project is and why** — kept current; every feature grounds in it.
 
 ## 0. The idea — what is this product?
 

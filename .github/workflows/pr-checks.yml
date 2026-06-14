@@ -15,7 +15,7 @@ jobs:
   jvm-gates:
     runs-on: ubuntu-latest
     steps:
-      # No submodules: .ai-pm/tooling is a private SSH submodule the Gradle build does not use.
+      # No submodules: the tooling is vendored into .ai-dev/tooling/ (the Gradle build does not reference it).
       # checkout@v4 defaults to submodules: false — keep it that way (a recursive fetch has no key in CI).
       - name: Checkout
         uses: actions/checkout@v4

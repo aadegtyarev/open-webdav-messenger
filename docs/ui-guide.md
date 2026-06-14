@@ -6,74 +6,73 @@ UI conventions for this project. Read by agents before planning or reviewing any
 
 ## Interface type
 
-**What kind of UI:** <web app / native mobile / desktop / CLI / TUI / embedded display>
+**What kind of UI:** Native Android, Jetpack Compose. Custom chat surface — the project builds its own chat UI (not a library).
 
-**Target devices:** <e.g., "desktop browsers only", "iOS + Android", "480×272 touchscreen">
+**Target devices:** Android phones (primary). Tablet and landscape are not optimized in the MVP.
 
 **Adaptivity decision:**
-- Mobile: <required / not required / why>
-- Tablet: <required / not required / why>
-- Accessibility (screen readers, keyboard nav): <required / not required / why>
-
-Be explicit. "We don't need mobile" is a valid answer if it's a deliberate choice.
+- Mobile: required — phone-first design, vertical scrolling feed, bottom-anchored input.
+- Tablet: not required for MVP.
+- Accessibility: screen-reader support (TalkBack) required per Android accessibility baseline; keyboard navigation not required (touch-first).
 
 ---
 
 ## Design system
 
-**Component library:** <e.g., shadcn/ui, MUI, Bootstrap, none — custom>
+**Component library:** Jetpack Compose Material 3 — standard M3 components for sheets, buttons, text fields, dialogs. Custom composables for the chat feed, message bubbles, and chat list.
 
-**Theming:** <e.g., "CSS variables, light/dark via prefers-color-scheme", "fixed theme">
+**Theming:** Material 3 dynamic color (`MaterialTheme.colorScheme`), light + dark via system setting (`isSystemInDarkTheme()`).
 
-**Icons:** <library or convention>
+**Icons:** Material Icons Extended (`androidx.compose.material:material-icons-extended`).
 
-**Typography:** <font, scale>
+**Typography:** Material 3 default type scale. Monospace for inline code / code blocks.
 
 ---
 
 ## Layout principles
 
-- <e.g., "Max content width 1200px, centered">
-- <e.g., "Navigation always visible on desktop, bottom tab bar on mobile">
-- <e.g., "No horizontal scroll on any supported device">
-- <e.g., "Forms: single column on mobile, two columns on desktop">
+- Phone-first: single-column, vertical scroll, no horizontal scroll.
+- Chat feed: reverse-order list (newest at bottom), pinned input bar.
+- Onboarding screens: single-column centered form, progress indicator during connection setup.
+- Sheets for secondary actions (invite generation, settings); dialogs only for destructive confirmations.
+- No horizontal scroll on any screen.
 
 ---
 
 ## Interaction conventions
 
-- **Loading states:** <e.g., "Skeleton screens for content, spinner for actions">
-- **Error display:** <e.g., "Inline under field for validation, toast for system errors">
-- **Confirmation dialogs:** <e.g., "Only for destructive actions, not for saves">
-- **Empty states:** <e.g., "Always show a description and a primary action button">
+- **Loading states:** Circular progress indicator for connection setup and disk operations; shimmer placeholder for the chat feed (future).
+- **Error display:** Snackbar for transient errors (sync failures, send retries); inline text for validation errors (bad URL, empty fields).
+- **Confirmation dialogs:** Only for destructive actions (leave chat, delete local data).
+- **Empty states:** "No messages yet" with the chat name and member count in the feed; "Create a community to get started" on first launch.
+- **Back navigation:** System back button / gesture returns to the previous screen; back from the chat feed exits the app.
 
 ---
 
 ## Readability rules
 
-These exist because AI-generated UI tends toward information density and poor hierarchy.
-
-- Max content column width: <e.g., 65-70 characters for prose>
-- Minimum touch target: <e.g., 44×44px>
-- Minimum font size: <e.g., 14px body, 12px secondary>
-- Line height: <e.g., 1.5 for body text>
-- No more than 3 levels of visual hierarchy per screen
+- Max content column width: full screen width (phone).
+- Minimum touch target: 48×48dp (Android accessibility baseline).
+- Minimum font size: 14sp body, 12sp secondary/timestamp.
+- Line height: Material 3 default (1.3–1.5 depending on text style).
+- No more than 3 levels of visual hierarchy per screen.
+- Message text: left-aligned, user's own messages visually distinguished (color/alignment).
 
 ---
 
 ## Anti-patterns for this project
 
-Things that have appeared and should not recur:
-
-- <e.g., "Tables with more than 6 columns — use cards instead">
-- <e.g., "Modals for multi-step flows — use a separate page">
-- <e.g., "Custom date pickers — use native input[type=date]">
+- Do not load remote images in message content — no Coil/Glide for message rendering.
+- Do not auto-navigate links — links are displayed as text; navigation only on explicit user tap.
+- Do not use WebView for message rendering — all content is `AnnotatedString` / Compose text.
+- Do not store camera frames — QR scanner decodes in-memory, frames discarded immediately.
 
 ---
 
 ## Accessibility baseline
 
-- All images have alt text
-- Color is never the only way to convey information
-- Form inputs have visible labels (not just placeholders)
-- <add project-specific requirements>
+- All images have alt text (if any are added).
+- Color is never the only way to convey information (message status uses icons + color).
+- Form inputs have visible labels (not just placeholders).
+- TalkBack descriptions on interactive elements (send button, chat list items, invite QR).
+- Touch targets ≥48dp.
