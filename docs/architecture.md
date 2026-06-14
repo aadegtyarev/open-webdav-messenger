@@ -83,7 +83,7 @@ One line per decision. Detail in git history. OPEN items flagged (Operator to de
 3. **Aggregated sync:** shared `log/` + per-member `changes/` + retention window (replaced v1 per-recipient inbox fan-out).
 4. **Compression:** DEFLATE (`java.util.zip`), compress-then-encrypt, per-message independent, codec-id in envelope.
 5. **Markdown rendering:** hand-rolled `AnnotatedString` parser for 6 elements (smallest untrusted-input surface).
-6. **OPEN** — Polling cadence (WorkManager floor vs foreground service), static analysis (ktlint vs detekt), CI emulator for `connectedAndroidTest`.
+6. **PARTIALLY RESOLVED** — Polling: WorkManager background floor implemented, foreground-service fast mode deferred. Static analysis: ktlint chosen (detekt not used). **OPEN** — CI emulator for `connectedAndroidTest`.
 7. **Crypto substrate:** 3 key sources (random/passphrase/DH); public-chat = community-key (world-readable tier retired 2026-06-06).
 8. **Identity substrate:** Ed25519 (signing) + X25519 (box) keypairs; DH→KDF→ChatKey; sealed-box; BLAKE2b fingerprint.
 9. **Message model:** versioned TLV plaintext; per-message Ed25519 signature; reaction = first-class msg kind (0..4); reject-don't-guess.
