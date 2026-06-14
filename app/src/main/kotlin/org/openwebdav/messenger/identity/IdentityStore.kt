@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.export.ExportableIdentityStore
 import org.openwebdav.messenger.keystore.KeystoreWrapper
 import org.openwebdav.messenger.keystore.UnwrapResult
 import java.io.File
@@ -42,7 +43,7 @@ import java.nio.channels.FileLock
 class IdentityStore(
     private val context: Context,
     private val identityCrypto: IdentityCrypto,
-) {
+) : ExportableIdentityStore {
     /**
      * Load the stored identity, or — if none is stored — generate one, store it, and return it.
      *
@@ -109,7 +110,7 @@ class IdentityStore(
      * Blocking — must not be called on the main thread. Prefer [loadOrCreate] from a coroutine context.
      */
     @WorkerThread
-    fun load(): IdentityLoadResult =
+    override fun load(): IdentityLoadResult =
         when (val result = wrapper().unwrap()) {
             is UnwrapResult.None -> IdentityLoadResult.None
             is UnwrapResult.Unrecoverable -> IdentityLoadResult.Unrecoverable(result.reason, result.cause)
@@ -131,7 +132,7 @@ class IdentityStore(
 
     /** Wrap [identity]'s serialized bytes under the Keystore key and persist them atomically. Blocking — must not be called on the main thread. */
     @WorkerThread
-    fun store(identity: Identity) {
+    override fun store(identity: Identity) {
         val serialized = Identity.serialize(identity)
         try {
             wrapper().wrap(serialized)

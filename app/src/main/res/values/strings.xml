@@ -5,4 +5,28 @@
     <string name="fast_poll_channel_description">Shown when fast polling is active</string>
     <string name="fast_poll_notification_title">Open WebDAV Messenger</string>
     <string name="fast_poll_notification_text">Checking for messages every %d min</string>
+
+    <!-- Export / Restore -->
+    <string name="export_restore_title">Backup &amp; Restore</string>
+    <string name="export_tab">Export</string>
+    <string name="restore_tab">Restore</string>
+    <string name="export_description">Create a password-encrypted backup of your account secrets. Save the blob somewhere safe — you will need it and the password to restore on a new device.</string>
+    <string name="export_password_hint">Backup password (min 8 characters)</string>
+    <string name="export_password_confirm_hint">Confirm backup password</string>
+    <string name="export_button_label">Export account</string>
+    <string name="restore_description">Paste an export blob and enter its password to restore your account on this device.</string>
+    <string name="restore_blob_hint">Paste export blob here</string>
+    <string name="restore_password_hint">Export password</string>
+    <string name="restore_button_label">Restore account</string>
+    <string name="export_success">Export ready. Sharing…</string>
+    <string name="export_weak_password">Password must be at least 8 characters.</string>
+    <string name="export_mismatch">Passwords do not match.</string>
+    <string name="export_error">Export failed. Please try again.</string>
+    <string name="restore_success">Account restored successfully.</string>
+    <string name="restore_bad_format">This doesn\'t look like a valid export blob.</string>
+    <string name="restore_wrong_password">Wrong password or the blob was tampered with.</string>
+    <string name="restore_corrupt">The export data is corrupt and cannot be restored.</string>
+    <string name="restore_weak_password">Password must be at least 8 characters.</string>
+    <string name="restore_error">Restore failed. Please try again.</string>
+    <string name="no_secrets_to_export">Nothing to export — no account secrets are stored on this device.</string>
 </resources>
