@@ -98,6 +98,7 @@ private fun AppNav() {
         Screen.Feed ->
             ChatFeedScreen(
                 onShowInvite = { screen = Screen.Invite },
+                onBack = { screen = Screen.CommunityList },
             )
 
         Screen.Invite ->

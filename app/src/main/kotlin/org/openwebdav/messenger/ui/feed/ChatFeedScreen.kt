@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.PersonAdd
@@ -60,6 +61,7 @@ import org.openwebdav.messenger.ui.FeedViewModelFactory
 @Composable
 internal fun ChatFeedScreen(
     onShowInvite: () -> Unit,
+    onBack: () -> Unit = {},
     viewModel: ChatFeedViewModel = viewModel(factory = FeedViewModelFactory),
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
@@ -79,6 +81,11 @@ internal fun ChatFeedScreen(
         topBar = {
             TopAppBar(
                 title = { Text(viewModel.communityName) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
                 actions = {
                     IconButton(onClick = onShowInvite) {
                         Icon(Icons.Filled.PersonAdd, contentDescription = "Invite someone")
