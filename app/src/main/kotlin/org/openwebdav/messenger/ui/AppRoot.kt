@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.ui.communities.CommunityListScreen
 import org.openwebdav.messenger.ui.feed.ChatFeedScreen
 import org.openwebdav.messenger.ui.invite.InviteScreen
 import org.openwebdav.messenger.ui.onboarding.CreateCommunityScreen
@@ -55,8 +56,15 @@ internal fun AppRoot() {
 @Composable
 private fun AppNav() {
     val startAlreadyJoined = remember { AppContainer.runtimeGraph() != null }
+    val hasCommunities = remember { AppContainer.communities().isNotEmpty() }
     var screen: Screen by remember {
-        mutableStateOf(if (startAlreadyJoined) Screen.Feed else Screen.Start)
+        mutableStateOf(
+            when {
+                startAlreadyJoined -> Screen.Feed
+                hasCommunities -> Screen.CommunityList
+                else -> Screen.Start
+            },
+        )
     }
 
     when (screen) {
@@ -66,15 +74,24 @@ private fun AppNav() {
                 onJoin = { screen = Screen.Join },
             )
 
+        Screen.CommunityList ->
+            CommunityListScreen(
+                onSelectCommunity = {
+                    // TODO: switch to the selected community's graph
+                    screen = Screen.Feed
+                },
+                onCreate = { screen = Screen.CreateCommunity },
+            )
+
         Screen.CreateCommunity ->
             CreateCommunityScreen(
-                onCreated = { screen = Screen.Feed },
+                onCreated = { screen = Screen.CommunityList },
                 onBack = { screen = Screen.Start },
             )
 
         Screen.Join ->
             JoinScreen(
-                onJoined = { screen = Screen.Feed },
+                onJoined = { screen = Screen.CommunityList },
                 onBack = { screen = Screen.Start },
             )
 
@@ -93,7 +110,7 @@ private fun AppNav() {
 /** The thin nav graph for this slice: the first-launch fork, the two onboarding screens, the feed + invite. */
 private sealed interface Screen {
     data object Start : Screen
-
+    data object CommunityList : Screen
     data object CreateCommunity : Screen
 
     data object Join : Screen
