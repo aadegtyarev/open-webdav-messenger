@@ -1,7 +1,9 @@
 package org.openwebdav.messenger.app
 
 import android.content.Context
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
@@ -162,6 +164,14 @@ internal object AppContainer {
                 identity: Identity,
             ) {
                 EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity)
+                // Register ourselves in the disk roster (async, best-effort).
+                kotlinx.coroutines.GlobalScope.launch {
+                    try {
+                        RosterService(TransportFactory.create(config)).addMyself(
+                            org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
+                        )
+                    } catch (_: Exception) { /* best-effort */ }
+                }
             }
 
             override suspend fun checkFolder(
