@@ -37,6 +37,11 @@ internal class SendWriter(private val transport: WebDavTransport) {
         if (!ensure("")) {
             return SendOutcome(logWritten = false, notifiedMembers = 0, pendingMembers = otherMembers.size)
         }
+        // Ensure the shared log/ parent exists before creating per-chat subdirectories.
+        // Yandex.Disk requires every intermediate collection to exist as a WebDAV collection.
+        if (!ensure(ChatPaths.LOG)) {
+            return SendOutcome(logWritten = false, notifiedMembers = 0, pendingMembers = otherMembers.size)
+        }
         val logWritten = writeLog(chatId, orderToken, envelopeBytes)
         if (!logWritten) {
             // No log entry on disk → there is nothing to notify about yet; report all members pending
