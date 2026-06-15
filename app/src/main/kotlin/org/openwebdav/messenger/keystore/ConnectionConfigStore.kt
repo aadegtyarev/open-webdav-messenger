@@ -32,18 +32,19 @@ internal class ConnectionConfigStore(
         config: ConnectionConfig,
         chatId: String,
         communityName: String,
+        communityId: String = DEFAULT_COMMUNITY_ID,
     ) {
         val serialized = serialize(config, chatId, communityName)
         try {
-            wrapper().wrap(serialized)
+            wrapper(communityId).wrap(serialized)
         } finally {
             serialized.fill(0)
         }
     }
 
-    /** Load the stored config + joined-chat marker, or `null` if none is stored or the blob is unrecoverable. */
-    fun loadStored(): StoredConnection? =
-        when (val result = wrapper().unwrap()) {
+    /** Load the stored config for [communityId], or `null`. */
+    fun loadStored(communityId: String): StoredConnection? =
+        when (val result = wrapper(communityId).unwrap()) {
             is UnwrapResult.None -> null
             is UnwrapResult.Unrecoverable -> null
             is UnwrapResult.Unwrapped -> {
@@ -56,6 +57,9 @@ internal class ConnectionConfigStore(
             }
         }
 
+    /** Legacy: load the first/default stored config. */
+    fun loadStored(): StoredConnection? = loadStored(DEFAULT_COMMUNITY_ID)
+
     /** ExportableConnectionConfigStore: load just the [ConnectionConfig], discarding chatId/communityName. */
     override fun load(): ConnectionConfig? = loadStored()?.config
 
@@ -65,18 +69,23 @@ internal class ConnectionConfigStore(
     }
 
     /** Whether a wrapped config blob exists. */
-    fun has(): Boolean = wrapper().exists()
+    fun has(): Boolean = has(DEFAULT_COMMUNITY_ID)
 
-    /** Delete the stored config (e.g. on an explicit reset). */
-    fun clear() {
-        wrapper().delete()
-    }
+    fun has(communityId: String): Boolean = wrapper(communityId).exists()
 
-    private fun wrapper(): KeystoreWrapper = KeystoreWrapper(WRAP_KEY_ALIAS, File(configDir(), CONFIG_FILE))
+    /** Delete the stored config. */
+    fun clear() = clear(DEFAULT_COMMUNITY_ID)
+
+    fun clear(communityId: String) =
+        wrapper(communityId).delete()
+
+    private fun wrapper(communityId: String): KeystoreWrapper =
+        KeystoreWrapper("${WRAP_KEY_ALIAS}.$communityId", File(configDir(), "$CONFIG_FILE-$communityId"))
 
     private fun configDir(): File = File(context.filesDir, CONFIG_DIR).apply { mkdirs() }
 
     companion object {
+        const val DEFAULT_COMMUNITY_ID = "default"
         /** Distinct from the chat-key (`owdm.chatkey.wrap.v1`) and identity (`owdm.identity.wrap.v1`) aliases. */
         private const val WRAP_KEY_ALIAS = "owdm.connconfig.wrap.v1"
         private const val CONFIG_DIR = "connconfig"

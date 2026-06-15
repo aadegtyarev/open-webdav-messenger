@@ -10,7 +10,9 @@ import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
+import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
+import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
@@ -34,6 +36,7 @@ internal object AppContainer {
     private val crypto by lazy { CryptoFactory() }
     private val identityFactory by lazy { IdentityFactory() }
     private val configStore by lazy { ConnectionConfigStore(requireContext()) }
+    private val communityRegistry by lazy { CommunityRegistry(requireContext()) }
     private val warmStarted = AtomicBoolean(false)
 
     /**
@@ -72,6 +75,9 @@ internal object AppContainer {
 
     /** The composed onboarding service (owner-create / member-join). */
     fun onboarding(): OnboardingService = OnboardingService(productionOnboardingDeps())
+
+    /** All joined communities from the registry. */
+    fun communities(): List<CommunityRegistry.Entry> = communityRegistry.all()
 
     /** The live engine graph for the joined chat, or `null` if nothing is joined yet. */
     fun runtimeGraph(): RuntimeGraph? = EngineWiring.current()
@@ -115,7 +121,9 @@ internal object AppContainer {
                 chatId: String,
                 communityName: String,
             ) {
-                configStore.save(config, chatId, communityName)
+                // Use chatId as communityId for simplicity — one community = one chat.
+                configStore.save(config, chatId, communityName, communityId = chatId)
+                communityRegistry.add(CommunityRegistry.Entry(chatId, communityName, chatId))
             }
 
             override suspend fun ensureIdentity(): Identity = identityFactory.identityStore(requireContext()).loadOrCreate()
