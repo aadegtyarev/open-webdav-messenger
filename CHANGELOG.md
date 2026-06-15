@@ -4,8 +4,7 @@ All notable changes to Open WebDAV Messenger are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
-surface is not stable, and minor versions may change behavior freely.
+Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
 ## [0.14.0] — 2026-06-15
 
@@ -27,6 +26,46 @@ surface is not stable, and minor versions may change behavior freely.
   reducing bandwidth on rate-limited WebDAV transport. 1 MiB decompression bound guards
   against zip-bombs. Per-message independent compression prevents CRIME/BREACH-class leaks.
   New `app/.../codec/` module (CompressionCodec, DeflateCodec, Codec enum).
+
+## [0.11.0] — 2026-06-14
+
+### Added
+
+- **Local Room DB encryption** — chat history is now encrypted at rest using
+  SQLCipher (AES-256-CBC via `net.zetetic:android-database-sqlcipher`). The
+  database passphrase is derived from the user's master key, so storage-level
+  access (device seizure, backup leak) reveals no plaintext messages. The Room
+  `SupportFactory` is replaced with `SupportFactory(passphrase)` at open time;
+  existing unencrypted databases are migrated on first open.
+
+## [0.12.0] — 2026-06-14
+
+### Added
+
+- **Foreground service for sub-15-minute polling** — an opt-in `FastPollService`
+  that keeps a foreground notification alive, allowing WorkManager periodic sync
+  to run at intervals shorter than the platform's 15-minute minimum for
+  non-foreground work. The user sees a persistent "listening for messages"
+  notification; the interval is configurable. `SyncScheduler` and
+  `FastPollManager` coordinate the transition between background and foreground
+  polling modes.
+
+### Changed
+
+- `AndroidManifest.xml` now declares `FOREGROUND_SERVICE_DATA_SYNC` permission
+  and `POST_NOTIFICATIONS`.
+
+## [0.13.0] — 2026-06-14
+
+### Added
+
+- **Account export and restore** — the user can export their entire local state
+  (identity, rooms, messages, config) as a password-encrypted, zlib-compressed,
+  integrity-checked blob (`ExportPayload`). Importing the blob on a new device
+  restores the full account, enabling device-loss recovery without server-side
+  backup. The format carries a version marker and is guarded by an Argon2id KDF
+  against brute-force. New `export/` module (ExportManager, RestoreManager,
+  ExportPayload, ExportableStores).
 
 ## [0.9.0] — 2026-06-06
 
