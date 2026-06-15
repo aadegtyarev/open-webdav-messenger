@@ -37,6 +37,7 @@ class PollCycleTest {
     private val envelope: MessageEnvelope = SyncTestSupport.messageEnvelope()
 
     private val me = "bob"
+    private val chatId = SyncTestSupport.CHAT_ID
     private val sub = listOf(ChatSubscription(SyncTestSupport.CHAT_ID))
 
     @Before
@@ -74,7 +75,7 @@ class PollCycleTest {
     ): SyncTestSupport.SealedEntry {
         val msg = SyncTestSupport.text(sender, body = body, replyTo = replyTo)
         val entry = SyncTestSupport.sealedLogEntry(msg, key, sender, "alice", ts = ts, seq = seq)
-        disk.putFile(ChatPaths.message(entry.orderToken, entry.bytes), entry.bytes)
+        disk.putFile(ChatPaths.message(chatId, entry.orderToken, entry.bytes), entry.bytes)
         val indexPath = ChatPaths.changeIndex(me, SyncTestSupport.CHAT_ID)
         disk.putFile("$indexPath/${SyncTestSupport.changeEntryName(SyncTestSupport.CHAT_ID, entry.orderToken)}", byteArrayOf(0))
         return entry

@@ -34,6 +34,7 @@ class PollInteractionTest {
     private val key: ChatKey = SyncTestSupport.fixedChatKey()
     private val envelope: MessageEnvelope = SyncTestSupport.messageEnvelope()
     private val me = "bob"
+    private val chatId = SyncTestSupport.CHAT_ID
     private val sub = listOf(ChatSubscription(SyncTestSupport.CHAT_ID))
 
     @Before
@@ -62,7 +63,7 @@ class PollInteractionTest {
         ts: Long = 1_717_000_000_000L,
     ): SyncTestSupport.SealedEntry {
         val entry = SyncTestSupport.sealedLogEntry(SyncTestSupport.text(sender, body = body), key, sender, "alice", ts = ts, seq = seq)
-        disk.putFile(ChatPaths.message(entry.orderToken, entry.bytes), entry.bytes)
+        disk.putFile(ChatPaths.message(chatId, entry.orderToken, entry.bytes), entry.bytes)
         val indexPath = ChatPaths.changeIndex(me, SyncTestSupport.CHAT_ID)
         disk.putFile("$indexPath/${SyncTestSupport.changeEntryName(SyncTestSupport.CHAT_ID, entry.orderToken)}", byteArrayOf(0))
         return entry
@@ -76,7 +77,7 @@ class PollInteractionTest {
             // A tampered file: valid §2 name but bytes that do not match the hash → transport NotReady
             // → skipped. We forge a name with a valid grammar but garbage body under the SAME log/.
             val tamperedName = good1.name.dropLast(1) + (if (good1.name.last() == 'a') 'b' else 'a')
-            disk.putFile("${ChatPaths.LOG}/$tamperedName", byteArrayOf(1, 2, 3, 4, 5))
+            disk.putFile("${ChatPaths.logDir(chatId)}/$tamperedName", byteArrayOf(1, 2, 3, 4, 5))
             val indexPath = ChatPaths.changeIndex(me, SyncTestSupport.CHAT_ID)
             val tamperedToken = org.openwebdav.messenger.protocol.MessageId.splitMessageId(tamperedName)!!.first
             disk.putFile("$indexPath/${SyncTestSupport.changeEntryName(SyncTestSupport.CHAT_ID, tamperedToken)}", byteArrayOf(0))
@@ -107,7 +108,7 @@ class PollInteractionTest {
                     ts = 2_000_000_000_000L,
                     seq = 2,
                 )
-            disk.putFile(ChatPaths.message(foreign.orderToken, foreign.bytes), foreign.bytes)
+            disk.putFile(ChatPaths.message(chatId, foreign.orderToken, foreign.bytes), foreign.bytes)
             val indexPath = ChatPaths.changeIndex(me, SyncTestSupport.CHAT_ID)
             disk.putFile("$indexPath/${SyncTestSupport.changeEntryName(SyncTestSupport.CHAT_ID, foreign.orderToken)}", byteArrayOf(0))
 
@@ -125,7 +126,7 @@ class PollInteractionTest {
             val first = publish("m1", seq = 1, ts = 1_000_000_000_000L)
             val second = publish("m2", seq = 2, ts = 2_000_000_000_000L)
             // Force the GET of m2 to 429 → the cycle backs off AFTER persisting m1, BEFORE m2.
-            disk.failGet["${ChatPaths.LOG}/${second.name}"] = 429
+            disk.failGet["${ChatPaths.logDir(chatId)}/${second.name}"] = 429
 
             val outcome = engine().pollCycle(me, sub)
 

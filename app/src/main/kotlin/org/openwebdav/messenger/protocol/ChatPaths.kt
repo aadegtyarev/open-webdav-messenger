@@ -38,16 +38,19 @@ internal object ChatPaths {
     /**
      * §2/§3 (generation 1, superseded): the content-addressed message path under a v1 inbox path.
      * Retained for the predating transport-feature tests; the generation-2 app uses [message]
-     * (one arg pair) to write into the shared `log/`.
+     * (with chatId) to write into the per-chat `log/<chatId>/`.
      */
-    fun message(
+    fun v1Message(
         inboxPath: String,
         orderToken: String,
         fileBytes: ByteArray,
     ): String = "$inboxPath/${MessageId.messageId(orderToken, fileBytes)}"
 
-    /** §1.2: `log/` — the one shared per-chat message log. */
+    /** §1.2: `log/` — the log parent directory. Use [logDir] for per-chat subfolders. */
     const val LOG = "log"
+
+    /** §1.2: `log/<chatId>/` — the per-chat message log subfolder. */
+    fun logDir(chatId: String): String = "$LOG/$chatId"
 
     /** §1: `changes/` — parent of all per-member change indices. */
     const val CHANGES = "changes"
@@ -70,13 +73,14 @@ internal object ChatPaths {
     ): String = "$changeIndexPath/${ChangeEntry.name(chatId, orderToken)}"
 
     /**
-     * §2/§3: the content-addressed message path inside the shared `log/`.
+     * §2/§3: the content-addressed message path inside the per-chat `log/<chatId>/`.
      * The file name **is** the message-id = `order-token "~" content-hash(fileBytes)`.
      *
      * @param fileBytes the exact framed envelope bytes that will be PUT (the hash is over these).
      */
     fun message(
+        chatId: String,
         orderToken: String,
         fileBytes: ByteArray,
-    ): String = "$LOG/${MessageId.messageId(orderToken, fileBytes)}"
+    ): String = "${logDir(chatId)}/${MessageId.messageId(orderToken, fileBytes)}"
 }

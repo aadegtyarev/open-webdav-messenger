@@ -104,7 +104,7 @@ class MessageSendServiceTest {
             assertEquals("hello world", rows.single().body)
             assertEquals(result.messageId, rows.single().messageId)
             // Exactly one shared-log file; NO change-index notes (roster is [self] only).
-            assertEquals(1, disk.fileNames(ChatPaths.LOG).size)
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
         }
 
     /**

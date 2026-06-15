@@ -15,6 +15,8 @@ import org.openwebdav.messenger.app.OnboardingService
  * engine reconfigure — behind [OnboardingService] (off the UI thread). The composable only renders the
  * hoisted [UiState] and raises field/submit events; no I/O or KDF runs in the composable (stack-notes
  * Compose). A non-HTTPS URL is refused **before any persist** (SC13) and surfaces as an inline error.
+ *
+ * The folder on the WebDAV disk is auto-generated from a hash — no manual folder field.
  */
 internal class CreateCommunityViewModel(
     private val onboarding: OnboardingService,
@@ -27,8 +29,6 @@ internal class CreateCommunityViewModel(
     fun onUsername(v: String) = _state.update { it.copy(username = v, generalError = null) }
 
     fun onAppPassword(v: String) = _state.update { it.copy(appPassword = v, generalError = null) }
-
-    fun onChatRoot(v: String) = _state.update { it.copy(chatRoot = v, generalError = null) }
 
     fun onCommunityName(v: String) = _state.update { it.copy(communityName = v, generalError = null) }
 
@@ -47,7 +47,7 @@ internal class CreateCommunityViewModel(
                         baseUrl = s.baseUrl,
                         username = s.username,
                         appPassword = s.appPassword,
-                        chatRoot = s.chatRoot,
+                        chatRoot = "",
                         communityName = s.communityName,
                     )
                 } catch (_: Exception) {
@@ -57,6 +57,12 @@ internal class CreateCommunityViewModel(
             when (result) {
                 is OnboardingService.CreateResult.CleartextRefused ->
                     _state.update { it.copy(submitting = false, urlError = HTTPS_REQUIRED_MESSAGE) }
+
+                is OnboardingService.CreateResult.FolderOccupied ->
+                    _state.update { it.copy(submitting = false, generalError = FOLDER_OCCUPIED_MESSAGE) }
+
+                is OnboardingService.CreateResult.FolderError ->
+                    _state.update { it.copy(submitting = false, generalError = result.message) }
 
                 is OnboardingService.CreateResult.Created -> {
                     _state.update { it.copy(submitting = false) }
@@ -74,7 +80,6 @@ internal class CreateCommunityViewModel(
         val baseUrl: String = "",
         val username: String = "",
         val appPassword: String = "",
-        val chatRoot: String = "",
         val communityName: String = "",
         val submitting: Boolean = false,
         val urlError: String? = null,
@@ -96,5 +101,8 @@ internal class CreateCommunityViewModel(
 
         /** Plain-language message when create fails (disk unreachable / device error). */
         const val CREATE_FAILED_MESSAGE = "Couldn't create the community right now — check your details and try again."
+
+        /** The folder already has files — refuse to write into someone else's space. */
+        const val FOLDER_OCCUPIED_MESSAGE = "This folder already has files in it — pick a different one to avoid mixing up communities."
     }
 }

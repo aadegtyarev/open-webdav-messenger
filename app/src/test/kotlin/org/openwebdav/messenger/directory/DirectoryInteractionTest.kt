@@ -21,6 +21,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE)
 class DirectoryInteractionTest {
+    private val chatId = "chat-1"
     private lateinit var server: MockWebServer
     private lateinit var disk: DirectoryFakeDisk
 
@@ -120,7 +121,7 @@ class DirectoryInteractionTest {
 
             // Every file the directory wrote sits under `directory/`; none under any chat collection.
             assertTrue(disk.fileNames(DirectoryPaths.DIRECTORY).isNotEmpty())
-            assertTrue("no chat log/ touched", disk.fileNames(ChatPaths.LOG).isEmpty())
+            assertTrue("no chat log/ touched", disk.fileNames(ChatPaths.logDir(chatId)).isEmpty())
             assertTrue("no chat changes/ touched", disk.fileNames(ChatPaths.CHANGES).isEmpty())
             assertTrue("no chat meta/ touched", disk.fileNames(ChatPaths.META).isEmpty())
         }

@@ -42,6 +42,7 @@ class CursorContiguousPrefixTest {
     private val key: ChatKey = SyncTestSupport.fixedChatKey()
     private val envelope: MessageEnvelope = SyncTestSupport.messageEnvelope()
     private val me = "bob"
+    private val chatId = SyncTestSupport.CHAT_ID
     private val sub = listOf(ChatSubscription(SyncTestSupport.CHAT_ID))
 
     @Before
@@ -71,7 +72,7 @@ class CursorContiguousPrefixTest {
         chatKey: ChatKey = key,
     ): SyncTestSupport.SealedEntry {
         val entry = SyncTestSupport.sealedLogEntry(SyncTestSupport.text(sender, body = body), chatKey, sender, "alice", ts = ts, seq = seq)
-        disk.putFile(ChatPaths.message(entry.orderToken, entry.bytes), entry.bytes)
+        disk.putFile(ChatPaths.message(chatId, entry.orderToken, entry.bytes), entry.bytes)
         markChanged(entry.orderToken)
         return entry
     }
@@ -93,7 +94,7 @@ class CursorContiguousPrefixTest {
             val m002 = publish("m002", seq = 1, ts = 1_000_000_000_000L)
             val m003 = publish("m003", seq = 2, ts = 2_000_000_000_000L)
             // 002's upload is still settling on the disk → its GET is not-ready (404) this cycle.
-            disk.failGet["${ChatPaths.LOG}/${m002.name}"] = 404
+            disk.failGet["${ChatPaths.logDir(chatId)}/${m002.name}"] = 404
 
             val first = engine().pollCycle(me, sub)
 
@@ -133,7 +134,7 @@ class CursorContiguousPrefixTest {
                     ts = 1_000_000_000_000L,
                     seq = 1,
                 )
-            disk.putFile(ChatPaths.message(forged.orderToken, forged.bytes), forged.bytes)
+            disk.putFile(ChatPaths.message(chatId, forged.orderToken, forged.bytes), forged.bytes)
             markChanged(forged.orderToken)
             val good = publish("good-high", seq = 2, ts = 2_000_000_000_000L)
 
@@ -168,7 +169,7 @@ class CursorContiguousPrefixTest {
             val deflateFramed = Envelope.frame(Envelope.CODEC_DEFLATE, plaintextBlob)
             val token = OrderToken.build(1_000_000_000_000L, "alice", 7)
             val name = MessageId.messageId(token, deflateFramed) // content-hash over the real bytes → Ready
-            disk.putFile("${ChatPaths.LOG}/$name", deflateFramed)
+            disk.putFile("${ChatPaths.logDir(chatId)}/$name", deflateFramed)
             markChanged(token)
 
             val outcome = engine().pollCycle(me, sub)

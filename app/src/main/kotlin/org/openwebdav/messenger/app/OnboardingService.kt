@@ -10,6 +10,7 @@ import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.transport.ConnectionConfig
+import java.security.MessageDigest
 
 /**
  * The owner-create and member-join onboarding logic (`ui-chat-surface` plan Scenarios 1–4; arch note
@@ -34,10 +35,12 @@ internal class OnboardingService(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /**
-     * Owner create-community (Scenario 1): refuse a non-HTTPS URL; otherwise ensure the identity, mint a
-     * fresh random chat key + a fresh chat-id, persist config + Keystore-wrap the key, auto-create the one
-     * community chat (= the chat-id just minted — there is no separate create-chat step), and reconfigure
-     * the engine. Returns the joined-chat coordinates for navigation to the feed.
+     * Owner create-community (Scenario 1): refuse a non-HTTPS URL; otherwise ensure the identity, resolve
+     * the chat-root folder (auto-generate a hash-based name when blank, refuse an occupied folder), mint a
+     * fresh random chat key + a fresh chat-id, create the folder on the WebDAV disk, persist config +
+     * Keystore-wrap the key, auto-create the one community chat (= the chat-id just minted — there is no
+     * separate create-chat step), and reconfigure the engine. Returns the joined-chat coordinates for
+     * navigation to the feed.
      */
     suspend fun createCommunity(
         baseUrl: String,
@@ -48,18 +51,27 @@ internal class OnboardingService(
     ): CreateResult =
         withContext(ioDispatcher) {
             if (!isHttps(baseUrl)) return@withContext CreateResult.CleartextRefused
+            val root = generateFolderName(baseUrl.trim(), communityName.trim())
+            // Always nest under the shared parent folder so multiple communities coexist cleanly.
+            val fullRoot = "$PARENT_FOLDER/$root"
             val config =
                 ConnectionConfig(
                     baseUrl = baseUrl.trim(),
                     username = username.trim(),
                     appPassword = appPassword,
-                    chatRoot = chatRoot.trim(),
+                    chatRoot = fullRoot,
                 )
+            // Check if the folder already exists and has content — refuse to write into an occupied folder.
+            when (val folderCheck = deps.checkFolder(config, fullRoot)) {
+                is FolderCheck.Occupied -> return@withContext CreateResult.FolderOccupied
+                is FolderCheck.Error -> return@withContext CreateResult.FolderError(folderCheck.message)
+                is FolderCheck.Ok -> { /* proceed */ }
+            }
             val identity = deps.ensureIdentity()
             val chatId = deps.newChatId()
             val chatKey = deps.keySources().newRandomKey()
             persistAndReconfigure(config, chatId, communityName.trim(), chatKey, identity)
-            CreateResult.Created(chatId, communityName.trim())
+            CreateResult.Created(chatId, communityName.trim(), fullRoot)
         }
 
     /**
@@ -113,6 +125,12 @@ internal class OnboardingService(
 
         fun chatKeyStore(): ChatKeyStorePort
 
+        /** Check whether [root] is safe for a new community (empty or non-existent) and create it via MKCOL. */
+        suspend fun checkFolder(
+            config: ConnectionConfig,
+            root: String,
+        ): FolderCheck
+
         /** Persist the config + joined-chat marker (Keystore-wrapped in production; SC4). */
         fun saveConfig(
             config: ConnectionConfig,
@@ -133,13 +151,42 @@ internal class OnboardingService(
         )
     }
 
+    sealed interface FolderCheck {
+        data object Ok : FolderCheck
+
+        data object Occupied : FolderCheck
+
+        data class Error(val message: String) : FolderCheck
+    }
+
+    /** Generate a collision-resistant folder name: `owdm-` + 16 hex chars of SHA-256(baseUrl + communityName). */
+    private fun generateFolderName(
+        baseUrl: String,
+        communityName: String,
+    ): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update("$baseUrl:$communityName".toByteArray(Charsets.UTF_8))
+        val hex = digest.digest().take(8).joinToString("") { "%02x".format(it) }
+        return "owdm-$hex"
+    }
+
     /** Owner create-community outcome. */
     sealed interface CreateResult {
         /** Created the community + its one chat; [chatId] / [communityName] for navigation to the feed. */
-        data class Created(val chatId: String, val communityName: String) : CreateResult
+        data class Created(
+            val chatId: String,
+            val communityName: String,
+            val folderName: String,
+        ) : CreateResult
 
         /** The URL was not HTTPS — refused before any persist (SC13). */
         data object CleartextRefused : CreateResult
+
+        /** The auto-generated folder already contains files — refuse to write into an occupied space. */
+        data object FolderOccupied : CreateResult
+
+        /** Cannot access or create the folder on the disk (network, permissions, etc.). */
+        data class FolderError(val message: String) : CreateResult
     }
 
     /** Member join outcome — carries NO disk credentials (Must not break: member never sees them). */
@@ -149,5 +196,10 @@ internal class OnboardingService(
 
         /** The invite was not a valid `owdm1:` token (foreign QR / garbled / cleartext disk) — clean error. */
         data object Invalid : JoinResult
+    }
+
+    private companion object {
+        /** Shared parent folder on the WebDAV disk — all community hash-folders live inside it. */
+        const val PARENT_FOLDER = "openmsg"
     }
 }

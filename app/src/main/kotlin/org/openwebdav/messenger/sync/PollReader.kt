@@ -58,15 +58,13 @@ internal class PollReader(
         // optimization while still listing the log at most ONCE per cycle (review finding 2).
         val toDrain = subscriptions.filter { needsDrain(it, coordinates[it.chatTag]) }
         if (toDrain.isEmpty()) return acc
-        val logEntries =
-            when (val listed = transport.list(ChatPaths.LOG)) {
-                is WebDavResult.Success -> listed.value
-                // A failed log listing (429/timeout/error) backs off the whole cycle; the cursor is
-                // unmoved (nothing fetched), so the next run resumes from exactly here (§9.3 / §6).
-                else -> return backedOffOutcome(listed)
-            }
         for (sub in toDrain) {
-            val target = coordinates[sub.chatTag] // null = no change-index entry → full-log fallback
+            val logEntries =
+                when (val listed = transport.list(ChatPaths.logDir(sub.chatId))) {
+                    is WebDavResult.Success -> listed.value
+                    else -> return backedOffOutcome(listed)
+                }
+            val target = coordinates[sub.chatTag]
             acc += drainChat(sub, target, logEntries)
             if (acc.backedOff) break // stop the cycle on a transport back-off; resume next run (§9.3)
         }
@@ -180,7 +178,7 @@ internal class PollReader(
         val prefix = CursorPrefix(store.cursorFor(chatId))
         for (name in pending) {
             val orderToken = MessageId.splitMessageId(name)?.first ?: continue
-            when (val step = fetchOne(name, chatKey)) {
+            when (val step = fetchOne(chatId, name, chatKey)) {
                 is FetchStep.Persisted -> {
                     if (step.inserted) newCount++
                     // Persisted/dedup or a permanent Rejected both RESOLVE the coordinate: the cursor may
@@ -211,10 +209,11 @@ internal class PollReader(
 
     /** Fetch + validate one log entry into a typed [FetchStep]; the chat key is loaded once per chat. */
     private suspend fun fetchOne(
+        chatId: String,
         name: String,
         chatKey: ChatKey,
     ): FetchStep {
-        val path = "${ChatPaths.LOG}/$name"
+        val path = "${ChatPaths.logDir(chatId)}/$name"
         return when (val read = transport.read(path, name)) {
             is WebDavResult.Success ->
                 when (val r = read.value) {

@@ -60,6 +60,11 @@ class OnboardingServiceTest {
             reconfiguredChatId = chatId
             reconfiguredKey = chatKey
         }
+
+        override suspend fun checkFolder(
+            config: ConnectionConfig,
+            root: String,
+        ): OnboardingService.FolderCheck = OnboardingService.FolderCheck.Ok
     }
 
     private fun service(deps: OnboardingService.Deps) = OnboardingService(deps, ioDispatcher = Dispatchers.Unconfined)

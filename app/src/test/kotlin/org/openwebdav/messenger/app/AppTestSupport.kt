@@ -2,6 +2,7 @@ package org.openwebdav.messenger.app
 
 import com.goterl.lazysodium.LazySodiumJava
 import com.goterl.lazysodium.SodiumJava
+import okhttp3.OkHttpClient
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
@@ -12,6 +13,7 @@ import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.transport.ConnectionConfig
+import org.openwebdav.messenger.transport.Delayer
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -46,8 +48,8 @@ internal object AppTestSupport {
         chatId: String,
         chatKey: ChatKey,
         communityName: String,
-    ): String =
-        InviteCodec().encode(
+    ): String {
+        val token =
             InviteToken(
                 baseUrl = config.baseUrl,
                 username = config.username,
@@ -56,8 +58,13 @@ internal object AppTestSupport {
                 chatId = chatId,
                 chatKey = chatKey.export(),
                 communityName = communityName,
-            ),
-        )
+            )
+        return InviteCodec().encode(token)
+    }
+
+    fun testClient(): OkHttpClient = OkHttpClient.Builder().build()
+
+    fun instantDelayer(): Delayer = Delayer { /* no delay in tests */ }
 }
 
 /**
@@ -105,6 +112,11 @@ internal class RecordingOnboardingDeps(
         reconfiguredChatId = chatId
         reconfiguredKey = chatKey
     }
+
+    override suspend fun checkFolder(
+        config: ConnectionConfig,
+        root: String,
+    ): OnboardingService.FolderCheck = OnboardingService.FolderCheck.Ok
 }
 
 /** JVM in-memory [ChatKeyStorePort] — the same seam `ChatKeyStore` implements on device. */
