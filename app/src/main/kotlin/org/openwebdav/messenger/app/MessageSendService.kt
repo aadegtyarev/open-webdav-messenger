@@ -26,7 +26,7 @@ internal class MessageSendService(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    /** Send [text] in the joined chat: seal, write once to the shared log, and persist the local echo. */
+    /** Send [text] in the joined chat: seal, write to the shared log, persist the local echo. */
     suspend fun send(text: String): SendResult =
         withContext(ioDispatcher) {
             val now = clock()
@@ -48,10 +48,6 @@ internal class MessageSendService(
             val orderToken = OrderToken.build(now, graph.senderIdentifier, graph.nextSeq())
             val messageId = MessageId.messageId(orderToken, envelopeBytes)
 
-            // Local echo FIRST so the sender's message shows immediately even if the disk is unreachable;
-            // the write below is retry-safe and idempotent on the same §2 message-id (no duplicate row).
-            graph.store.persist(messageId, orderToken, message, now)
-
             val outcome =
                 graph.engine.send(
                     graph.chatId,
@@ -60,6 +56,12 @@ internal class MessageSendService(
                     allMembers = listOf(graph.senderIdentifier),
                     graph.senderIdentifier,
                 )
+
+            // Local echo — the message appears in chat immediately regardless of send outcome.
+            // If the disk write failed, the message stays as a ghost (will be superseded by a retry
+            // or the background poll when connectivity returns).
+            graph.store.persist(messageId, orderToken, message, now)
+
             SendResult(messageId = messageId, logWritten = outcome.logWritten)
         }
 

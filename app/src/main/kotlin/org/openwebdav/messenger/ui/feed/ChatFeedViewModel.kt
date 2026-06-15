@@ -51,9 +51,9 @@ internal class ChatFeedViewModel(
     }
 
     /**
-     * Send the current draft. The draft is cleared only AFTER the send succeeds (the write landed on the
-     * disk); if sealing or the disk write fails, the typed text is restored and a plain-language error
-     * surfaces, so the user never silently loses what they wrote (review finding 8).
+     * Send the current draft, with one automatic retry on transient failure.
+     * The draft is cleared only AFTER the send succeeds; if sealing or the disk write fails
+     * even after retry, the typed text is restored and a plain-language error surfaces.
      */
     fun send() {
         val text = _draft.value
@@ -61,14 +61,24 @@ internal class ChatFeedViewModel(
         _draft.value = ""
         _sendError.value = null
         viewModelScope.launch {
-            try {
-                val result = sendService.send(text)
-                if (!result.logWritten) {
-                    // Disk write failed (network, permissions, folder) — restore draft, surface error.
-                    if (_draft.value.isBlank()) _draft.value = text
-                    _sendError.value = SEND_FAILED_MESSAGE
+            var result: MessageSendService.SendResult? = null
+            for (attempt in 1..SEND_MAX_ATTEMPTS) {
+                try {
+                    result = sendService.send(text)
+                    if (result.logWritten) break
+                    if (attempt < SEND_MAX_ATTEMPTS) {
+                        kotlinx.coroutines.delay(SEND_RETRY_DELAY_MS)
+                    }
+                } catch (_: Exception) {
+                    if (attempt >= SEND_MAX_ATTEMPTS) {
+                        if (_draft.value.isBlank()) _draft.value = text
+                        _sendError.value = SEND_FAILED_MESSAGE
+                        return@launch
+                    }
+                    kotlinx.coroutines.delay(SEND_RETRY_DELAY_MS)
                 }
-            } catch (_: Exception) {
+            }
+            if (result == null || !result.logWritten) {
                 if (_draft.value.isBlank()) _draft.value = text
                 _sendError.value = SEND_FAILED_MESSAGE
             }
@@ -96,5 +106,7 @@ internal class ChatFeedViewModel(
         const val SEND_FAILED_MESSAGE = "Couldn't send — check your connection and try again."
 
         private const val STOP_TIMEOUT_MILLIS = 5_000L
+        private const val SEND_MAX_ATTEMPTS = 2
+        private const val SEND_RETRY_DELAY_MS = 1_000L
     }
 }

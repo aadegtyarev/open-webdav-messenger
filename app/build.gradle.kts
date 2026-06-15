@@ -166,6 +166,9 @@ dependencies {
     // local-history-encryption: encrypts the local Room DB at rest via SQLCipher.
     implementation(libs.sqlcipher)
 
+    // TODO: remove before release — OkHttp logging for debugging transport failures.
+    implementation(libs.okhttp.logging)
+
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)
