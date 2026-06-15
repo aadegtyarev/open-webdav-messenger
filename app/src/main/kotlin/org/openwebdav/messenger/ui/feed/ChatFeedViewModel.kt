@@ -51,9 +51,9 @@ internal class ChatFeedViewModel(
     }
 
     /**
-     * Send the current draft, with one automatic retry on transient failure.
-     * The draft is cleared only AFTER the send succeeds; if sealing or the disk write fails
-     * even after retry, the typed text is restored and a plain-language error surfaces.
+     * Send the current draft: clear the field, persist a local echo with SENDING status,
+     * then attempt the disk write. On success, mark the echo SENT. On failure,
+     * mark FAILED — the message stays in chat with an error indicator.
      */
     fun send() {
         val text = _draft.value
@@ -61,25 +61,35 @@ internal class ChatFeedViewModel(
         _draft.value = ""
         _sendError.value = null
         viewModelScope.launch {
-            var result: MessageSendService.SendResult? = null
-            for (attempt in 1..SEND_MAX_ATTEMPTS) {
-                try {
-                    result = sendService.send(text)
-                    if (result.logWritten) break
-                    if (attempt < SEND_MAX_ATTEMPTS) {
-                        kotlinx.coroutines.delay(SEND_RETRY_DELAY_MS)
-                    }
-                } catch (_: Exception) {
-                    if (attempt >= SEND_MAX_ATTEMPTS) {
-                        if (_draft.value.isBlank()) _draft.value = text
-                        _sendError.value = SEND_FAILED_MESSAGE
-                        return@launch
-                    }
-                    kotlinx.coroutines.delay(SEND_RETRY_DELAY_MS)
-                }
+            val result = try {
+                sendService.send(text)
+            } catch (_: Exception) {
+                null
             }
-            if (result == null || !result.logWritten) {
-                if (_draft.value.isBlank()) _draft.value = text
+            if (result != null && result.logWritten) {
+                graph.store.markSent(result.messageId)
+            } else {
+                // Mark the echo as FAILED if it was created (it was — we persist before sending).
+                if (result != null) {
+                    graph.store.markFailed(result.messageId)
+                }
+                _sendError.value = SEND_FAILED_MESSAGE
+            }
+        }
+    }
+
+    /** Retry sending a failed message — re-seal and re-send. */
+    fun retryFailed(messageId: String, body: String) {
+        _sendError.value = null
+        viewModelScope.launch {
+            val result = try {
+                sendService.send(body)
+            } catch (_: Exception) {
+                null
+            }
+            if (result != null && result.logWritten) {
+                graph.store.markSent(result.messageId)
+            } else {
                 _sendError.value = SEND_FAILED_MESSAGE
             }
         }
@@ -88,10 +98,9 @@ internal class ChatFeedViewModel(
     private fun MessageEntity.toFeedRow(): FeedRow =
         FeedRow(
             messageId = messageId,
-            // reactions carry no body; this slice renders text only.
             body = body ?: "",
-            // senderIdentifier IS hex(identity.signPub), the same encoding MessageStore keys the row by.
             isMine = senderSignPub == graph.senderIdentifier,
+            sendStatus = sendStatus,
         )
 
     /** A rendered feed row — literal plain-text [body], never styled / linked / auto-loaded (SC8). */
@@ -99,6 +108,7 @@ internal class ChatFeedViewModel(
         val messageId: String,
         val body: String,
         val isMine: Boolean,
+        val sendStatus: String,
     )
 
     companion object {

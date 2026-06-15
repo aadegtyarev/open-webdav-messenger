@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 import org.openwebdav.messenger.keystore.HistoryKeyStore
 import java.io.File
@@ -28,7 +30,7 @@ import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
  */
 @Database(
     entities = [MessageEntity::class, SyncCursorEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class MessengerDatabase : RoomDatabase() {
@@ -39,6 +41,14 @@ abstract class MessengerDatabase : RoomDatabase() {
     companion object {
         /** On-device database file name. */
         const val DB_NAME = "owdm-messages.db"
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE messages ADD COLUMN sendStatus TEXT NOT NULL DEFAULT 'SENT'",
+                )
+            }
+        }
 
         @Volatile
         private var instance: MessengerDatabase? = null
@@ -63,6 +73,7 @@ abstract class MessengerDatabase : RoomDatabase() {
                 val factory = SupportFactory(key)
                 return Room.databaseBuilder(context, MessengerDatabase::class.java, DB_NAME)
                     .openHelperFactory(factory)
+                    .addMigrations(MIGRATION_1_2)
                     // No allowMainThreadQueries() — DAOs are suspend/Flow (stack-notes Room).
                     // No fallbackToDestructiveMigration() — a schema bump must ship a Migration so local
                     // history is never silently dropped (stack-notes Room migrations).

@@ -20,16 +20,22 @@ class MessageStore(
     private val cursorDao: SyncCursorDao,
 ) {
     /**
-     * Persist a received/sent [message] under its §2 [messageId] and §4 [orderToken]. Idempotent on
-     * the message-id: a second persist of the same id is a no-op (§9.3 step 3). Returns `true` if a
-     * new row was inserted, `false` if it was a duplicate (the dedup signal the caller counts).
+     * Persist a received/sent [message] under its §2 [messageId] and §4 [orderToken], with
+     * [sendStatus] (SENT for received, SENDING for local echo). Idempotent on the message-id.
      */
     suspend fun persist(
         messageId: String,
         orderToken: String,
         message: Message,
         receivedAtMillis: Long,
-    ): Boolean = messageDao.insertIgnore(toEntity(messageId, orderToken, message, receivedAtMillis)) != DEDUP_NO_ROW
+        sendStatus: String = MessageEntity.STATUS_SENT,
+    ): Boolean = messageDao.insertIgnore(toEntity(messageId, orderToken, message, receivedAtMillis, sendStatus)) != DEDUP_NO_ROW
+
+    /** Mark a locally-sent message as successfully written to the disk. */
+    suspend fun markSent(messageId: String) = messageDao.updateSendStatus(messageId, MessageEntity.STATUS_SENT)
+
+    /** Mark a locally-sent message as failed to reach the disk. */
+    suspend fun markFailed(messageId: String) = messageDao.updateSendStatus(messageId, MessageEntity.STATUS_FAILED)
 
     /** The stored cursor order-token for [chatId], or `""` (start of window) if none recorded yet (§9.3). */
     suspend fun cursorFor(chatId: String): String = cursorDao.cursorFor(chatId)?.orderToken ?: ""
@@ -63,6 +69,7 @@ class MessageStore(
         orderToken: String,
         message: Message,
         receivedAtMillis: Long,
+        sendStatus: String,
     ): MessageEntity {
         val senderHex = Hex.encode(message.sender.copySignPub())
         return when (message) {
@@ -77,9 +84,10 @@ class MessageStore(
                     replyTo = message.replyTo,
                     targetId = null,
                     reactionIndex = null,
-                    sendTimestampMillis = message.sendTimestampMillis,
-                    receivedAtMillis = receivedAtMillis,
-                )
+                        sendTimestampMillis = message.sendTimestampMillis,
+                        receivedAtMillis = receivedAtMillis,
+                        sendStatus = sendStatus,
+                    )
             is ReactionMessage ->
                 MessageEntity(
                     messageId = messageId,
@@ -93,6 +101,7 @@ class MessageStore(
                     reactionIndex = message.reactionIndex,
                     sendTimestampMillis = null,
                     receivedAtMillis = receivedAtMillis,
+                    sendStatus = sendStatus,
                 )
         }
     }
