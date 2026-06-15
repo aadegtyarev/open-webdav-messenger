@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.ui.communities.CommunityListScreen
 import org.openwebdav.messenger.ui.feed.ChatFeedScreen
+import org.openwebdav.messenger.ui.settings.SettingsScreen
 import org.openwebdav.messenger.ui.invite.InviteScreen
 import org.openwebdav.messenger.ui.onboarding.CreateCommunityScreen
 import org.openwebdav.messenger.ui.onboarding.JoinScreen
@@ -77,11 +78,15 @@ private fun AppNav() {
         Screen.CommunityList ->
             CommunityListScreen(
                 onSelectCommunity = {
-                    // TODO: switch to the selected community's graph
+                    AppContainer.switchToCommunity(it)
                     screen = Screen.Feed
                 },
                 onCreate = { screen = Screen.CreateCommunity },
+                onSettings = { screen = Screen.Settings },
             )
+
+        Screen.Settings ->
+            SettingsScreen(onBack = { screen = Screen.CommunityList })
 
         Screen.CreateCommunity ->
             CreateCommunityScreen(
@@ -119,4 +124,5 @@ private sealed interface Screen {
     data object Feed : Screen
 
     data object Invite : Screen
+    data object Settings : Screen
 }
