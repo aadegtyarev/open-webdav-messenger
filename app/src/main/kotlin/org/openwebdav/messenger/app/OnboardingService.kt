@@ -160,7 +160,10 @@ internal class OnboardingService(
     }
 
     /** Generate a collision-resistant folder name: `owdm-` + 16 hex chars of SHA-256(baseUrl + communityName). */
-    private fun generateFolderName(baseUrl: String, communityName: String): String {
+    private fun generateFolderName(
+        baseUrl: String,
+        communityName: String,
+    ): String {
         val digest = MessageDigest.getInstance("SHA-256")
         digest.update("$baseUrl:$communityName".toByteArray(Charsets.UTF_8))
         val hex = digest.digest().take(8).joinToString("") { "%02x".format(it) }
@@ -192,7 +195,7 @@ internal class OnboardingService(
         data class Joined(val chatId: String, val communityName: String) : JoinResult
 
         /** The invite was not a valid `owdm1:` token (foreign QR / garbled / cleartext disk) — clean error. */
-            data object Invalid : JoinResult
+        data object Invalid : JoinResult
     }
 
     private companion object {

@@ -2,6 +2,7 @@ package org.openwebdav.messenger.app
 
 import com.goterl.lazysodium.LazySodiumJava
 import com.goterl.lazysodium.SodiumJava
+import okhttp3.OkHttpClient
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
@@ -13,8 +14,6 @@ import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.Delayer
-import org.openwebdav.messenger.transport.WebDavTransport
-import okhttp3.OkHttpClient
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -50,15 +49,16 @@ internal object AppTestSupport {
         chatKey: ChatKey,
         communityName: String,
     ): String {
-        val token = InviteToken(
-            baseUrl = config.baseUrl,
-            username = config.username,
-            appPassword = config.appPassword,
-            chatRoot = config.chatRoot,
-            chatId = chatId,
-            chatKey = chatKey.export(),
-            communityName = communityName,
-        )
+        val token =
+            InviteToken(
+                baseUrl = config.baseUrl,
+                username = config.username,
+                appPassword = config.appPassword,
+                chatRoot = config.chatRoot,
+                chatId = chatId,
+                chatKey = chatKey.export(),
+                communityName = communityName,
+            )
         return InviteCodec().encode(token)
     }
 

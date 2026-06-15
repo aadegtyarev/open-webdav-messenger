@@ -31,7 +31,10 @@ internal object PropfindParser {
             isExpandEntityReferences = false
         }
 
-    private fun DocumentBuilderFactory.trySetFeature(name: String, value: Boolean) {
+    private fun DocumentBuilderFactory.trySetFeature(
+        name: String,
+        value: Boolean,
+    ) {
         try {
             setFeature(name, value)
         } catch (_: Exception) {

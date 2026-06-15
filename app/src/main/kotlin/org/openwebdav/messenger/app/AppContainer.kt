@@ -15,7 +15,6 @@ import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
 import org.openwebdav.messenger.transport.WebDavResult
-import org.openwebdav.messenger.transport.WebDavTransport
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -133,21 +132,26 @@ internal object AppContainer {
                 EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity)
             }
 
-        override suspend fun checkFolder(
+            override suspend fun checkFolder(
                 config: ConnectionConfig,
                 root: String,
             ): OnboardingService.FolderCheck {
                 val transport = TransportFactory.create(config)
                 return when (val result = transport.list("")) {
                     is WebDavResult.Success ->
-                        if (result.value.isEmpty()) OnboardingService.FolderCheck.Ok
-                        else OnboardingService.FolderCheck.Occupied
+                        if (result.value.isEmpty()) {
+                            OnboardingService.FolderCheck.Ok
+                        } else {
+                            OnboardingService.FolderCheck.Occupied
+                        }
                     is WebDavResult.TransportError ->
                         if (result.code == 404) {
                             // Folder doesn't exist — create it.
-                            if (transport.ensureCollection("") is WebDavResult.Success)
+                            if (transport.ensureCollection("") is WebDavResult.Success) {
                                 OnboardingService.FolderCheck.Ok
-                            else OnboardingService.FolderCheck.Error("cannot create folder '$root'")
+                            } else {
+                                OnboardingService.FolderCheck.Error("cannot create folder '$root'")
+                            }
                         } else {
                             OnboardingService.FolderCheck.Error(result.message ?: "cannot access folder")
                         }
