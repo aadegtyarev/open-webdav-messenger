@@ -19,6 +19,7 @@ import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
 import org.openwebdav.messenger.transport.WebDavResult
+import org.openwebdav.messenger.ui.settings.UserSettings
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -50,7 +51,10 @@ internal object AppContainer {
 
     /** Bind the application context (idempotent). Called from `Application.onCreate()` before [warmStart]. */
     fun bind(context: Context) {
-        if (appContext == null) appContext = context.applicationContext
+        if (appContext == null) {
+            appContext = context.applicationContext
+            UserSettings.init(appContext!!)
+        }
     }
 
     /**
