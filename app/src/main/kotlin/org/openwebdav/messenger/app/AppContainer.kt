@@ -11,6 +11,7 @@ import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
+import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
@@ -38,6 +39,7 @@ internal object AppContainer {
     private val identityFactory by lazy { IdentityFactory() }
     private val configStore by lazy { ConnectionConfigStore(requireContext()) }
     private val communityRegistry by lazy { CommunityRegistry(requireContext()) }
+    private val chatRegistry by lazy { ChatRegistry(requireContext()) }
     private val warmStarted = AtomicBoolean(false)
 
     /**
@@ -140,6 +142,8 @@ internal object AppContainer {
                 // Use chatId as communityId for simplicity — one community = one chat.
                 configStore.save(config, chatId, communityName, communityId = chatId)
                 communityRegistry.add(CommunityRegistry.Entry(chatId, communityName, chatId))
+                // Auto-create the "General" chat for the new community.
+                chatRegistry.add(chatId, ChatRegistry.Entry(chatId, "General", "general"))
             }
 
             override suspend fun ensureIdentity(): Identity = identityFactory.identityStore(requireContext()).loadOrCreate()
