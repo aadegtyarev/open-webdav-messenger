@@ -60,7 +60,10 @@ internal fun CommunityListScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onSelectCommunity(community.id) }
+                            .clickable {
+                                AppContainer.switchToCommunity(community.id)
+                                onSelectCommunity(community.id)
+                            }
                             .padding(16.dp)
                             .semantics { contentDescription = community.name },
                     ) {
