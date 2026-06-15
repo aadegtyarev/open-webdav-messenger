@@ -58,5 +58,6 @@ data class MessageEntity(
         const val STATUS_SENT = "SENT"
         const val STATUS_SENDING = "SENDING"
         const val STATUS_FAILED = "FAILED"
+        const val STATUS_READ = "READ"
     }
 }

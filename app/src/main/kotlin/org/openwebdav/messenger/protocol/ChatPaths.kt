@@ -49,11 +49,27 @@ internal object ChatPaths {
     /** §1.2: `log/` — the log parent directory. Use [logDir] for per-chat subfolders. */
     const val LOG = "log"
 
+    /** Read receipts: `read/<member-id>/<chat-id>/` — cursor marker for latest read message. */
+    fun readReceiptDir(
+        memberIdentifier: String,
+        chatId: String,
+    ): String = "$READ/${MessageId.inboxId(memberIdentifier, chatId)}"
+
+    /** A single read receipt file: `read/<member-id>/<chat-id>/<order-token>` — marks read up to this cursor. */
+    fun readReceiptFile(
+        memberIdentifier: String,
+        chatId: String,
+        orderToken: String,
+    ): String = "${readReceiptDir(memberIdentifier, chatId)}/$orderToken"
+
     /** §1.2: `log/<chatId>/` — the per-chat message log subfolder. */
     fun logDir(chatId: String): String = "$LOG/$chatId"
 
     /** §1: `changes/` — parent of all per-member change indices. */
     const val CHANGES = "changes"
+
+    /** Read receipts parent directory. */
+    private const val READ = "read"
 
     /** §1.2: a member's change-index folder `changes/<member-index-id>/`. */
     fun changeIndex(

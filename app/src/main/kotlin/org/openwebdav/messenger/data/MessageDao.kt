@@ -48,4 +48,12 @@ interface MessageDao {
     /** Update the sendStatus of a single message (e.g. SENDING → SENT or FAILED). */
     @Query("UPDATE messages SET sendStatus = :status WHERE messageId = :messageId")
     suspend fun updateSendStatus(messageId: String, status: String)
+
+    /** Mark all non-SENDING messages up to [orderToken] as READ. */
+    @Query(
+        "UPDATE messages SET sendStatus = 'READ' " +
+            "WHERE chatId = :chatId AND orderToken <= :orderToken " +
+            "AND sendStatus = 'SENT'",
+    )
+    suspend fun markReadUpTo(chatId: String, orderToken: String)
 }

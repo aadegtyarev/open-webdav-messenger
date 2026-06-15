@@ -135,11 +135,14 @@ private fun MessageRow(
     onRetry: () -> Unit,
 ) {
     val align = if (row.isMine) Alignment.End else Alignment.Start
-    val borderColor = if (row.isMine) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-    } else {
-        MaterialTheme.colorScheme.outlineVariant
+    val borderAlpha = when (row.sendStatus) {
+        MessageEntity.STATUS_SENT -> 0.06f   // barely visible = delivered
+        MessageEntity.STATUS_READ -> 0.14f   // normal = seen
+        else -> 0.10f                         // SENDING or other
     }
+    val borderColor =
+        if (row.isMine) MaterialTheme.colorScheme.primary.copy(alpha = borderAlpha)
+        else MaterialTheme.colorScheme.outlineVariant
     val shape = RoundedCornerShape(
         topStart = 12.dp,
         topEnd = 12.dp,
