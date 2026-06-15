@@ -6,7 +6,7 @@
 
 ## UI (Compose chat surface)
 
-_No contracts yet._
+- [chat-surface](contracts/chat-surface.md) — onboarding flow, invite format, chat feed (v0.14.0)
 
 ## Transport (WebDAV over OkHttp)
 
@@ -39,8 +39,6 @@ _No contracts yet._
 ## Infrastructure (no user-facing contract)
 
 | Feature | Done | Review |
-|---|---|---|
-| Feature | Done | Review |
 |---|---|---|---|
 | [webdav-transport](features/webdav-transport_plan.md) | 2026-06-03 | (transient, deleted after ship) |
 | [crypto](features/crypto_plan.md) | 2026-06-03 | (transient, deleted after ship) |
@@ -53,3 +51,8 @@ _No contracts yet._
 | [identity-store-io-dispatch](features/identity-store-io-dispatch_plan.md) | 2026-06-05 | (transient, deleted after ship) |
 | [codec-dedup-and-send-hardening](features/codec-dedup-and-send-hardening_plan.md) | 2026-06-06 | (transient, deleted after ship) |
 | [x25519-identity](features/x25519-identity_plan.md) | 2026-06-06 | (transient, deleted after ship) |
+| compression (v0.10.0) | 2026-06-14 | (autonomous, plan not preserved) |
+| history-encryption (v0.11.0) | 2026-06-14 | (autonomous, plan not preserved) |
+| foreground-polling (v0.12.0) | 2026-06-14 | (autonomous, plan not preserved) |
+| export-restore (v0.13.0) | 2026-06-14 | (autonomous, plan not preserved) |
+| [ui-chat-surface](features/ui-chat-surface_plan.md) (v0.14.0) | 2026-06-15 | Pass-1 + Pass-2 (merged) |
