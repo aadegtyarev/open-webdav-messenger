@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.app.MessageSendService
+import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
 import org.openwebdav.messenger.data.MessageEntity
 
@@ -92,6 +93,13 @@ internal class ChatFeedViewModel(
             } else {
                 _sendError.value = SEND_FAILED_MESSAGE
             }
+        }
+    }
+
+    /** Mark all messages up to [orderToken] as READ. */
+    fun markRead(orderToken: String) {
+        viewModelScope.launch {
+            graph.store.markMessagesReadUpTo(graph.chatId, orderToken)
         }
     }
 

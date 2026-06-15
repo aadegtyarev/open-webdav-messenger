@@ -35,6 +35,8 @@ internal class RuntimeGraph(
     val chatKey: ChatKey,
     val identity: Identity,
     val senderIdentifier: String,
+    /** All member identifiers in this chat (for change-entry fan-out). */
+    val roster: List<String> = listOf(senderIdentifier),
 ) {
     /**
      * Per-process, strictly-increasing per-sender sequence for the §4 order-token. The token orders the

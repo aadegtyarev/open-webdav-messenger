@@ -57,7 +57,7 @@ internal class MessageSendService(
                     graph.chatId,
                     orderToken,
                     envelopeBytes,
-                    allMembers = listOf(graph.senderIdentifier),
+                    allMembers = graph.roster,
                     graph.senderIdentifier,
                 )
 

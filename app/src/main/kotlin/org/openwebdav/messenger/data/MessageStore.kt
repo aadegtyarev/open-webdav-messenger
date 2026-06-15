@@ -37,6 +37,12 @@ class MessageStore(
     /** Mark a locally-sent message as failed to reach the disk. */
     suspend fun markFailed(messageId: String) = messageDao.updateSendStatus(messageId, MessageEntity.STATUS_FAILED)
 
+    /** Mark all messages in [chatId] up to [orderToken] as READ (for received messages viewed by the user). */
+    suspend fun markMessagesReadUpTo(
+        chatId: String,
+        orderToken: String,
+    ) = messageDao.markReadUpTo(chatId, orderToken)
+
     /** The stored cursor order-token for [chatId], or `""` (start of window) if none recorded yet (§9.3). */
     suspend fun cursorFor(chatId: String): String = cursorDao.cursorFor(chatId)?.orderToken ?: ""
 
