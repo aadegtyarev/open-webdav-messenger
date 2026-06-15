@@ -51,9 +51,9 @@ internal class ChatFeedViewModel(
     }
 
     /**
-     * Send the current draft. The draft is cleared only AFTER the send succeeds; if seal/persist throws
-     * (e.g. an unreachable disk before the local echo is stored) the typed text is restored and a
-     * plain-language error surfaces, so the user never silently loses what they wrote (review finding 8).
+     * Send the current draft. The draft is cleared only AFTER the send succeeds (the write landed on the
+     * disk); if sealing or the disk write fails, the typed text is restored and a plain-language error
+     * surfaces, so the user never silently loses what they wrote (review finding 8).
      */
     fun send() {
         val text = _draft.value
@@ -62,9 +62,13 @@ internal class ChatFeedViewModel(
         _sendError.value = null
         viewModelScope.launch {
             try {
-                sendService.send(text)
+                val result = sendService.send(text)
+                if (!result.logWritten) {
+                    // Disk write failed (network, permissions, folder) — restore draft, surface error.
+                    if (_draft.value.isBlank()) _draft.value = text
+                    _sendError.value = SEND_FAILED_MESSAGE
+                }
             } catch (_: Exception) {
-                // Restore only if the user hasn't started typing again, so a fast retry isn't clobbered.
                 if (_draft.value.isBlank()) _draft.value = text
                 _sendError.value = SEND_FAILED_MESSAGE
             }

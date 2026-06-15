@@ -25,11 +25,19 @@ internal object PropfindParser {
     private val factory =
         DocumentBuilderFactory.newInstance().apply {
             isNamespaceAware = true
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            trySetFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            trySetFeature("http://xml.org/sax/features/external-general-entities", false)
+            trySetFeature("http://xml.org/sax/features/external-parameter-entities", false)
             isExpandEntityReferences = false
         }
+
+    private fun DocumentBuilderFactory.trySetFeature(name: String, value: Boolean) {
+        try {
+            setFeature(name, value)
+        } catch (_: Exception) {
+            // Feature not supported by this XML implementation (e.g. Android's non-Xerces parser).
+        }
+    }
 
     /**
      * @param xml the raw multistatus body bytes. Parsed directly so the XML's own declaration /

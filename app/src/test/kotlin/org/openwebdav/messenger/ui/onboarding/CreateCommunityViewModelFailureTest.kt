@@ -51,7 +51,6 @@ class CreateCommunityViewModelFailureTest {
             vm.onBaseUrl("https://disk.example.test")
             vm.onUsername("owner")
             vm.onAppPassword("fake-app-password-not-real")
-            vm.onChatRoot("owdm/root")
             vm.onCommunityName("My Community")
 
             var created = false
@@ -87,5 +86,10 @@ class CreateCommunityViewModelFailureTest {
             chatKey: ChatKey,
             identity: Identity,
         ) = error("not reached")
+
+        override suspend fun checkFolder(
+            config: ConnectionConfig,
+            root: String,
+        ): OnboardingService.FolderCheck = error("not reached")
     }
 }

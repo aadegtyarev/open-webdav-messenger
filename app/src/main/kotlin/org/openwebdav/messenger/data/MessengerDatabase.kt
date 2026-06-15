@@ -51,6 +51,9 @@ abstract class MessengerDatabase : RoomDatabase() {
 
         @Suppress("TooGenericExceptionCaught") // migration detection handles SQLCipher/open failures gracefully
         private fun build(context: Context): MessengerDatabase {
+            // SQLCipher native library must be loaded before any SQLiteDatabase call.
+            SqlcipherDatabase.loadLibs(context)
+
             // Migrate an existing unencrypted database to encrypted before Room opens it.
             migrateUnencryptedIfNeeded(context)
 

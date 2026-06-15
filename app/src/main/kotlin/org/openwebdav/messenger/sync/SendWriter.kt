@@ -30,6 +30,12 @@ internal class SendWriter(private val transport: WebDavTransport) {
         envelopeBytes: ByteArray,
         otherMembers: List<String>,
     ): SendOutcome {
+        // §6: ensure the chat root exists as a WebDAV collection before writing anything into it.
+        // Some providers (e.g. Yandex.Disk) report folders created via their web UI as 404 on
+        // PROPFIND and 409 on child MKCOL — a root MKCOL with a trailing slash fixes this.
+        if (!ensure("")) {
+            return SendOutcome(logWritten = false, notifiedMembers = 0, pendingMembers = otherMembers.size)
+        }
         val logWritten = writeLog(chatId, orderToken, envelopeBytes)
         if (!logWritten) {
             // No log entry on disk → there is nothing to notify about yet; report all members pending

@@ -12,6 +12,9 @@ import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.transport.ConnectionConfig
+import org.openwebdav.messenger.transport.Delayer
+import org.openwebdav.messenger.transport.WebDavTransport
+import okhttp3.OkHttpClient
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -46,18 +49,22 @@ internal object AppTestSupport {
         chatId: String,
         chatKey: ChatKey,
         communityName: String,
-    ): String =
-        InviteCodec().encode(
-            InviteToken(
-                baseUrl = config.baseUrl,
-                username = config.username,
-                appPassword = config.appPassword,
-                chatRoot = config.chatRoot,
-                chatId = chatId,
-                chatKey = chatKey.export(),
-                communityName = communityName,
-            ),
+    ): String {
+        val token = InviteToken(
+            baseUrl = config.baseUrl,
+            username = config.username,
+            appPassword = config.appPassword,
+            chatRoot = config.chatRoot,
+            chatId = chatId,
+            chatKey = chatKey.export(),
+            communityName = communityName,
         )
+        return InviteCodec().encode(token)
+    }
+
+    fun testClient(): OkHttpClient = OkHttpClient.Builder().build()
+
+    fun instantDelayer(): Delayer = Delayer { /* no delay in tests */ }
 }
 
 /**
@@ -105,6 +112,11 @@ internal class RecordingOnboardingDeps(
         reconfiguredChatId = chatId
         reconfiguredKey = chatKey
     }
+
+    override suspend fun checkFolder(
+        config: ConnectionConfig,
+        root: String,
+    ): OnboardingService.FolderCheck = OnboardingService.FolderCheck.Ok
 }
 
 /** JVM in-memory [ChatKeyStorePort] — the same seam `ChatKeyStore` implements on device. */

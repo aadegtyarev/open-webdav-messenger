@@ -84,5 +84,10 @@ class JoinViewModelFailureTest {
             chatKey: ChatKey,
             identity: Identity,
         ) = error("not reached")
+
+        override suspend fun checkFolder(
+            config: ConnectionConfig,
+            root: String,
+        ): OnboardingService.FolderCheck = error("not reached")
     }
 }

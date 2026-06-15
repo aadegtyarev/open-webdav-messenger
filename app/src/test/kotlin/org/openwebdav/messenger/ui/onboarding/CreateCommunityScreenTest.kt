@@ -70,7 +70,6 @@ class CreateCommunityScreenTest {
         composeRule.onNodeWithContentDescription("Disk address").performTextInput("${scheme}disk.example.test")
         composeRule.onNodeWithContentDescription("Login").performTextInput("owner")
         composeRule.onNodeWithContentDescription("App password").performTextInput("fake-app-password-not-real")
-        composeRule.onNodeWithContentDescription("Folder").performTextInput("owdm/root")
         composeRule.onNodeWithContentDescription("Community name").performTextInput("My Community")
     }
 
