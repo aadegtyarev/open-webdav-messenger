@@ -1,18 +1,30 @@
 package org.openwebdav.messenger.ui.feed
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,11 +38,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.ui.FeedViewModelFactory
 
 /**
@@ -50,12 +67,10 @@ internal fun ChatFeedScreen(
     val sendError by viewModel.sendError.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 
-    // Auto-scroll only when the user is already at/near the bottom — otherwise a background-poll message
-    // would yank the viewport down and fight a user reading scroll-back (review finding 7). Key on the last
-    // message id (not the size) so re-emissions that don't add a new tail message don't re-trigger.
     val lastMessageId = messages.lastOrNull()?.messageId
-    LaunchedEffect(lastMessageId) {
-        if (messages.isNotEmpty() && listState.isAtBottom()) {
+    val visibleCount = listState.layoutInfo.visibleItemsInfo.size
+    LaunchedEffect(lastMessageId, visibleCount) {
+        if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
     }
@@ -87,11 +102,14 @@ internal fun ChatFeedScreen(
         } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(messages, key = { it.messageId }) { row ->
-                    MessageRow(row)
+                    MessageRow(row, onRetry = { viewModel.retryFailed(row.messageId, row.body) })
                 }
             }
         }
@@ -112,11 +130,58 @@ private fun androidx.compose.foundation.lazy.LazyListState.isAtBottom(): Boolean
 private const val NEAR_BOTTOM_SLACK = 2
 
 @Composable
-private fun MessageRow(row: ChatFeedViewModel.FeedRow) {
+private fun MessageRow(
+    row: ChatFeedViewModel.FeedRow,
+    onRetry: () -> Unit,
+) {
     val align = if (row.isMine) Alignment.End else Alignment.Start
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalAlignment = align) {
-        // Literal plain text — Text renders the body verbatim; no markdown, link, or image (SC8).
-        Text(text = row.body, style = MaterialTheme.typography.bodyLarge)
+    val borderColor = if (row.isMine) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant
+    }
+    val shape = RoundedCornerShape(
+        topStart = 12.dp,
+        topEnd = 12.dp,
+        bottomStart = if (row.isMine) 12.dp else 2.dp,
+        bottomEnd = if (row.isMine) 2.dp else 12.dp,
+    )
+
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        horizontalAlignment = align,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Status icon on the left for own messages
+            if (row.isMine) {
+                when (row.sendStatus) {
+                    MessageEntity.STATUS_SENDING -> Icon(
+                        Icons.Filled.Schedule,
+                        contentDescription = "Sending",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.outline,
+                    )
+                    MessageEntity.STATUS_FAILED -> Icon(
+                        Icons.Filled.ErrorOutline,
+                        contentDescription = "Failed — tap to retry",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clickable { onRetry() },
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+
+            Text(
+                text = row.body,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier
+                    .border(1.dp, borderColor, shape)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
     }
 }
 
@@ -145,6 +210,9 @@ private fun Composer(
                 value = draft,
                 onValueChange = onDraft,
                 placeholder = { Text("Message") },
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Sentences,
+                ),
                 modifier = Modifier.weight(1f).semantics { contentDescription = "Message" },
             )
             IconButton(

@@ -3,6 +3,7 @@ package org.openwebdav.messenger.app
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.message.TextMessage
 import org.openwebdav.messenger.protocol.MessageId
 import org.openwebdav.messenger.protocol.OrderToken
@@ -48,6 +49,9 @@ internal class MessageSendService(
             val orderToken = OrderToken.build(now, graph.senderIdentifier, graph.nextSeq())
             val messageId = MessageId.messageId(orderToken, envelopeBytes)
 
+            // Local echo FIRST — the message appears in chat instantly with SENDING status.
+            graph.store.persist(messageId, orderToken, message, now, MessageEntity.STATUS_SENDING)
+
             val outcome =
                 graph.engine.send(
                     graph.chatId,
@@ -56,11 +60,6 @@ internal class MessageSendService(
                     allMembers = listOf(graph.senderIdentifier),
                     graph.senderIdentifier,
                 )
-
-            // Local echo — the message appears in chat immediately regardless of send outcome.
-            // If the disk write failed, the message stays as a ghost (will be superseded by a retry
-            // or the background poll when connectivity returns).
-            graph.store.persist(messageId, orderToken, message, now)
 
             SendResult(messageId = messageId, logWritten = outcome.logWritten)
         }

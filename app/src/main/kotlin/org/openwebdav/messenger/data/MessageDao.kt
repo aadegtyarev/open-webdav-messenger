@@ -5,6 +5,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -43,4 +44,8 @@ interface MessageDao {
     /** All rows for a chat, ordered — for one-shot reads and tests (not the observable path). */
     @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY orderToken ASC")
     suspend fun messagesForChat(chatId: String): List<MessageEntity>
+
+    /** Update the sendStatus of a single message (e.g. SENDING → SENT or FAILED). */
+    @Query("UPDATE messages SET sendStatus = :status WHERE messageId = :messageId")
+    suspend fun updateSendStatus(messageId: String, status: String)
 }

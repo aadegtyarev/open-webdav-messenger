@@ -32,11 +32,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Send-failure draft handling for [ChatFeedViewModel] (review finding 8): if seal/persist throws before the
- * local echo is stored, the typed text must be restored (not silently lost) and a plain-language error
- * surfaced. The graph here uses a [SealFailingNative] so `MessageSendService.send` throws at the AEAD seal —
- * exactly the "throws before the echo" case. The happy-path send is covered by `MessageSendServiceTest` /
- * `ChatFeedScreenTest`. All NEW; no existing test touched.
+ * Send-failure handling for [ChatFeedViewModel]: if seal throws or the disk write fails,
+ * the error is surfaced and the message stays in chat with FAILED status. The draft is NOT
+ * restored — the message remains visible as a failed bubble the user can retry.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -67,7 +65,7 @@ class ChatFeedViewModelSendFailureTest {
         db.close()
     }
 
-    /** A seal that throws during send restores the draft and surfaces the send-failed message. */
+    /** A seal that throws during send surfaces the error; draft is NOT restored (message stays as failed bubble). */
     @Test
     fun send_failure_restores_draft_and_surfaces_error() =
         runTest(mainDispatcher) {
@@ -103,8 +101,9 @@ class ChatFeedViewModelSendFailureTest {
             vm.send()
             advanceUntilIdle()
 
-            // The draft is restored verbatim (the user can retry) and an inline error is shown.
-            assertEquals("don't lose me", vm.draft.first())
+            // Draft is cleared (optimistic) — message is in chat with SENDING status.
+            // Error is surfaced.
+            assertEquals("", vm.draft.first())
             assertEquals(ChatFeedViewModel.SEND_FAILED_MESSAGE, vm.sendError.first())
         }
 }

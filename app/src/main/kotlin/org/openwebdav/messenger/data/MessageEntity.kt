@@ -28,6 +28,7 @@ import androidx.room.PrimaryKey
  * @property reactionIndex §8.5 tag 0x03 — 0..4 (reaction kind only); `null` for text.
  * @property sendTimestampMillis §8.4 tag 0x04 — best-effort display-only wall-clock (text kind only).
  * @property receivedAtMillis local clock when this row was persisted (diagnostics / "new since" UI).
+ * @property sendStatus local send state: [STATUS_SENDING], [STATUS_SENT], or [STATUS_FAILED].
  */
 @Entity(
     tableName = "messages",
@@ -45,6 +46,7 @@ data class MessageEntity(
     val reactionIndex: Int?,
     val sendTimestampMillis: Long?,
     val receivedAtMillis: Long,
+    val sendStatus: String = STATUS_SENT,
 ) {
     companion object {
         /** §8.2 kind 0x01 — a text message. */
@@ -52,5 +54,9 @@ data class MessageEntity(
 
         /** §8.2 kind 0x02 — a reaction message. */
         const val KIND_REACTION = 2
+
+        const val STATUS_SENT = "SENT"
+        const val STATUS_SENDING = "SENDING"
+        const val STATUS_FAILED = "FAILED"
     }
 }
