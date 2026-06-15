@@ -2,6 +2,7 @@ package org.openwebdav.messenger.app
 
 import android.content.Context
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.runBlocking
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
@@ -78,6 +79,21 @@ internal object AppContainer {
 
     /** All joined communities from the registry. */
     fun communities(): List<CommunityRegistry.Entry> = communityRegistry.all()
+
+    /** Switch the active community to [communityId] — rebuilds the engine for that community. */
+    fun switchToCommunity(communityId: String) {
+        val stored = configStore.loadStored(communityId) ?: return
+        val chatKeyStore = crypto.chatKeyStore(requireContext())
+        val chatKey = chatKeyStore.load(stored.chatId) ?: return
+        val identity = runBlocking { identityFactory.identityStore(requireContext()).loadOrCreate() }
+        EngineWiring.reconfigure(
+            config = stored.config,
+            chatId = stored.chatId,
+            communityName = stored.communityName,
+            chatKey = chatKey,
+            identity = identity,
+        )
+    }
 
     /** The live engine graph for the joined chat, or `null` if nothing is joined yet. */
     fun runtimeGraph(): RuntimeGraph? = EngineWiring.current()

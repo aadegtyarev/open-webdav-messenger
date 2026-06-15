@@ -8,10 +8,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
 import org.openwebdav.messenger.data.MessageEntity
+import org.openwebdav.messenger.transport.TransportFactory
 
 /**
  * Chat-feed ViewModel (`ui-chat-surface` arch note Choice 4 `ChatFeedViewModel`; Scenarios 5–6). It reads
@@ -96,10 +98,17 @@ internal class ChatFeedViewModel(
         }
     }
 
-    /** Mark all messages up to [orderToken] as READ. */
+    /** Mark all messages up to [orderToken] as READ, and write receipt to disk. */
     fun markRead(orderToken: String) {
         viewModelScope.launch {
             graph.store.markMessagesReadUpTo(graph.chatId, orderToken)
+            // Also write a read receipt to the WebDAV disk so other members can see.
+            val transport = TransportFactory.create(graph.config)
+            ReadReceiptService(transport).writeReceipt(
+                graph.senderIdentifier,
+                graph.chatId,
+                orderToken,
+            )
         }
     }
 

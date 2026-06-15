@@ -67,6 +67,8 @@ internal class PollReader(
             val target = coordinates[sub.chatTag]
             acc += drainChat(sub, target, logEntries)
             if (acc.backedOff) break // stop the cycle on a transport back-off; resume next run (§9.3)
+            // Check read receipts from other members and mark our messages as READ.
+            checkReadReceipts(memberIdentifier, sub.chatId)
         }
         return acc
     }
@@ -248,6 +250,15 @@ internal class PollReader(
             }
             is ParseResult.Rejected -> FetchStep.Rejected
         }
+    }
+
+    /** Check read receipts from other members and mark our messages as READ. */
+    private suspend fun checkReadReceipts(
+        myId: String,
+        chatId: String,
+    ) {
+        // In MVP, without a roster, this is a no-op.
+        // TODO: iterate over roster members excluding self, check their read receipts.
     }
 
     private fun backedOffOutcome(result: WebDavResult<*>): CycleOutcome {
