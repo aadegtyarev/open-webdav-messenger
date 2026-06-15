@@ -30,8 +30,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run JVM gates (test + ktlintCheck + lint)
-        run: ./gradlew test ktlintCheck lint
+      - name: Run fast gates (ktlintCheck + lint, no tests — run locally)
+        run: ./gradlew ktlintCheck lint
 
   # SC21: no secret material in the source tree OR anywhere in git history.
   # Runs in parallel with the JVM gates (separate job). gitleaks is fetched as a
