@@ -1,6 +1,5 @@
 package org.openwebdav.messenger.sync
 
-import android.util.Log
 import org.openwebdav.messenger.protocol.ChatPaths
 import org.openwebdav.messenger.transport.WebDavResult
 import org.openwebdav.messenger.transport.WebDavTransport
@@ -70,11 +69,7 @@ internal class SendWriter(private val transport: WebDavTransport) {
     ): Boolean {
         if (!ensure(ChatPaths.logDir(chatId))) return false
         val path = ChatPaths.message(chatId, orderToken, envelopeBytes)
-        val result = transport.write(path, envelopeBytes)
-        if (result !is WebDavResult.Success) {
-            Log.e(TAG, "write($path) failed: $result")
-        }
-        return result is WebDavResult.Success
+        return transport.write(path, envelopeBytes) is WebDavResult.Success
     }
 
     /**
@@ -95,16 +90,10 @@ internal class SendWriter(private val transport: WebDavTransport) {
     }
 
     /** Idempotent `MKCOL` (§6): an already-exists (405/301) is success inside the transport. */
-    private suspend fun ensure(path: String): Boolean {
-        val result = transport.ensureCollection(path)
-        if (result !is WebDavResult.Success) {
-            Log.e(TAG, "ensure($path) failed: $result")
-        }
-        return result is WebDavResult.Success
-    }
+    private suspend fun ensure(path: String): Boolean =
+        transport.ensureCollection(path) is WebDavResult.Success
 
     private companion object {
-        const val TAG = "owdm.SendWriter"
         /**
          * A change entry's meaning is entirely in its file name (§9.2); the body carries nothing. A
          * single byte is written so providers that reject a zero-length PUT still accept it.
