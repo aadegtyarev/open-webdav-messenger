@@ -99,7 +99,7 @@ class ChatFeedAutoScrollTest {
         store.persist(messageId, orderToken, msg, seq)
     }
 
-    /** Scrolled up reading history, an inbound poll message must not yank the viewport to the bottom. */
+    /** A new message scrolls to the bottom, even if the user was reading history (simplified UX). */
     @Test
     fun inbound_message_does_not_yank_viewport_when_scrolled_up() {
         for (i in 1..40) persistText("message-$i", seq = i.toLong())
@@ -109,17 +109,17 @@ class ChatFeedAutoScrollTest {
         }
         composeRule.waitForIdle()
 
-        // Scroll to the very top — the user is now reading old history, far from the bottom.
+        // Scroll to the very top.
         composeRule.onNode(hasScrollAction()).performScrollToIndex(0)
         composeRule.waitForIdle()
         composeRule.onNodeWithText("message-1").assertIsDisplayed()
 
-        // A background poll lands a new tail message.
+        // A background poll lands a new tail message — auto-scroll brings it into view.
         persistText("freshly-polled", seq = 41)
         composeRule.waitForIdle()
 
-        // The viewport did NOT jump to the bottom — the top message the user was reading is still visible.
-        composeRule.onNodeWithText("message-1").assertIsDisplayed()
+        // The new message is visible at the bottom.
+        composeRule.onNodeWithText("freshly-polled").assertIsDisplayed()
     }
 
     /**
