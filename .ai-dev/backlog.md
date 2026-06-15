@@ -2,6 +2,10 @@
 
 Items noted during planning/review, not yet scheduled. The orchestrator records these; `/pm-plan` matches them against new features.
 
+## UI polish (2026-06-16)
+
+- **Font size setting** — user-configurable text scale in settings. Apply to message body, composer, and UI labels. Store in SharedPreferences. Respect system font scale as baseline, let user override.
+
 ## Join-flow / community model decisions (PM, 2026-06-03)
 
 These shape the invite / directory / community features below.
