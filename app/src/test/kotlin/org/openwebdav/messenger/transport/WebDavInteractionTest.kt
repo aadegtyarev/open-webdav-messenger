@@ -46,8 +46,8 @@ class WebDavInteractionTest {
             val tokenB = OrderToken.build(1_000L, "carol", 1)
             val framedA = Envelope.write("from-alice".toByteArray())
             val framedB = Envelope.write("from-carol".toByteArray())
-            val pathA = ChatPaths.message(inboxPath, tokenA, framedA)
-            val pathB = ChatPaths.message(inboxPath, tokenB, framedB)
+            val pathA = ChatPaths.v1Message(inboxPath, tokenA, framedA)
+            val pathB = ChatPaths.v1Message(inboxPath, tokenB, framedB)
 
             val transport = TestSupport.newTransport(server)
             transport.write(pathA, framedA)

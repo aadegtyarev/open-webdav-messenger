@@ -35,6 +35,7 @@ class SyncStackSpecTest {
     private lateinit var sender: Identity
     private val key: ChatKey = SyncTestSupport.fixedChatKey()
     private val me = "bob"
+    private val chatId = SyncTestSupport.CHAT_ID
 
     @Before
     fun setUp() {
@@ -102,7 +103,7 @@ class SyncStackSpecTest {
     fun `poll PROPFIND sets Depth 1 never infinity`() =
         runTest {
             val entry = SyncTestSupport.sealedLogEntry(SyncTestSupport.text(sender), key, sender, "alice")
-            disk.putFile(ChatPaths.message(entry.orderToken, entry.bytes), entry.bytes)
+            disk.putFile(ChatPaths.message(chatId, entry.orderToken, entry.bytes), entry.bytes)
             val indexPath = ChatPaths.changeIndex(me, SyncTestSupport.CHAT_ID)
             disk.putFile("$indexPath/${SyncTestSupport.changeEntryName(SyncTestSupport.CHAT_ID, entry.orderToken)}", byteArrayOf(0))
 
@@ -122,7 +123,7 @@ class SyncStackSpecTest {
         runTest {
             val entry = SyncTestSupport.sealedLogEntry(SyncTestSupport.text(sender), key, sender, "alice")
             // store the RIGHT name but the WRONG bytes → hash mismatch on read
-            disk.putFile(ChatPaths.message(entry.orderToken, entry.bytes), byteArrayOf(9, 9, 9))
+            disk.putFile(ChatPaths.message(chatId, entry.orderToken, entry.bytes), byteArrayOf(9, 9, 9))
             val indexPath = ChatPaths.changeIndex(me, SyncTestSupport.CHAT_ID)
             disk.putFile("$indexPath/${SyncTestSupport.changeEntryName(SyncTestSupport.CHAT_ID, entry.orderToken)}", byteArrayOf(0))
 

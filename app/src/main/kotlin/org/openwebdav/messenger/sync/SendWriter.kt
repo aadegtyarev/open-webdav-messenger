@@ -62,8 +62,8 @@ internal class SendWriter(private val transport: WebDavTransport) {
         orderToken: String,
         envelopeBytes: ByteArray,
     ): Boolean {
-        if (!ensure(ChatPaths.LOG)) return false
-        val path = ChatPaths.message(orderToken, envelopeBytes)
+        if (!ensure(ChatPaths.logDir(chatId))) return false
+        val path = ChatPaths.message(chatId, orderToken, envelopeBytes)
         return transport.write(path, envelopeBytes) is WebDavResult.Success
     }
 

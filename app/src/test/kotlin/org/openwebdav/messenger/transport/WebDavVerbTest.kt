@@ -63,7 +63,7 @@ class WebDavVerbTest {
 
             val token = OrderToken.build(1_717_000_000_000L, "alice", 1)
             val framed = Envelope.write("payload".toByteArray())
-            val path = ChatPaths.message(inboxPath, token, framed)
+            val path = ChatPaths.v1Message(inboxPath, token, framed)
             val transport = TestSupport.newTransport(server)
 
             transport.write(path, framed)

@@ -146,7 +146,8 @@ internal object AppContainer {
                         }
                     is WebDavResult.TransportError ->
                         if (result.code == 404) {
-                            // Folder doesn't exist — create it.
+                            // Folder doesn't exist — ensure parent dirs, then create the leaf.
+                            ensureParentFolders(config, root)
                             if (transport.ensureCollection("") is WebDavResult.Success) {
                                 OnboardingService.FolderCheck.Ok
                             } else {
@@ -159,6 +160,21 @@ internal object AppContainer {
                 }
             }
         }
+
+    /** Ensure every parent folder in [root] exists, from outermost to leaf-parent. */
+    private suspend fun ensureParentFolders(
+        config: ConnectionConfig,
+        root: String,
+    ) {
+        val segments = root.split("/")
+        if (segments.size <= 1) return
+        // Build each prefix and ensure it as a collection.
+        for (i in 1 until segments.size) {
+            val parentPath = segments.take(i).joinToString("/")
+            val parentConfig = config.copy(chatRoot = parentPath)
+            TransportFactory.create(parentConfig).ensureCollection("")
+        }
+    }
 
     /**
      * A fresh opaque chat-id: 16 CSPRNG bytes Base32-lowercase-encoded (26 chars). The chat-id is not

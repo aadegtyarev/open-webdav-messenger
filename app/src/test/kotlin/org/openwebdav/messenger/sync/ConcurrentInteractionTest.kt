@@ -52,7 +52,8 @@ class ConcurrentInteractionTest {
     private val key: ChatKey = SyncTestSupport.fixedChatKey()
     private val envelope: MessageEnvelope = SyncTestSupport.messageEnvelope()
     private val me = "bob"
-    private val sub = listOf(ChatSubscription(SyncTestSupport.CHAT_ID))
+    private val chatId = SyncTestSupport.CHAT_ID
+    private val sub = listOf(ChatSubscription(chatId))
 
     @Before
     fun setUp() {
@@ -94,7 +95,7 @@ class ConcurrentInteractionTest {
         runTest {
             val alice = SyncTestSupport.newIdentity()
             val entry = SyncTestSupport.sealedLogEntry(SyncTestSupport.text(alice, body = "hello"), key, alice, "alice")
-            val logPath = ChatPaths.message(entry.orderToken, entry.bytes)
+            val logPath = ChatPaths.message(chatId, entry.orderToken, entry.bytes)
 
             // ── Stage 1: alice's send has completed ONLY the log/ PUT (§9.1 step 1); the change-entry
             // notify to bob (§9.1 step 2) has NOT happened yet. This is the in-flight intermediate state.
@@ -161,8 +162,8 @@ class ConcurrentInteractionTest {
                 )
             assertNotEquals(
                 "two distinct writers must mint distinct content-addressed §2 names on the shared log",
-                ChatPaths.message(fromAlice.orderToken, fromAlice.bytes),
-                ChatPaths.message(fromCarol.orderToken, fromCarol.bytes),
+                ChatPaths.message(chatId, fromAlice.orderToken, fromAlice.bytes),
+                ChatPaths.message(chatId, fromCarol.orderToken, fromCarol.bytes),
             )
             val members = listOf("alice", "bob", "carol")
 
@@ -175,9 +176,9 @@ class ConcurrentInteractionTest {
 
             // Both distinct content-addressed files are present in the ONE shared log/ — neither
             // overwrote the other (append-only on the generation-2 shared log, §3 / §9.1).
-            assertEquals(2, disk.fileNames(ChatPaths.LOG).size)
-            assertTrue(disk.has(ChatPaths.message(fromAlice.orderToken, fromAlice.bytes)))
-            assertTrue(disk.has(ChatPaths.message(fromCarol.orderToken, fromCarol.bytes)))
+            assertEquals(2, disk.fileNames(ChatPaths.logDir(chatId)).size)
+            assertTrue(disk.has(ChatPaths.message(chatId, fromAlice.orderToken, fromAlice.bytes)))
+            assertTrue(disk.has(ChatPaths.message(chatId, fromCarol.orderToken, fromCarol.bytes)))
 
             // Both land and decrypt independently for a reader — the shared log holds both messages.
             val outcome = engine().pollCycle(me, sub)

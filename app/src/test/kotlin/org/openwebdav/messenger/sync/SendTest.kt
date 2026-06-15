@@ -25,6 +25,7 @@ import org.robolectric.annotation.Config
 class SendTest {
     private lateinit var server: MockWebServer
     private lateinit var disk: FakeDisk
+    private val chatId = SyncTestSupport.CHAT_ID
 
     @Before
     fun setUp() {
@@ -60,8 +61,8 @@ class SendTest {
             assertTrue(outcome.complete)
             assertEquals(2, outcome.notifiedMembers) // bob + carol, NOT alice (sender)
             // exactly one shared-log file (no per-member full-message copy)
-            assertEquals(1, disk.fileNames(ChatPaths.LOG).size)
-            assertTrue(disk.has(ChatPaths.message(entry.orderToken, entry.bytes)))
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+            assertTrue(disk.has(ChatPaths.message(chatId, entry.orderToken, entry.bytes)))
             // a change entry in bob's and carol's index, none in alice's
             assertEquals(1, disk.fileNames(ChatPaths.changeIndex("bob", SyncTestSupport.CHAT_ID)).size)
             assertEquals(1, disk.fileNames(ChatPaths.changeIndex("carol", SyncTestSupport.CHAT_ID)).size)
@@ -82,7 +83,7 @@ class SendTest {
 
             assertTrue(second.complete)
             // Content-addressed name + cursor-addressed change entry → same paths → still one each.
-            assertEquals(1, disk.fileNames(ChatPaths.LOG).size)
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
             assertEquals(1, disk.fileNames(ChatPaths.changeIndex("bob", SyncTestSupport.CHAT_ID)).size)
         }
 
@@ -108,7 +109,7 @@ class SendTest {
             disk.failPutUnderPrefix.clear()
             val second = engine.send(SyncTestSupport.CHAT_ID, entry.orderToken, entry.bytes, members, "alice")
             assertTrue(second.complete)
-            assertEquals(1, disk.fileNames(ChatPaths.LOG).size) // still one log copy
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size) // still one log copy
             assertEquals(1, disk.fileNames(ChatPaths.changeIndex("bob", SyncTestSupport.CHAT_ID)).size)
         }
 }
