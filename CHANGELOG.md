@@ -7,6 +7,17 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 Pre-1.0: these releases are backend substrates with no end-user UI yet — the public
 surface is not stable, and minor versions may change behavior freely.
 
+## [0.14.0] — 2026-06-15
+
+### Added
+
+- **First usable chat UI** built with Jetpack Compose. Users can now create a
+  community, share an invite via QR code, and chat in a real-time message feed
+  with auto-scroll. The full onboarding flow — create or join — is wired into the
+  existing backend (key isolation, encryption at rest, compression, foreground
+  polling). New modules under `app/.../ui/`: `onboarding/`, `invite/`, `feed/`,
+  plus `keystore/ConnectionConfigStore` and engine wiring in `AppRoot`.
+
 ## [0.10.0] — 2026-06-14
 
 ### Added
