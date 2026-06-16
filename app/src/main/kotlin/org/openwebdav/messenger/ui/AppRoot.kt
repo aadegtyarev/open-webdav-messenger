@@ -90,10 +90,7 @@ private fun AppNav() {
 
         Screen.CommunityList ->
             CommunityListScreen(
-                onSelectCommunity = {
-                    AppContainer.switchToCommunity(it)
-                    screen = Screen.Feed
-                },
+                onOpenFeed = { screen = Screen.Feed },
                 onCreate = { screen = Screen.CreateCommunity },
                 onSettings = { screen = Screen.Settings },
             )

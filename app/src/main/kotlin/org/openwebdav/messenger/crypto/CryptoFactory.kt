@@ -17,6 +17,9 @@ import org.openwebdav.messenger.keystore.ChatKeyStore
 class CryptoFactory {
     private val native: NativeCrypto = LazySodiumCrypto(LazySodiumAndroid(SodiumAndroid()))
 
+    /** The shared [NativeCrypto] this factory uses — for callers that need raw BLAKE2b / DH primitives. */
+    fun nativeCrypto(): NativeCrypto = native
+
     /** AEAD seal/open over the ciphertext-blob (§5.1). */
     fun aead(): Aead = Aead(native)
 

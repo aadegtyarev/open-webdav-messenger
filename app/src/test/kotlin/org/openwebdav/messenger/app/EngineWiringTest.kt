@@ -167,5 +167,7 @@ class EngineWiringTest {
         override fun schedulePoll() {
             scheduled = true
         }
+
+        override fun communityChatIds(communityId: String): List<String> = listOf(chatId)
     }
 }

@@ -8,6 +8,9 @@ import kotlinx.coroutines.runBlocking
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
+import org.openwebdav.messenger.directory.DirectoryEntry
+import org.openwebdav.messenger.directory.DirectoryFactory
+import org.openwebdav.messenger.directory.RemoteChatProvisioner
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.invite.InviteCodec
@@ -17,6 +20,7 @@ import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.protocol.Base32
+import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
 import org.openwebdav.messenger.transport.WebDavResult
@@ -37,11 +41,15 @@ internal object AppContainer {
     @Volatile
     private var appContext: Context? = null
 
+    @Volatile
+    private var currentCommunityId: String = "default"
+
     private val crypto by lazy { CryptoFactory() }
     private val identityFactory by lazy { IdentityFactory() }
     private val configStore by lazy { ConnectionConfigStore(requireContext()) }
     private val communityRegistry by lazy { CommunityRegistry(requireContext()) }
     private val chatRegistry by lazy { ChatRegistry(requireContext()) }
+    private val directoryFactory by lazy { DirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
 
     /**
@@ -49,6 +57,9 @@ internal object AppContainer {
      * this to show a brief loading state instead of racing the async warm-start (start-destination race fix).
      */
     val ready: StateFlow<Boolean> get() = EngineWiring.ready
+
+    /** The current community ID (for multi-chat enumeration). */
+    val activeCommunityId: String get() = currentCommunityId
 
     /** Bind the application context (idempotent). Called from `Application.onCreate()` before [warmStart]. */
     fun bind(context: Context) {
@@ -67,7 +78,7 @@ internal object AppContainer {
     fun warmStart() {
         if (warmStarted.compareAndSet(false, true)) {
             EngineWiring.initialize(
-                AndroidDeps(requireContext(), crypto, identityFactory, configStore),
+                AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry),
             )
         }
     }
@@ -94,13 +105,87 @@ internal object AppContainer {
         val chatKeyStore = crypto.chatKeyStore(requireContext())
         val chatKey = chatKeyStore.load(stored.chatId) ?: return
         val identity = runBlocking { identityFactory.identityStore(requireContext()).loadOrCreate() }
+        currentCommunityId = communityId
         EngineWiring.reconfigure(
             config = stored.config,
             chatId = stored.chatId,
             communityName = stored.communityName,
             chatKey = chatKey,
             identity = identity,
+            communityId = communityId,
         )
+    }
+
+    /**
+     * Start a DM with [peer] in the current community. Derives the deterministic DM chat-id from the
+     * two box public keys, provisions the per-pair DH key, registers the chat, and switches to it.
+     * Returns the DM chat-id on success, or `null` if the graph is absent / provision fails.
+     */
+    fun startDm(peer: DirectoryEntry): String? {
+        val graph = runtimeGraph() ?: return null
+        val identity = graph.identity
+        val myBoxPub = identity.copyBoxPublic()
+        val peerBoxPub = peer.copyBoxPublicKey()
+        val chatId = ChatIds.dmChatId(crypto.nativeCrypto(), myBoxPub, peerBoxPub)
+
+        // Provision the per-pair DH key (idempotent — re-provisioning derives the same key).
+        val provisioner =
+            RemoteChatProvisioner(
+                identityCrypto = identityFactory.identityCrypto(),
+                chatKeyStore = crypto.chatKeyStore(requireContext()),
+            )
+        when (provisioner.provision(identity, peer, chatId)) {
+            is org.openwebdav.messenger.directory.ProvisionOutcome.Failed -> return null
+            is org.openwebdav.messenger.directory.ProvisionOutcome.Provisioned -> { /* ok */ }
+        }
+
+        // Register the DM chat in the registry for this community.
+        chatRegistry.add(currentCommunityId, ChatRegistry.Entry(chatId, peer.displayName, "dm"))
+
+        // DM roster: just the two participants (self + peer). The peer's on-disk identifier
+        // is the hex of their Ed25519 signing public key.
+        val peerId = Hex.encode(peer.copySigningPublicKey())
+
+        // Switch the active send path to the DM chat.
+        switchToChat(chatId, peer.displayName, peerId)
+
+        return chatId
+    }
+
+    /**
+     * Switch the active send-path chat within the current community. Loads the per-chat key from the
+     * Keystore and builds a new [RuntimeGraph] with the DM roster = [self, peerId].
+     */
+    private fun switchToChat(
+        chatId: String,
+        chatName: String,
+        peerId: String,
+    ) {
+        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return
+        val graph = runtimeGraph() ?: return
+        val roster = listOf(graph.senderIdentifier, peerId)
+        EngineWiring.switchToChat(chatId, chatName, chatKey, roster)
+    }
+
+    /**
+     * Load the verified directory entries (members) for [communityId]. Returns the list of members,
+     * or empty if the community is not found or the directory read fails.
+     */
+    suspend fun loadMembers(communityId: String): List<DirectoryEntry> {
+        val stored = configStore.loadStored(communityId) ?: return emptyList()
+        val chatKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return emptyList()
+        val service =
+            directoryFactory.directoryService(
+                baseUrl = stored.config.baseUrl,
+                username = stored.config.username,
+                appPassword = stored.config.appPassword,
+                communityRoot = stored.config.chatRoot,
+            )
+        return try {
+            service.readDirectory(chatKey).entries
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     /** The live engine graph for the joined chat, or `null` if nothing is joined yet. */
@@ -163,7 +248,7 @@ internal object AppContainer {
                 chatKey: ChatKey,
                 identity: Identity,
             ) {
-                EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity)
+                EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity, communityId = chatId)
                 // Register ourselves in the disk roster (async, best-effort).
                 kotlinx.coroutines.GlobalScope.launch {
                     try {
