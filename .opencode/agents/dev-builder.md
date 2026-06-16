@@ -214,7 +214,7 @@ instead of re-describing it. `[persona]`: this sharpens the plan, denies nothing
 
 - **Boundary named** — does this change touch a module interface described in `docs/architecture.md`? Name it; if the boundary is undocumented, surface that as a plan decision (document it now, or record the gap).
 - **Dependency direction** — does the change introduce a new inter-module dependency? Confirm it follows the direction rules in `docs/architecture.md`; a dependency against the grain is a structural choice the Operator approves, not an implementation detail.
-- **Linter gap** — if the project has no dependency/boundary linter registered in `src/quality/tools.json`, note it: a linter makes this check mechanical at every future diff (`dependency-cruiser` for JS/TS, `import-linter` for Python). Propose it as a setup follow-up if absent.
+- **Linter gap** — if the project has no dependency/boundary linter registered in `.ai-dev/quality/tools.json`, note it: a linter makes this check mechanical at every future diff (`dependency-cruiser` for JS/TS, `import-linter` for Python). Propose it as a setup follow-up if absent.
 - **Cohesion check** — does the change scatter responsibilities across modules that were previously separate? Name any cohesion erosion explicitly; a "small" cross-boundary leak compounds.
 
 > Depth: **rich** — the full enumeration.
@@ -255,7 +255,7 @@ not inline commentary. A probe that found nothing suspicious warrants re-examina
 The contract (core) says *what* you guarantee — confined to plan, build-beat tools green, tests never weakened. The procedure is yours:
 
 - Work on the branch the Orchestrator put you on. You do **not** commit — hand the change back in the working tree, naming the **atomic, one-purpose** boundaries the Orchestrator commits by (git is the Orchestrator's).
-- Run the `build`-beat quality tools over the **whole** registered set — `node src/quality/run.mjs build` runs every row, not a hand-picked subset — and hand back only on green, never a red.
+- Run the `build`-beat quality tools over the **whole** registered set — `node .ai-dev/quality/run.mjs build` runs every row, not a hand-picked subset — and hand back only on green, never a red.
 - A test that newly fails is a signal: fix the code or raise it, **never silence it** (adding a test is fine; editing one to pass is the banned move).
 - **Ratchet** — a change that fixes a confirmed defect carries the test that pins it: RED on the buggy code before the fix, GREEN after — whatever caught the defect (a gate, a review finding, a user report). Where the test layer cannot reach the defect class, record `deferred: <reason>` in the plan's progress note — never silence.
 - **Exhaust the verification ladder** — never hand the Operator work a machine can do: (1) everything automatable without a display — unit tests on logic, the integration layer on mocks, assertions over silent returns, a dev-mode smoke — you DO yourself, never offer up; (2) where the GUI stack has a driver (tauri-driver/WebDriver, Playwright for web) and the quality registry carries no UI row, OFFER the install with concrete tool names and wire it on accept; (3) the Operator gets only the machine-unreachable residual — one minimal named scenario per item, each with the reason it cannot be automated. "Test the app" is never a deliverable.

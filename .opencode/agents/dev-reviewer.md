@@ -46,7 +46,7 @@ Work this review checklist against the diff and the plan the diff claims to sati
 - **Contracts regression** — if the project records product **contracts** (this repo: `docs/contracts/`; a downstream may use its own dir or none) and the change touches a behavioural guarantee, that guarantee's contract is re-checked and updated. A guarantee touched without its contract re-checked blocks.
 - **Tests** — added, not weakened; no existing test edited to pass. A defect fix without its pinning test (RED on the buggy code before the fix) and without a recorded deferral is a finding. For any change touching an **enforcement class on a platform** (deny / inject / ask), confirm the adapter has a mechanism that **realises** the verdict — not just that the engine decides it — and that a test drives that mechanism's side-effect (a deny throws, an inject pushes a part), not only the engine's return value. Pattern: `opencode-inject.test.mjs`.
 - **Verification not offloaded** — a plan or hand-back that assigns the Operator verification work the Builder's ladder could automate (logic in unit tests, the integration layer on mocks, a dev-mode smoke — or an installable UI driver never offered) is a finding; the Operator's residual is only the machine-unreachable, each item a minimal named scenario with its reason. "Test the app" as a deliverable blocks.
-- **Quality tools ran** — confirm the `review`-beat tools ran over the whole registered set (`node src/quality/run.mjs review`) and read their output; a red tool is not green.
+- **Quality tools ran** — confirm the `review`-beat tools ran over the whole registered set (`node .ai-dev/quality/run.mjs review`) and read their output; a red tool is not green.
 
 ## Threat model
 
@@ -203,7 +203,7 @@ denies nothing.
 
 - **Boundary documented** — if the change introduced or modified a module boundary, confirm `docs/architecture.md` was updated; an undocumented new boundary is a finding.
 - **Dependency direction** — any new inter-module dependency follows the direction rules; a dependency against the grain requires a recorded Operator decision, not a silent bypass.
-- **Linter result** — if a dependency/boundary linter is registered in `src/quality/tools.json`, confirm its output is green; a red linter is not green (same rule as every quality tool).
+- **Linter result** — if a dependency/boundary linter is registered in `.ai-dev/quality/tools.json`, confirm its output is green; a red linter is not green (same rule as every quality tool).
 - **Cohesion** — does the diff introduce responsibility scatter the plan didn't name? A cross-boundary concern that appeared mid-build without a plan amendment is a scope deviation.
 
 > Depth: **rich** — the full enumeration.
