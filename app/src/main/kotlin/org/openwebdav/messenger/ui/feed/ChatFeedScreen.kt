@@ -64,6 +64,7 @@ internal fun ChatFeedScreen(
     val sendError by viewModel.sendError.collectAsStateWithLifecycle()
     val lastSyncText by viewModel.lastSyncText.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val memberNamesError by viewModel.memberNamesError.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 
     // Trigger a sync when the screen first appears.
@@ -119,6 +120,14 @@ internal fun ChatFeedScreen(
             )
         },
     ) { padding ->
+        if (memberNamesError != null) {
+            Text(
+                text = memberNamesError!!,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(padding).padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
         if (messages.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("No messages yet — say hello.", style = MaterialTheme.typography.bodyLarge)
@@ -190,6 +199,13 @@ private fun MessageRow(
                 text = row.senderName,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+            )
+        } else if (!row.isMine && row.senderKey != null) {
+            Text(
+                text = row.senderKey,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                 modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
             )
         }

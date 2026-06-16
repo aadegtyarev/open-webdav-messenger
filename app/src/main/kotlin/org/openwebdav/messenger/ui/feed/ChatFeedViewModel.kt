@@ -43,14 +43,20 @@ internal class ChatFeedViewModel(
                 if (names.isNotEmpty()) {
                     graph.memberNames = names
                     android.util.Log.d("ChatFeedVM", "memberNames set to ${graph.memberNames.size} entries")
+                    _memberNamesError.value = null
                 } else {
                     android.util.Log.w("ChatFeedVM", "loadMemberNames returned empty — no sender names available")
+                    _memberNamesError.value = "Member names not available — showing key prefixes"
                 }
             } catch (e: Exception) {
                 android.util.Log.e("ChatFeedVM", "loadMemberNames failed", e)
+                _memberNamesError.value = "Couldn't load member names"
             }
         }
     }
+
+    private val _memberNamesError = MutableStateFlow<String?>(null)
+    val memberNamesError: StateFlow<String?> = _memberNamesError
 
     private val _isSyncing = MutableStateFlow(false)
 
@@ -181,6 +187,7 @@ internal class ChatFeedViewModel(
             isMine = senderSignPub == graph.senderIdentifier,
             sendStatus = sendStatus,
             senderName = if (senderSignPub != graph.senderIdentifier) names[senderSignPub] else null,
+            senderKey = if (senderSignPub != graph.senderIdentifier) senderSignPub.take(8) else null,
         )
 
     /** A rendered feed row — literal plain-text [body], never styled / linked / auto-loaded (SC8). */
@@ -190,6 +197,7 @@ internal class ChatFeedViewModel(
         val isMine: Boolean,
         val sendStatus: String,
         val senderName: String? = null,
+        val senderKey: String? = null,
     )
 
     companion object {
