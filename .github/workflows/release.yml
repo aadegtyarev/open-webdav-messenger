@@ -84,6 +84,7 @@ jobs:
         run: |
           mkdir -p app/build/outputs/apk/release
           cp app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/open-webdav-messenger-${TAG}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/DavChat.apk"
 
       # Create + push the annotated tag with the built-in token. Because the tag and the Release are
       # in this same job, the GITHUB_TOKEN no-retrigger pitfall does not apply.
@@ -104,5 +105,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
-          files: app/build/outputs/apk/release/open-webdav-messenger-${{ steps.version.outputs.tag }}.apk
+          files: |
+            app/build/outputs/apk/release/open-webdav-messenger-${{ steps.version.outputs.tag }}.apk
+            app/build/outputs/apk/release/DavChat.apk
           generate_release_notes: true

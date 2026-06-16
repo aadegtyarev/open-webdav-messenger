@@ -58,7 +58,7 @@ internal fun InviteScreen(
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
-    val downloadUrl = "https://github.com/aadegtyarev/open-webdav-messenger/releases/latest"
+    val downloadUrl = "https://github.com/aadegtyarev/open-webdav-messenger/releases/latest/download/DavChat.apk"
     val downloadQr = remember { QrEncoder.toImageBitmap(QrEncoder.encode(downloadUrl)) }
     var tab by remember { mutableStateOf("invite") }
 
