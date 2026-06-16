@@ -310,6 +310,13 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
                 )
             }
         }
+        if (selected < 900) {
+            Text(
+                "Intervals under 15 min require a persistent notification (Android requirement). Use the refresh button in chat instead, or set 15+ min.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -395,8 +402,11 @@ private fun UpdateSection() {
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                else Text("Update")
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Update")
+                }
             }
         }
 
@@ -432,8 +442,11 @@ private fun UpdateSection() {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !checking,
             ) {
-                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                else Text("Retry")
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Retry")
+                }
             }
         }
 
@@ -458,8 +471,11 @@ private fun UpdateSection() {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !checking,
             ) {
-                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                else Text("Check for updates")
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Check for updates")
+                }
             }
         }
 
@@ -491,8 +507,11 @@ private fun UpdateSection() {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !checking,
             ) {
-                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                else Text("Check for updates")
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Check for updates")
+                }
             }
         }
 
@@ -516,8 +535,11 @@ private fun UpdateSection() {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !checking,
             ) {
-                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                else Text("Check for updates")
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Check for updates")
+                }
             }
         }
     }
