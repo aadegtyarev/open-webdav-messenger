@@ -58,8 +58,8 @@ internal class ChatFeedViewModel(
      * mark FAILED — the message stays in chat with an error indicator.
      */
     fun send() {
-        val text = _draft.value
-        if (text.isBlank()) return
+        val text = _draft.value.trim()
+        if (text.isEmpty()) return
         _draft.value = ""
         _sendError.value = null
         viewModelScope.launch {

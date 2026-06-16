@@ -81,6 +81,7 @@ internal object AppContainer {
             EngineWiring.initialize(
                 AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry),
             )
+            refreshMemberNames()
         }
     }
 
@@ -191,6 +192,7 @@ internal object AppContainer {
             identity = identity,
             communityId = communityId,
         )
+        refreshMemberNames()
     }
 
     /**
@@ -268,6 +270,22 @@ internal object AppContainer {
 
     /** The live engine graph for the joined chat, or `null` if nothing is joined yet. */
     fun runtimeGraph(): RuntimeGraph? = EngineWiring.current()
+
+    /**
+     * Refresh [RuntimeGraph.memberNames] from the on-disk directory for the current community.
+     * Best-effort, async — failures are silently ignored; member names appear on the next successful read.
+     */
+    private fun refreshMemberNames() {
+        GlobalScope.launch {
+            try {
+                val entries = loadMembers(currentCommunityId)
+                val names = entries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
+                runtimeGraph()?.memberNames = names
+            } catch (_: Exception) {
+                // best-effort — sender names will appear on next refresh
+            }
+        }
+    }
 
     /**
      * Write community metadata (poll floor + retention window) to `meta/community.json` on the WebDAV
