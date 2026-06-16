@@ -48,7 +48,11 @@ internal class RetentionPruner(
         /**
          * Returns `true` if [tsMillis] is older than [window] relative to [clock.now].
          */
-        fun isExpired(tsMillis: Long, clock: Clock, window: Duration): Boolean {
+        fun isExpired(
+            tsMillis: Long,
+            clock: Clock,
+            window: Duration,
+        ): Boolean {
             val now = clock.instant().toEpochMilli()
             return now - tsMillis > window.inWholeMilliseconds
         }
@@ -100,7 +104,7 @@ internal class RetentionPruner(
                                 val sepIdx = entry.name.indexOf(MessageId.SEPARATOR)
                                 if (sepIdx <= 0) continue
                                 val orderToken = entry.name.substring(sepIdx + 1)
-                    val tsMillis = RetentionPruner.decodeTimestamp(orderToken) ?: continue
+                                val tsMillis = RetentionPruner.decodeTimestamp(orderToken) ?: continue
                                 if (RetentionPruner.isExpired(tsMillis, clock, window)) {
                                     transport.delete("$memberPath/${entry.name}")
                                 }

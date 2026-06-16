@@ -159,6 +159,14 @@ private fun MessageRow(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         horizontalAlignment = align,
     ) {
+        if (!row.isMine && row.senderName != null) {
+            Text(
+                text = row.senderName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+            )
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
         ) {
