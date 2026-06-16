@@ -1,6 +1,23 @@
 # Backlog
 
-Items noted during planning/review, not yet scheduled. The orchestrator records these; `/pm-plan` matches them against new features.
+Items noted during planning/review, not yet scheduled. The orchestrator records these.
+
+## Chat model redesign (PM idea, 2026-06-17)
+
+**Problem:** current UX has confusing layers — communities with mandatory group chat + separate group chats + DMs. All are chats at different levels. The join/create flow is inconsistent (DM via QR is "wild").
+
+**Vision:**
+- **Single unified chat list** — shows all chats: communities (with mandatory general chat), group chats, DM/private chats
+- **Two entry buttons:** "Join" (fully automatic from QR/link) and "Create" (with a checkbox "this is a community" for the community case)
+- **Create group chat:** just name + which community it belongs to
+- **Create community:** checkbox → community (creates disk + general chat + directory)
+- **Create DM:** tap a user in member list → auto-creates DM chat (keys exchanged automatically, both already in same community)
+- **No QR for DM** — same-community members auto-exchange keys
+- This replaces the current onboarding flow (join/create community screens are separate from chat creation)
+
+**Work needed:** plan this as a feature — redesign onboarding, chat list, member directory integration, DM auto-provisioning.
+
+## In-progress / pending fixes (2026-06-17)
 
 ## Audit follow-ups (2026-06-16)
 
