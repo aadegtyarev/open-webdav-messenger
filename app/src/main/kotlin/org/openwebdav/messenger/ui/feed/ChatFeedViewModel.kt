@@ -39,8 +39,16 @@ internal class ChatFeedViewModel(
         viewModelScope.launch {
             try {
                 val names = AppContainer.loadMemberNames()
-                if (names.isNotEmpty()) graph.memberNames = names
-            } catch (_: Exception) { /* best-effort */ }
+                android.util.Log.d("ChatFeedVM", "loadMemberNames returned ${names.size} names: $names")
+                if (names.isNotEmpty()) {
+                    graph.memberNames = names
+                    android.util.Log.d("ChatFeedVM", "memberNames set to ${graph.memberNames.size} entries")
+                } else {
+                    android.util.Log.w("ChatFeedVM", "loadMemberNames returned empty — no sender names available")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("ChatFeedVM", "loadMemberNames failed", e)
+            }
         }
     }
 
