@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.app
 
 import android.content.Context
+import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -400,8 +401,10 @@ internal class AndroidDeps(
     override fun schedulePoll(communityMinPollSeconds: Int?) {
         val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalSeconds.toLong()
         val effective = SyncScheduler.effectiveIntervalSeconds(memberPref, communityMinPollSeconds)
-        // WorkManager floor is 15 minutes. Sub-minute intervals need foreground service.
-        if (effective < 60) {
+        // WorkManager clamps every periodic request to 15 minutes. Anything below that needs
+        // the foreground service (which shows a persistent notification — Android requirement).
+        val workManagerFloorSeconds = PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS / 1000
+        if (effective < workManagerFloorSeconds) {
             FastPollManager.enable(appContext, WorkManager.getInstance(appContext), effective)
         } else {
             FastPollManager.disable(appContext, WorkManager.getInstance(appContext))
