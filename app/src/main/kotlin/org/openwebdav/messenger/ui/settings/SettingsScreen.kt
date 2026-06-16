@@ -51,6 +51,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.UpdateChecker
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -292,7 +293,7 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
         }
     // Clamp stored value into options
     val clamped = options.minByOrNull { kotlin.math.abs(it - selected) } ?: options.last()
-    if (selected != clamped) { selected = clamped; UserSettings.pollIntervalSeconds = clamped }
+    if (selected != clamped) { selected = clamped; UserSettings.pollIntervalSeconds = clamped; AppContainer.reschedulePoll() }
     val scope = rememberCoroutineScope()
 
     Text("My poll interval", style = MaterialTheme.typography.titleMedium)
@@ -318,7 +319,9 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
                     onClick = {
                         selected = seconds
                         expanded = false
+                        val old = UserSettings.pollIntervalSeconds
                         UserSettings.pollIntervalSeconds = seconds
+                        if (seconds != old) AppContainer.reschedulePoll()
                         scope.launch { snackbarHostState.showSnackbar("My interval: ${UserSettings.formatPollInterval(seconds)}") }
                     },
                 )

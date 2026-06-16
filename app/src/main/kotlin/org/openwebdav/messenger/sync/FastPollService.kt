@@ -3,6 +3,7 @@ package org.openwebdav.messenger.sync
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -114,12 +115,19 @@ class FastPollService : Service() {
         val readable =
             org.openwebdav.messenger.ui.settings.UserSettings.formatPollInterval(intervalSeconds.toInt())
         val contentText = getString(R.string.fast_poll_notification_text, readable)
+        val openIntent = PendingIntent.getActivity(
+            this,
+            0,
+            packageManager.getLaunchIntentForPackage(packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.fast_poll_notification_title))
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_sync_notification)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(openIntent)
             .build()
     }
 
@@ -128,15 +136,20 @@ class FastPollService : Service() {
             val intervalMillis = intervalSeconds * 1000L
             while (isActive) {
                 try {
-                    SyncRunner.current().runOnce()
+                    val outcome = SyncRunner.current().runOnce()
+                    if (outcome.newCount > 0) {
+                        showMessageNotification(outcome.newCount)
+                    }
                 } catch (e: Exception) {
-                    // Fold into the outcome; never crash the loop. A single failed cycle does not
-                    // prevent the next one — the cursor absorbs the skipped run.
                     Log.w(TAG, "Poll cycle failed; resuming after delay", e)
                 }
                 delay(intervalMillis)
             }
         }
+
+    private fun showMessageNotification(newCount: Int) {
+        SyncNotifier.showMessages(this, newCount)
+    }
 
     companion object {
         private const val TAG = "FastPollService"

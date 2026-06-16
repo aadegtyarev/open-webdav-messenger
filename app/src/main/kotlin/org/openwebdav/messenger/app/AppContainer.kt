@@ -26,6 +26,10 @@ import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
 import org.openwebdav.messenger.transport.WebDavResult
 import org.openwebdav.messenger.ui.settings.UserSettings
+import androidx.work.PeriodicWorkRequest
+import androidx.work.WorkManager
+import org.openwebdav.messenger.sync.FastPollManager
+import org.openwebdav.messenger.sync.SyncScheduler
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -283,6 +287,27 @@ internal object AppContainer {
 
     /** The live engine graph for the joined chat, or `null` if nothing is joined yet. */
     fun runtimeGraph(): RuntimeGraph? = EngineWiring.current()
+
+    /**
+     * Re-apply the current poll interval (WorkManager or foreground service).
+     * Call from settings after changing pollIntervalSeconds.
+     */
+    fun reschedulePoll() {
+        val ctx = appContext ?: return
+        val memberPref = UserSettings.pollIntervalSeconds.toLong()
+        val communityFloor = UserSettings.communityMinPollSeconds.toLong()
+        // Effective interval for foreground service: user + community floor, no platform clamp.
+        val rawEffective = maxOf(memberPref, communityFloor)
+        val workManagerFloorSeconds = PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS / 1000
+        val wm = WorkManager.getInstance(ctx)
+        if (rawEffective < workManagerFloorSeconds) {
+            FastPollManager.enable(ctx, wm, rawEffective)
+        } else {
+            FastPollManager.disable(ctx, wm)
+            // WorkManager path: apply the 60s platform floor (which gets clamped to 900s anyway).
+            SyncScheduler.schedule(wm, SyncScheduler.effectiveIntervalSeconds(memberPref, communityFloor.toInt()))
+        }
+    }
 
     /**
      * Load member names from the on-disk directories of all joined communities.
