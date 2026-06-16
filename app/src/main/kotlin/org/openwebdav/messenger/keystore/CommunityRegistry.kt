@@ -38,11 +38,13 @@ internal class CommunityRegistry(context: Context) {
     private fun write(list: List<Entry>) {
         val arr = JSONArray()
         for (e in list) {
-            arr.put(JSONObject().apply {
-                put("id", e.id)
-                put("name", e.name)
-                put("chatId", e.chatId)
-            })
+            arr.put(
+                JSONObject().apply {
+                    put("id", e.id)
+                    put("name", e.name)
+                    put("chatId", e.chatId)
+                },
+            )
         }
         file.parentFile?.mkdirs()
         file.writeText(arr.toString(2))

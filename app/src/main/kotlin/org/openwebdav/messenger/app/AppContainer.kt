@@ -16,7 +16,6 @@ import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
-import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
@@ -170,7 +169,9 @@ internal object AppContainer {
                         RosterService(TransportFactory.create(config)).addMyself(
                             org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
                         )
-                    } catch (_: Exception) { /* best-effort */ }
+                    } catch (_: Exception) {
+                        // best-effort
+                    }
                 }
             }
 

@@ -90,10 +90,10 @@ class MessageStore(
                     replyTo = message.replyTo,
                     targetId = null,
                     reactionIndex = null,
-                        sendTimestampMillis = message.sendTimestampMillis,
-                        receivedAtMillis = receivedAtMillis,
-                        sendStatus = sendStatus,
-                    )
+                    sendTimestampMillis = message.sendTimestampMillis,
+                    receivedAtMillis = receivedAtMillis,
+                    sendStatus = sendStatus,
+                )
             is ReactionMessage ->
                 MessageEntity(
                     messageId = messageId,

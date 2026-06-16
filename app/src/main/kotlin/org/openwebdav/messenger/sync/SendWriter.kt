@@ -90,8 +90,7 @@ internal class SendWriter(private val transport: WebDavTransport) {
     }
 
     /** Idempotent `MKCOL` (§6): an already-exists (405/301) is success inside the transport. */
-    private suspend fun ensure(path: String): Boolean =
-        transport.ensureCollection(path) is WebDavResult.Success
+    private suspend fun ensure(path: String): Boolean = transport.ensureCollection(path) is WebDavResult.Success
 
     private companion object {
         /**

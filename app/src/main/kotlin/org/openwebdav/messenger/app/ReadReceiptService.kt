@@ -4,7 +4,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.protocol.ChatPaths
-import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.transport.WebDavResult
 import org.openwebdav.messenger.transport.WebDavTransport
 
@@ -34,14 +33,15 @@ internal class ReadReceiptService(
     suspend fun latestReceipt(
         memberId: String,
         chatId: String,
-    ): String? = withContext(ioDispatcher) {
-        val dir = ChatPaths.readReceiptDir(memberId, chatId)
-        when (val result = transport.list(dir)) {
-            is WebDavResult.Success ->
-                result.value
-                    .map { it.name }
-                    .maxOrNull() // lexicographic max = latest order-token
-            else -> null
+    ): String? =
+        withContext(ioDispatcher) {
+            val dir = ChatPaths.readReceiptDir(memberId, chatId)
+            when (val result = transport.list(dir)) {
+                is WebDavResult.Success ->
+                    result.value
+                        .map { it.name }
+                        .maxOrNull() // lexicographic max = latest order-token
+                else -> null
+            }
         }
-    }
 }

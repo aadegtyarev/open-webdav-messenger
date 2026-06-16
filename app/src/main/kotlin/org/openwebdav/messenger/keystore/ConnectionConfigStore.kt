@@ -76,8 +76,7 @@ internal class ConnectionConfigStore(
     /** Delete the stored config. */
     fun clear() = clear(DEFAULT_COMMUNITY_ID)
 
-    fun clear(communityId: String) =
-        wrapper(communityId).delete()
+    fun clear(communityId: String) = wrapper(communityId).delete()
 
     private fun wrapper(communityId: String): KeystoreWrapper =
         KeystoreWrapper("${WRAP_KEY_ALIAS}.$communityId", File(configDir(), "$CONFIG_FILE-$communityId"))
@@ -86,6 +85,7 @@ internal class ConnectionConfigStore(
 
     companion object {
         const val DEFAULT_COMMUNITY_ID = "default"
+
         /** Distinct from the chat-key (`owdm.chatkey.wrap.v1`) and identity (`owdm.identity.wrap.v1`) aliases. */
         private const val WRAP_KEY_ALIAS = "owdm.connconfig.wrap.v1"
         private const val CONFIG_DIR = "connconfig"

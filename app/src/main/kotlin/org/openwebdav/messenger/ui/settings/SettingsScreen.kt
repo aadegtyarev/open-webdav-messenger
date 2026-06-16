@@ -52,7 +52,10 @@ internal fun SettingsScreen(onBack: () -> Unit) {
         ) {
             OutlinedTextField(
                 value = name,
-                onValueChange = { name = it; UserSettings.displayName = it },
+                onValueChange = {
+                    name = it
+                    UserSettings.displayName = it
+                },
                 label = { Text("Your name") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
