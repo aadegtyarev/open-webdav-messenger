@@ -8,11 +8,12 @@ import androidx.work.WorkManager
  *
  * When fast polling is enabled:
  *  1. The WorkManager periodic poll is cancelled (the foreground service replaces it).
- *  2. [FastPollService] is started with the user-configured interval.
+ *  2. [FastPollService] is started with the effective interval (user preference clamped to
+ *     community floor and fast-poll platform floor).
  *
  * When fast polling is disabled:
  *  1. The foreground service is stopped.
- *  2. The WorkManager periodic poll is re-scheduled at its default interval.
+ *  2. The WorkManager periodic poll is re-scheduled at its effective interval.
  *
  * The toggle state persists in [SharedPreferences] so it survives process death; the [Application]
  * class restores it on next start. The interval is also persisted so the user's choice is kept.
@@ -22,11 +23,30 @@ object FastPollManager {
     private const val KEY_ENABLED = "enabled"
     private const val KEY_INTERVAL_MINUTES = "interval_minutes"
 
+    /** The platform floor for foreground fast poll: 1 minute (Android allows sub-15-min foreground). */
+    const val PLATFORM_FLOOR_MINUTES = 1L
+
     /** Whether fast polling is currently enabled. */
     fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
 
-    /** The configured fast-poll interval in minutes, or [DEFAULT_INTERVAL] if never set. */
+    /** The configured fast-poll interval in minutes (user's raw preference, not clamped). */
     fun intervalMinutes(context: Context): Long = prefs(context).getLong(KEY_INTERVAL_MINUTES, DEFAULT_INTERVAL)
+
+    /**
+     * The effective fast-poll interval: `max(userPref, communityFloor, platformFloor)`.
+     * The community floor is read from [org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollMinutes].
+     * If UserSettings is not initialized (e.g. in tests), falls back to the platform floor.
+     */
+    fun effectiveIntervalMinutes(context: Context): Long {
+        val userPref = intervalMinutes(context)
+        val communityFloor =
+            try {
+                org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollMinutes.toLong()
+            } catch (_: Exception) {
+                PLATFORM_FLOOR_MINUTES
+            }
+        return maxOf(userPref, communityFloor, PLATFORM_FLOOR_MINUTES)
+    }
 
     /**
      * Enable fast polling: persist the toggle + interval, cancel WorkManager, start the
@@ -43,12 +63,12 @@ object FastPollManager {
             .putLong(KEY_INTERVAL_MINUTES, intervalMinutes)
             .apply()
         SyncScheduler.cancel(workManager)
-        FastPollService.start(context, intervalMinutes)
+        FastPollService.start(context, effectiveIntervalMinutes(context))
     }
 
     /**
      * Disable fast polling: persist the toggle off, stop the foreground service, re-schedule
-     * the WorkManager periodic poll at its default interval.
+     * the WorkManager periodic poll at its effective interval.
      */
     fun disable(
         context: Context,
@@ -59,7 +79,11 @@ object FastPollManager {
             .putBoolean(KEY_ENABLED, false)
             .apply()
         FastPollService.stop(context)
-        SyncScheduler.schedule(workManager)
+        // Schedule background poll at the effective interval.
+        val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalMinutes.toLong()
+        val communityFloor = org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollMinutes
+        val effective = SyncScheduler.effectiveIntervalMinutes(memberPref, communityFloor)
+        SyncScheduler.schedule(workManager, effective)
     }
 
     /**
@@ -72,9 +96,8 @@ object FastPollManager {
         workManager: WorkManager,
     ) {
         if (isEnabled(context)) {
-            val interval = intervalMinutes(context)
             SyncScheduler.cancel(workManager)
-            FastPollService.start(context, interval)
+            FastPollService.start(context, effectiveIntervalMinutes(context))
         }
     }
 

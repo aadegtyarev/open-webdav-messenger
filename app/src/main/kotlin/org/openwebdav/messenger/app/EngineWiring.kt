@@ -170,7 +170,16 @@ internal object EngineWiring {
             }
         SyncRunner.install(
             object : SyncRunner {
-                override suspend fun runOnce(): CycleOutcome = g.engine.pollCycle(g.senderIdentifier, subscriptions)
+                override suspend fun runOnce(): CycleOutcome {
+                    val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions)
+                    // Cache the community floor for the settings UI and reschedule.
+                    if (outcome.communityMinPollMinutes != null) {
+                        org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollMinutes =
+                            outcome.communityMinPollMinutes
+                        deps.schedulePoll(outcome.communityMinPollMinutes)
+                    }
+                    return outcome
+                }
             },
         )
         deps.schedulePoll()
@@ -195,7 +204,7 @@ internal object EngineWiring {
         /** All chat-ids in the active community (for multi-chat poll subscriptions). */
         fun communityChatIds(communityId: String): List<String>
 
-        fun schedulePoll()
+        fun schedulePoll(communityMinPollMinutes: Int? = null)
     }
 }
 
@@ -239,6 +248,23 @@ internal class AndroidDeps(
         val store = MessageStore(db.messageDao(), db.syncCursorDao())
         val envelope = MessageEnvelope.create(crypto.messageCrypto(), identityFactory.identityCrypto())
         val transport = TransportFactory.create(config)
+        val idCrypto = identityFactory.identityCrypto()
+        // The community-floor reader: best-effort read of meta/community.json signed by the host.
+        // For now, verify against the local identity's signing key (correct when this device IS
+        // the host; for non-host members, the signature verification fails and the reader returns
+        // null → fallback to the default floor). A full host-key resolution (from roster/directory)
+        // is deferred to when those features are complete.
+        val hostPubKey = identity.copySignPublic()
+        val communityFloorReader: suspend () -> Int? = {
+            CommunityMetadata.read(transport, idCrypto, hostPubKey)?.minPollIntervalMinutes
+        }
+        // Notification callback: show a notification when new messages arrive during background poll.
+        val ctx = appContext
+        val onNewMessages: suspend (org.openwebdav.messenger.sync.CycleOutcome) -> Unit = { outcome ->
+            if (outcome.newCount > 0) {
+                NotificationHelper.showCycleNotification(ctx, communityName, outcome.newCount)
+            }
+        }
         val engine =
             SyncEngine(
                 transport = transport,
@@ -246,6 +272,8 @@ internal class AndroidDeps(
                 store = store,
                 keyProvider = { requested -> chatKeyStore.load(requested) ?: if (requested == chatId) chatKey else null },
                 pruner = RetentionPruner(transport = transport),
+                onNewMessages = onNewMessages,
+                communityFloorReader = communityFloorReader,
             )
         return RuntimeGraph(
             engine = engine,
@@ -260,7 +288,9 @@ internal class AndroidDeps(
         )
     }
 
-    override fun schedulePoll() {
-        SyncScheduler.schedule(WorkManager.getInstance(appContext))
+    override fun schedulePoll(communityMinPollMinutes: Int?) {
+        val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalMinutes.toLong()
+        val effective = SyncScheduler.effectiveIntervalMinutes(memberPref, communityMinPollMinutes)
+        SyncScheduler.schedule(WorkManager.getInstance(appContext), effective)
     }
 }

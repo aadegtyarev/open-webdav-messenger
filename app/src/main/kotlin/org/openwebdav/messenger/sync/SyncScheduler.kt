@@ -15,10 +15,25 @@ import java.util.concurrent.TimeUnit
  * "15 min is a floor, not a guarantee" — Doze/App-Standby defer further; the §9.3 cursor absorbs the
  * skipped/late runs (resume-from-cursor), so the schedule only needs to request the floor, not enforce
  * a cadence the OS will never honour exactly.
+ *
+ * The effective interval is `max(memberPreference, communityFloor, platformFloor)`. A member can only
+ * INCREASE their interval above the community floor, never go below it.
  */
 object SyncScheduler {
     /** Unique work name so re-scheduling replaces rather than stacks the periodic request. */
     const val WORK_NAME = "owdm.sync.poll"
+
+    /** The WorkManager platform floor: 15 minutes (900000 ms). */
+    const val PLATFORM_FLOOR_MINUTES = 15L
+
+    /**
+     * Compute the effective WorkManager poll interval: `max(memberPref, communityFloor, platformFloor)`.
+     * [communityFloor] may be null (metadata not read yet) — defaults to [PLATFORM_FLOOR_MINUTES].
+     */
+    fun effectiveIntervalMinutes(
+        memberPref: Long,
+        communityFloor: Int?,
+    ): Long = maxOf(memberPref, (communityFloor ?: PLATFORM_FLOOR_MINUTES.toInt()).toLong(), PLATFORM_FLOOR_MINUTES)
 
     /**
      * Build a periodic poll request at `max(requestedMinutes, 15-min floor)`. Exposed (not just used
@@ -33,7 +48,7 @@ object SyncScheduler {
             .build()
     }
 
-    /** Enqueue (or replace) the periodic poll under [WORK_NAME]. */
+    /** Enqueue (or replace) the periodic poll under [WORK_NAME] at [requestedMinutes]. */
     fun schedule(
         workManager: WorkManager,
         requestedMinutes: Long = DEFAULT_INTERVAL_MINUTES,
@@ -50,6 +65,6 @@ object SyncScheduler {
         workManager.cancelUniqueWork(WORK_NAME)
     }
 
-    /** Default requested interval = the floor; a future settings UI lets the user raise it. */
-    const val DEFAULT_INTERVAL_MINUTES = 15L
+    /** Default requested interval = the platform floor. */
+    const val DEFAULT_INTERVAL_MINUTES = PLATFORM_FLOOR_MINUTES
 }

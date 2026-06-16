@@ -56,6 +56,7 @@ class OnboardingServiceTest {
             communityName: String,
             chatKey: ChatKey,
             identity: Identity,
+            isHost: Boolean,
         ) {
             reconfiguredChatId = chatId
             reconfiguredKey = chatKey
