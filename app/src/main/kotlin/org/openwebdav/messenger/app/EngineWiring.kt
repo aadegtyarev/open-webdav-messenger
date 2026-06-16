@@ -352,14 +352,12 @@ internal class AndroidDeps(
         val envelope = MessageEnvelope.create(crypto.messageCrypto(), identityFactory.identityCrypto())
         val transport = TransportFactory.create(config)
         val idCrypto = identityFactory.identityCrypto()
-        // The community-metadata reader: best-effort read of meta/community.json signed by the host.
-        // For now, verify against the local identity's signing key (correct when this device IS
-        // the host; for non-host members, the signature verification fails and the reader returns
-        // null → fallback to the default floor). A full host-key resolution (from roster/directory)
-        // is deferred to when those features are complete.
-        val hostPubKey = identity.copySignPublic()
+        // The community-metadata reader: best-effort read of meta/community.json. The host's
+        // Ed25519 public key is embedded in the file itself (last 32 bytes, unsigned — accepted
+        // under flat-trust SC11), so no out-of-band host-key resolution is needed. This works
+        // for both the host device (identity IS the host) and non-host members.
         val communityMetadataReader: suspend () -> CommunityMetadata? = {
-            CommunityMetadata.read(transport, idCrypto, hostPubKey)
+            CommunityMetadata.read(transport, idCrypto)
         }
         val communityFloorReader: suspend () -> Int? = {
             communityMetadataReader()?.minPollIntervalSeconds

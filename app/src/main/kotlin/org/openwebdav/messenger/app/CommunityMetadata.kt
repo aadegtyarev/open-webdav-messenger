@@ -48,10 +48,13 @@ internal data class CommunityMetadata(
         /** The file path on the WebDAV disk (under the community root, next to `meta/roster.json`). */
         const val FILE_PATH = "meta/community.json"
 
+        private const val SIGNATURE_BYTES = 64
+        private const val HOST_KEY_BYTES = 32
+
         /**
-         * Read [CommunityMetadata] from the WebDAV disk via [transport], verifying the host's Ed25519
-         * [signature] with [identityCrypto] against [hostSignPublicKey] (the host's Ed25519 public key,
-         * 32 bytes).
+         * Read [CommunityMetadata] from the WebDAV disk via [transport]. The host's Ed25519 public key
+         * is embedded in the file (last 32 bytes, unsigned — accepted under flat-trust SC11), so no
+         * out-of-band key resolution is needed.
          *
          * Returns the metadata on success, or `null` when the file is missing, unreadable, tampered
          * (signature fails), or the content is structurally invalid. The caller MUST fall back to
@@ -63,18 +66,20 @@ internal data class CommunityMetadata(
         suspend fun read(
             transport: WebDavTransport,
             identityCrypto: IdentityCrypto,
-            hostSignPublicKey: ByteArray,
         ): CommunityMetadata? {
             val rawRead = transport.readRaw(FILE_PATH)
             if (rawRead !is WebDavResult.Success) return null
             val bytes = rawRead.value
-            if (bytes.isEmpty()) return null
+            if (bytes.size < SIGNATURE_BYTES + HOST_KEY_BYTES) return null
+
+            // On-disk format: signature(64) ‖ payload(JSON) ‖ hostSignPub(32)
+            val sigBytes = bytes.copyOfRange(0, SIGNATURE_BYTES)
+            val hostSignPub = bytes.copyOfRange(bytes.size - HOST_KEY_BYTES, bytes.size)
+            val payloadBytes = bytes.copyOfRange(SIGNATURE_BYTES, bytes.size - HOST_KEY_BYTES)
 
             // Verify the host's signature BEFORE parsing JSON — any tampered content is rejected
             // before the parser ever sees it.
-            val sigBytes = extractSignature(bytes) ?: return null
-            val payloadBytes = extractPayload(bytes) ?: return null
-            if (!identityCrypto.verify(sigBytes, payloadBytes, hostSignPublicKey)) return null
+            if (!identityCrypto.verify(sigBytes, payloadBytes, hostSignPub)) return null
 
             return parsePayload(payloadBytes)
         }
@@ -84,10 +89,11 @@ internal data class CommunityMetadata(
          * signing key. Ensures the `meta/` collection exists first.
          *
          * The on-disk format is:
-         *   signature (64 bytes, Ed25519 detached) ‖ payload (UTF-8 JSON)
+         *   signature (64 bytes, Ed25519 detached) ‖ payload (UTF-8 JSON) ‖ hostSignPub (32 bytes)
          *
-         * This simple concatenation (sig ‖ payload) avoids a framing layer and is deterministic —
-         * the signature covers exactly the JSON payload bytes.
+         * The host's public key is embedded in the file (unsigned, last 32 bytes — accepted under
+         * flat-trust SC11) so non-host members can verify the signature without out-of-band key
+         * resolution.
          */
         suspend fun write(
             transport: WebDavTransport,
@@ -98,13 +104,15 @@ internal data class CommunityMetadata(
             val json = metadata.toJson()
             val payloadBytes = json.toByteArray(Charsets.UTF_8)
             val signSecret = hostIdentity.copySignSecret()
+            val hostSignPub = hostIdentity.copySignPublic()
             try {
                 val signature = identityCrypto.sign(payloadBytes, signSecret)
-                val fileBytes = signature + payloadBytes
+                val fileBytes = signature + payloadBytes + hostSignPub
                 transport.ensureCollection("meta")
                 transport.write(FILE_PATH, fileBytes)
             } finally {
                 signSecret.fill(0)
+                hostSignPub.fill(0)
             }
         }
 
@@ -122,18 +130,6 @@ internal data class CommunityMetadata(
             } catch (_: Exception) {
                 null
             }
-        }
-
-        /** Extract the 64-byte Ed25519 signature from the front of [bytes]. */
-        private fun extractSignature(bytes: ByteArray): ByteArray? {
-            if (bytes.size < 64) return null
-            return bytes.copyOfRange(0, 64)
-        }
-
-        /** Extract the payload (everything after the 64-byte signature). */
-        private fun extractPayload(bytes: ByteArray): ByteArray? {
-            if (bytes.size <= 64) return null
-            return bytes.copyOfRange(64, bytes.size)
         }
 
         /**

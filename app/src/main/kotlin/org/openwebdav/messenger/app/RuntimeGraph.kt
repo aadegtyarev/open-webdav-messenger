@@ -37,8 +37,9 @@ internal class RuntimeGraph(
     val senderIdentifier: String,
     /** All member identifiers in this chat (for change-entry fan-out). */
     val roster: List<String> = listOf(senderIdentifier),
-    /** Signing-pubkey-hex → display name (from directory). */
-    val memberNames: Map<String, String> = emptyMap(),
+    /** Signing-pubkey-hex → display name (from directory). Updated asynchronously after graph construction. */
+    @Volatile
+    var memberNames: Map<String, String> = emptyMap(),
 ) {
     /**
      * Per-process, strictly-increasing per-sender sequence for the §4 order-token. The token orders the
