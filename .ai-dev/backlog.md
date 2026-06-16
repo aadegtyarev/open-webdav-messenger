@@ -2,6 +2,10 @@
 
 Items noted during planning/review, not yet scheduled. The orchestrator records these; `/pm-plan` matches them against new features.
 
+## Audit follow-ups (2026-06-16)
+
+- **(F7) UI automation** — register Compose UI tests (`createComposeRule`) or `connectedAndroidTest` in quality/tools.json. No automated coverage for the chat-surface contract's 8+ behavioural guarantees.
+
 ## UI polish (2026-06-16)
 
 - **Font size setting** — user-configurable text scale in settings. Apply to message body, composer, and UI labels. Store in SharedPreferences. Respect system font scale as baseline, let user override.
