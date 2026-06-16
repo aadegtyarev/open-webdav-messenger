@@ -387,9 +387,7 @@ private fun UpdateSection() {
                                     status = "installing"
                                     UpdateChecker.installApk(context, file)
                                 },
-                                onFailure = {
-                                    status = "download-failed"
-                                },
+                                onFailure = { status = "download-failed" },
                             )
                             checking = false
                         }
@@ -401,18 +399,20 @@ private fun UpdateSection() {
                 else Text("Update")
             }
         }
+
         status == "downloading" -> {
             Button(onClick = {}, modifier = Modifier.fillMaxWidth(), enabled = false) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
-            Text("Downloading…", style = MaterialTheme.typography.bodySmall)
+            Text("Downloading\u2026", style = MaterialTheme.typography.bodySmall)
         }
+
         status == "installing" -> {
-            Text("Opening installer…", style = MaterialTheme.typography.bodySmall)
+            Text("Opening installer\u2026", style = MaterialTheme.typography.bodySmall)
         }
+
         status == "download-failed" -> {
-            Text("Download failed. Check your connection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            Button(
+            Text("Download failed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             Button(
                 onClick = {
                     if (checking) return@Button
@@ -421,12 +421,7 @@ private fun UpdateSection() {
                     scope.launch(Dispatchers.IO) {
                         UpdateChecker.check(versionName).fold(
                             onSuccess = { info ->
-                                status =
-                                    if (info.isNewer) {
-                                        "new: v${info.latestVersion}"
-                                    } else {
-                                        "up-to-date"
-                                    }
+                                status = if (info.isNewer) "new: v${info.latestVersion}" else "up-to-date"
                                 updateUrl = info.apkUrl
                             },
                             onFailure = { status = "error" },
@@ -437,21 +432,46 @@ private fun UpdateSection() {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !checking,
             ) {
-                if (checking) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                } else {
-                    Text("Check for updates")
-                }
+                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                else Text("Retry")
             }
-            Text("Couldn't check for updates.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
+
+        status == "error" -> {
+            Text("Couldn't check for updates.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Button(
+                onClick = {
+                    if (checking) return@Button
+                    checking = true
+                    status = "checking"
+                    scope.launch(Dispatchers.IO) {
+                        UpdateChecker.check(versionName).fold(
+                            onSuccess = { info ->
+                                status = if (info.isNewer) "new: v${info.latestVersion}" else "up-to-date"
+                                updateUrl = info.apkUrl
+                            },
+                            onFailure = { status = "error" },
+                        )
+                        checking = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !checking,
+            ) {
+                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                else Text("Check for updates")
+            }
+        }
+
         status == "checking" -> {
             Button(onClick = {}, modifier = Modifier.fillMaxWidth(), enabled = false) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp))
             }
-            Text("Checking…", style = MaterialTheme.typography.bodySmall)
+            Text("Checking\u2026", style = MaterialTheme.typography.bodySmall)
         }
+
         status == "up-to-date" -> {
+            Text("You're on the latest version.", style = MaterialTheme.typography.bodySmall)
             Button(
                 onClick = {
                     if (checking) return@Button
@@ -460,12 +480,7 @@ private fun UpdateSection() {
                     scope.launch(Dispatchers.IO) {
                         UpdateChecker.check(versionName).fold(
                             onSuccess = { info ->
-                                status =
-                                    if (info.isNewer) {
-                                        "new: v${info.latestVersion}"
-                                    } else {
-                                        "up-to-date"
-                                    }
+                                status = if (info.isNewer) "new: v${info.latestVersion}" else "up-to-date"
                                 updateUrl = info.apkUrl
                             },
                             onFailure = { status = "error" },
@@ -476,14 +491,11 @@ private fun UpdateSection() {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !checking,
             ) {
-                if (checking) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                } else {
-                    Text("Check for updates")
-                }
+                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                else Text("Check for updates")
             }
-            Text("You're on the latest version.", style = MaterialTheme.typography.bodySmall)
         }
+
         else -> {
             Button(
                 onClick = {
@@ -493,12 +505,7 @@ private fun UpdateSection() {
                     scope.launch(Dispatchers.IO) {
                         UpdateChecker.check(versionName).fold(
                             onSuccess = { info ->
-                                status =
-                                    if (info.isNewer) {
-                                        "new: v${info.latestVersion}"
-                                    } else {
-                                        "up-to-date"
-                                    }
+                                status = if (info.isNewer) "new: v${info.latestVersion}" else "up-to-date"
                                 updateUrl = info.apkUrl
                             },
                             onFailure = { status = "error" },
@@ -509,11 +516,8 @@ private fun UpdateSection() {
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !checking,
             ) {
-                if (checking) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                } else {
-                    Text("Check for updates")
-                }
+                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                else Text("Check for updates")
             }
         }
     }
