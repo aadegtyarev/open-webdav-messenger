@@ -52,6 +52,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.app.UpdateChecker
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val RETENTION_OPTIONS = listOf(7, 14, 30, 60, 90)
@@ -275,10 +276,23 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
     val communityFloor = UserSettings.communityMinPollSeconds
     var selected by remember { mutableIntStateOf(UserSettings.pollIntervalSeconds) }
     var expanded by remember { mutableStateOf(false) }
+    val secondMarks = listOf(15, 30, 45, 60)
     val options =
-        generateSequence(communityFloor) { it + 60 }
-            .takeWhile { it <= UserSettings.MAX_POLL_INTERVAL_SECONDS }
-            .toList()
+        buildList {
+            // Second marks (15, 30, 45, 60) from floor
+            for (s in secondMarks) {
+                if (s in communityFloor..UserSettings.MAX_POLL_INTERVAL_SECONDS) add(s)
+            }
+            // Minute marks from 2m up, starting from max(floor, 120)
+            var m = maxOf(communityFloor, 120)
+            while (m <= UserSettings.MAX_POLL_INTERVAL_SECONDS) {
+                if (m !in this) add(m)
+                m += 60
+            }
+        }
+    // Clamp stored value into options
+    val clamped = options.minByOrNull { kotlin.math.abs(it - selected) } ?: options.last()
+    if (selected != clamped) { selected = clamped; UserSettings.pollIntervalSeconds = clamped }
     val scope = rememberCoroutineScope()
 
     Text("My poll interval", style = MaterialTheme.typography.titleMedium)
@@ -310,13 +324,13 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
                 )
             }
         }
-        if (selected < 900) {
-            Text(
-                "Intervals under 15 min require a persistent notification (Android requirement). Use the refresh button in chat instead, or set 15+ min.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+    }
+    if (selected < 900) {
+        Text(
+            "Intervals under 15 min require a persistent notification (Android requirement). Use the refresh button in chat instead, or set 15+ min.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

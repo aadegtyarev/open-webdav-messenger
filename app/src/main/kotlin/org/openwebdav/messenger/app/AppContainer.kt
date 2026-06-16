@@ -276,12 +276,19 @@ internal object AppContainer {
      * Returns a map of signing-pubkey-hex → displayName. Suspending — call from a coroutine.
      */
     suspend fun loadMemberNames(): Map<String, String> {
-        for (community in communityRegistry.all()) {
+        val communities = communityRegistry.all()
+        android.util.Log.d("AppContainer", "loadMemberNames: ${communities.size} communities registered")
+        for (community in communities) {
+            android.util.Log.d("AppContainer", "loadMemberNames: trying chatId=${community.chatId}")
             val entries = loadMembers(community.chatId)
+            android.util.Log.d("AppContainer", "loadMemberNames: got ${entries.size} entries for chatId=${community.chatId}")
             if (entries.isNotEmpty()) {
-                return entries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
+                val names = entries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
+                android.util.Log.d("AppContainer", "loadMemberNames: built ${names.size} name mappings: $names")
+                return names
             }
         }
+        android.util.Log.w("AppContainer", "loadMemberNames: all communities returned empty entries")
         return emptyMap()
     }
 
