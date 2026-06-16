@@ -74,7 +74,7 @@ internal object UpdateChecker {
                 val connection = URL(url).openConnection() as HttpURLConnection
                 connection.connectTimeout = 30_000
                 connection.readTimeout = 120_000
-                val apkFile = File(context.externalCacheDir ?: context.cacheDir, "update.apk")
+                val apkFile = File(context.cacheDir, "update.apk")
                 FileOutputStream(apkFile).use { out ->
                     connection.inputStream.use { it.copyTo(out) }
                 }
