@@ -2,6 +2,8 @@
 
 UI conventions for this project. Read by agents before planning or reviewing any feature with a user interface.
 
+**Last reviewed:** 2026-06-16
+
 ---
 
 ## Interface type

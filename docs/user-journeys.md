@@ -24,7 +24,7 @@ One journey per key user role. Focus on decision points and what can go wrong �
 
 **Drop-off points:**
 
-- **Step 2 — "nothing is happening."** Background delivery is roughly quarter-hourly, not instant. Someone expecting a message to land the second the other person hit send may think it is broken. (Faster, near-instant delivery is a deliberately deferred mode that needs a visible always-on indicator — see `docs/architecture.md` decision #6.)
+- **Step 2 — "nothing is happening."** Background delivery is roughly quarter-hourly, not instant. Someone expecting a message to land the second the other person hit send may think it is broken. Faster delivery is available via the opt-in `FastPollService` foreground mode with a persistent notification (see `docs/architecture.md` decision #6).
 - **Step 4 — "where did the old messages go?"** A person returning from a long absence may expect *everything* to be waiting. The disk only keeps a recent window; messages older than that, which no device of theirs ever held, cannot be reconstructed. This is the most likely source of confusion and must be surfaced honestly when the chat surface exists.
 
 **Invariants:** stated at the human level only; the format/taxonomy/retention rules live once in `docs/architecture.md`.
