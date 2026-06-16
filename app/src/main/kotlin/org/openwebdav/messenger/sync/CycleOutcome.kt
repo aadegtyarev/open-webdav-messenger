@@ -12,7 +12,7 @@ package org.openwebdav.messenger.sync
  * @property backedOff `true` if a `429`/timeout/transport error interrupted the cycle mid-fetch. When
  *   set, the cursor was NOT advanced past the unfetched entries (§9.3), so the next run resumes there;
  *   the WorkManager wrapper maps this to a retry.
- * @property communityMinPollMinutes the community-governed polling floor read from `meta/community.json`
+ * @property communityMinPollSeconds the community-governed polling floor read from `meta/community.json`
  *   during this cycle, or `null` if the file was not read (no-op cycle, pre-setup, etc.). The caller
  *   uses this to clamp the scheduling interval.
  */
@@ -20,6 +20,6 @@ data class CycleOutcome(
     val newCount: Int,
     val skippedCount: Int,
     val backedOff: Boolean,
-    val communityMinPollMinutes: Int? = null,
+    val communityMinPollSeconds: Int? = null,
     val retentionWindowDays: Int? = null,
 )

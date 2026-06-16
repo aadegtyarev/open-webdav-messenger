@@ -14,27 +14,27 @@ import org.openwebdav.messenger.transport.WebDavTransport
  * whose integrity is protected by the host's Ed25519 signature. Any member can verify the signature
  * with the host's public key.
  *
- * **Client-enforced floor:** the [minPollIntervalMinutes] floor is enforced cooperatively by each
+ * **Client-enforced floor:** the [minPollIntervalSeconds] floor is enforced cooperatively by each
  * member's client. A modified client can bypass it — there is no server-side enforcement on a dumb
  * file disk. The floor is a governance primitive, not a security boundary (the flat-trust model, SC11,
  * already grants every member read/write/delete on the shared disk).
  *
- * @param minPollIntervalMinutes the community-wide minimum poll interval in minutes (1..1440).
+ * @param minPollIntervalSeconds the community-wide minimum poll interval in seconds (1..3600).
  * @param retentionWindowDays how many days of message history to keep (7..90, default 14).
  */
 internal data class CommunityMetadata(
-    val minPollIntervalMinutes: Int,
+    val minPollIntervalSeconds: Int,
     val retentionWindowDays: Int = DEFAULT_RETENTION_DAYS,
 ) {
     companion object {
-        /** Default community floor: 15 minutes (matches WorkManager's platform floor). */
-        const val DEFAULT_FLOOR_MINUTES = 15
+        /** Default community floor: 60 seconds. */
+        const val DEFAULT_FLOOR_SECONDS = 60
 
-        /** Maximum allowed floor: 1 day (prevents accidental lock-out). */
-        const val MAX_FLOOR_MINUTES = 1440
+        /** Maximum allowed floor: 3600 seconds (1 hour). */
+        const val MAX_FLOOR_SECONDS = 3600
 
-        /** Minimum allowed floor: 1 minute. */
-        const val MIN_FLOOR_MINUTES = 1
+        /** Minimum allowed floor: 1 second. */
+        const val MIN_FLOOR_SECONDS = 1
 
         /** Default retention window: 14 days. */
         const val DEFAULT_RETENTION_DAYS = 14
@@ -55,7 +55,7 @@ internal data class CommunityMetadata(
          *
          * Returns the metadata on success, or `null` when the file is missing, unreadable, tampered
          * (signature fails), or the content is structurally invalid. The caller MUST fall back to
-         * [DEFAULT_FLOOR_MINUTES] on null — fail-closed, never relax below the default.
+         * [DEFAULT_FLOOR_SECONDS] on null — fail-closed, never relax below the default.
          *
          * The signature covers the raw JSON bytes BEFORE parsing, so the verify-before-parse order
          * prevents any JSON-parser-level attack from bypassing the signature check.
@@ -112,13 +112,13 @@ internal data class CommunityMetadata(
         private fun parsePayload(bytes: ByteArray): CommunityMetadata? {
             return try {
                 val json = JSONObject(String(bytes, Charsets.UTF_8))
-                val minutes =
-                    json.getInt("minPollIntervalMinutes")
-                        .coerceIn(MIN_FLOOR_MINUTES, MAX_FLOOR_MINUTES)
+                val seconds =
+                    json.getInt("minPollIntervalSeconds")
+                        .coerceIn(MIN_FLOOR_SECONDS, MAX_FLOOR_SECONDS)
                 val retentionDays =
                     json.optInt("retentionWindowDays", DEFAULT_RETENTION_DAYS)
                         .coerceIn(MIN_RETENTION_DAYS, MAX_RETENTION_DAYS)
-                CommunityMetadata(minPollIntervalMinutes = minutes, retentionWindowDays = retentionDays)
+                CommunityMetadata(minPollIntervalSeconds = seconds, retentionWindowDays = retentionDays)
             } catch (_: Exception) {
                 null
             }
@@ -138,18 +138,18 @@ internal data class CommunityMetadata(
 
         /**
          * The one true source for the community minimum poll interval, factoring in remote metadata.
-         * Returns the effective floor: max of the [remoteFloor] and [DEFAULT_FLOOR_MINUTES].
-         * Fail-closed: if [remoteFloor] is null, defaults to [DEFAULT_FLOOR_MINUTES].
+         * Returns the effective floor: max of the [remoteFloor] and [DEFAULT_FLOOR_SECONDS].
+         * Fail-closed: if [remoteFloor] is null, defaults to [DEFAULT_FLOOR_SECONDS].
          */
-        fun floorMinutes(remoteFloor: Int?): Int {
-            return maxOf(remoteFloor ?: DEFAULT_FLOOR_MINUTES, DEFAULT_FLOOR_MINUTES)
+        fun floorSeconds(remoteFloor: Int?): Int {
+            return maxOf(remoteFloor ?: DEFAULT_FLOOR_SECONDS, DEFAULT_FLOOR_SECONDS)
         }
     }
 
     /** Serialize to JSON payload (NOT including signature). */
     private fun toJson(): String {
         return JSONObject().apply {
-            put("minPollIntervalMinutes", minPollIntervalMinutes)
+            put("minPollIntervalSeconds", minPollIntervalSeconds)
             put("retentionWindowDays", retentionWindowDays)
         }.toString()
     }

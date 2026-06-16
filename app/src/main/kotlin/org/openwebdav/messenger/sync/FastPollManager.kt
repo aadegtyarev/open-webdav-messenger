@@ -21,31 +21,31 @@ import androidx.work.WorkManager
 object FastPollManager {
     private const val PREFS_NAME = "owdm.fastpoll"
     private const val KEY_ENABLED = "enabled"
-    private const val KEY_INTERVAL_MINUTES = "interval_minutes"
+    private const val KEY_INTERVAL_SECONDS = "interval_seconds"
 
-    /** The platform floor for foreground fast poll: 1 minute (Android allows sub-15-min foreground). */
-    const val PLATFORM_FLOOR_MINUTES = 1L
+    /** The platform floor for foreground fast poll: 60 seconds (Android allows sub-15-min foreground). */
+    const val PLATFORM_FLOOR_SECONDS = 60L
 
     /** Whether fast polling is currently enabled. */
     fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
 
-    /** The configured fast-poll interval in minutes (user's raw preference, not clamped). */
-    fun intervalMinutes(context: Context): Long = prefs(context).getLong(KEY_INTERVAL_MINUTES, DEFAULT_INTERVAL)
+    /** The configured fast-poll interval in seconds (user's raw preference, not clamped). */
+    fun intervalSeconds(context: Context): Long = prefs(context).getLong(KEY_INTERVAL_SECONDS, DEFAULT_INTERVAL)
 
     /**
      * The effective fast-poll interval: `max(userPref, communityFloor, platformFloor)`.
-     * The community floor is read from [org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollMinutes].
+     * The community floor is read from [org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds].
      * If UserSettings is not initialized (e.g. in tests), falls back to the platform floor.
      */
-    fun effectiveIntervalMinutes(context: Context): Long {
-        val userPref = intervalMinutes(context)
+    fun effectiveIntervalSeconds(context: Context): Long {
+        val userPref = intervalSeconds(context)
         val communityFloor =
             try {
-                org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollMinutes.toLong()
+                org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds.toLong()
             } catch (_: Exception) {
-                PLATFORM_FLOOR_MINUTES
+                PLATFORM_FLOOR_SECONDS
             }
-        return maxOf(userPref, communityFloor, PLATFORM_FLOOR_MINUTES)
+        return maxOf(userPref, communityFloor, PLATFORM_FLOOR_SECONDS)
     }
 
     /**
@@ -55,15 +55,15 @@ object FastPollManager {
     fun enable(
         context: Context,
         workManager: WorkManager,
-        intervalMinutes: Long = DEFAULT_INTERVAL,
+        intervalSeconds: Long = DEFAULT_INTERVAL,
     ) {
         prefs(context)
             .edit()
             .putBoolean(KEY_ENABLED, true)
-            .putLong(KEY_INTERVAL_MINUTES, intervalMinutes)
+            .putLong(KEY_INTERVAL_SECONDS, intervalSeconds)
             .apply()
         SyncScheduler.cancel(workManager)
-        FastPollService.start(context, effectiveIntervalMinutes(context))
+        FastPollService.start(context, effectiveIntervalSeconds(context))
     }
 
     /**
@@ -80,9 +80,9 @@ object FastPollManager {
             .apply()
         FastPollService.stop(context)
         // Schedule background poll at the effective interval.
-        val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalMinutes.toLong()
-        val communityFloor = org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollMinutes
-        val effective = SyncScheduler.effectiveIntervalMinutes(memberPref, communityFloor)
+        val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalSeconds.toLong()
+        val communityFloor = org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds
+        val effective = SyncScheduler.effectiveIntervalSeconds(memberPref, communityFloor)
         SyncScheduler.schedule(workManager, effective)
     }
 
@@ -97,12 +97,12 @@ object FastPollManager {
     ) {
         if (isEnabled(context)) {
             SyncScheduler.cancel(workManager)
-            FastPollService.start(context, effectiveIntervalMinutes(context))
+            FastPollService.start(context, effectiveIntervalSeconds(context))
         }
     }
 
-    /** The default fast-poll interval: 5 minutes. The single source — [FastPollService] reads from here. */
-    const val DEFAULT_INTERVAL = 5L
+    /** The default fast-poll interval: 300 seconds (5 minutes). The single source — [FastPollService] reads from here. */
+    const val DEFAULT_INTERVAL = 300L
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 }

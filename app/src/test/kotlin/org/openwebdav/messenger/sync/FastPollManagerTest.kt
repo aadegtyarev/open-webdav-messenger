@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
 /**
  * Unit tests for [FastPollManager] toggle state transitions and default interval.
  *
- * These tests exercise the SharedPreferences-backed enable/disable/isEnabled/intervalMinutes
+ * These tests exercise the SharedPreferences-backed enable/disable/isEnabled/intervalSeconds
  * methods with a Robolectric-supplied Context. Service lifecycle tests are deferred to
  * `connectedAndroidTest` (needs an emulator).
  */
@@ -48,10 +48,10 @@ class FastPollManagerTest {
 
     @Test
     fun `enable sets state to true and persists`() {
-        FastPollManager.enable(context, workManager, intervalMinutes = 7)
+        FastPollManager.enable(context, workManager, intervalSeconds = 420)
 
         assertTrue(FastPollManager.isEnabled(context))
-        assertEquals(7L, FastPollManager.intervalMinutes(context))
+        assertEquals(420L, FastPollManager.intervalSeconds(context))
     }
 
     @Test
@@ -63,22 +63,22 @@ class FastPollManagerTest {
     }
 
     @Test
-    fun `default interval is 5 minutes`() {
-        assertEquals(5L, FastPollManager.DEFAULT_INTERVAL)
+    fun `default interval is 300 seconds`() {
+        assertEquals(300L, FastPollManager.DEFAULT_INTERVAL)
     }
 
     @Test
     fun `interval persists across reads without enable`() {
-        // intervalMinutes reads the stored value; the default is 5
-        assertEquals(5L, FastPollManager.intervalMinutes(context))
+        // intervalSeconds reads the stored value; the default is 300
+        assertEquals(300L, FastPollManager.intervalSeconds(context))
 
         // After enabling with a custom interval, it persists
-        FastPollManager.enable(context, workManager, intervalMinutes = 3)
-        assertEquals(3L, FastPollManager.intervalMinutes(context))
+        FastPollManager.enable(context, workManager, intervalSeconds = 180)
+        assertEquals(180L, FastPollManager.intervalSeconds(context))
 
         // After disable, the stored interval is preserved
         FastPollManager.disable(context, workManager)
-        assertEquals(3L, FastPollManager.intervalMinutes(context))
+        assertEquals(180L, FastPollManager.intervalSeconds(context))
     }
 
     @Test
@@ -89,10 +89,10 @@ class FastPollManagerTest {
     }
 
     @Test
-    fun `enable with default interval uses 5 minutes`() {
+    fun `enable with default interval uses 300 seconds`() {
         FastPollManager.enable(context, workManager)
 
         assertTrue(FastPollManager.isEnabled(context))
-        assertEquals(5L, FastPollManager.intervalMinutes(context))
+        assertEquals(300L, FastPollManager.intervalSeconds(context))
     }
 }

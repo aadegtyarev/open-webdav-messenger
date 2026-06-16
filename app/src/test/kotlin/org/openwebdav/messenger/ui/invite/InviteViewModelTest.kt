@@ -160,7 +160,7 @@ class InviteViewModelTest {
             )
         }
 
-        override fun schedulePoll(communityMinPollMinutes: Int?) = Unit
+        override fun schedulePoll(communityMinPollSeconds: Int?) = Unit
 
         override fun communityChatIds(communityId: String): List<String> = listOf(chatId)
 

@@ -75,7 +75,7 @@ internal class SyncEngine(
         val outcome = pollReader.cycle(memberIdentifier, subscriptions)
         val result =
             outcome.copy(
-                communityMinPollMinutes = communityFloor,
+                communityMinPollSeconds = communityFloor,
                 retentionWindowDays = retentionDays,
             )
         if (!outcome.backedOff) {
