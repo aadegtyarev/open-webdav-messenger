@@ -278,11 +278,17 @@ internal object AppContainer {
     private fun refreshMemberNames() {
         GlobalScope.launch {
             try {
-                val entries = loadMembers(currentCommunityId)
-                val names = entries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
-                runtimeGraph()?.memberNames = names
+                // Load members for every joined community (each has its own directory)
+                for (community in communityRegistry.all()) {
+                    val entries = loadMembers(community.chatId)
+                    if (entries.isNotEmpty()) {
+                        val names = entries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
+                        runtimeGraph()?.memberNames = names
+                        break // Use the first community that has entries
+                    }
+                }
             } catch (_: Exception) {
-                // best-effort — sender names will appear on next refresh
+                // best-effort
             }
         }
     }
