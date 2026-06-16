@@ -1,8 +1,7 @@
 name: PR checks
 
-# Run the three JVM pipeline gates on every pull request targeting main.
-# Device-gated connectedAndroidTest is NOT run here (no CI emulator — architecture decision 8);
-# it stays a manual on-device step.
+# JVM gates (ktlintCheck + lint) run locally during active development — not in CI.
+# Run before pushing: ./gradlew ktlintCheck lint
 on:
   pull_request:
     branches: [main]
@@ -12,32 +11,10 @@ permissions:
   contents: read
 
 jobs:
-  jvm-gates:
-    runs-on: ubuntu-latest
-    steps:
-      # No submodules: the tooling is vendored into .ai-dev/tooling/ (the Gradle build does not reference it).
-      # checkout@v4 defaults to submodules: false — keep it that way (a recursive fetch has no key in CI).
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Run fast gates (ktlintCheck + lint, no tests — run locally)
-        run: ./gradlew ktlintCheck lint
-
   # SC21: no secret material in the source tree OR anywhere in git history.
-  # Runs in parallel with the JVM gates (separate job). gitleaks is fetched as a
-  # version-pinned release binary rather than via gitleaks/gitleaks-action — the
-  # action has org-licensing nuances; a pinned download keeps the gate simple and
-  # supply-chain-explicit.
+  # gitleaks is fetched as a version-pinned release binary rather than via
+  # gitleaks/gitleaks-action — the action has org-licensing nuances; a pinned
+  # download keeps the gate simple and supply-chain-explicit.
   secret-scan:
     runs-on: ubuntu-latest
     env:
