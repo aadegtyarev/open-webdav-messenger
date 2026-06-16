@@ -93,6 +93,27 @@ The community **host sets a community-wide minimum polling interval** (they own 
   - **Threat-model additions when planned:** a new asset/threat for the exported blob (offline brute-force of a weak export password → full account takeover incl. impersonation via the identity secret keys; mitigate with a strong memory-hard KDF + a password-strength nudge), and the restore-path trust (a tampered/forged blob). Record whether identity secret-key export is in or out (exporting the identity `sk` enables seamless restore but widens the blast radius of a cracked blob to impersonation; a lighter export of disk-access + community/chat keys only, regenerating identity on restore, is the smaller-blast-radius alternative — a PM scope choice).
   - Pairs naturally with the **UI feature** (the export/restore screens + the Share intent are user-facing). Depends on nothing in the X25519 slice; can be planned independently once there is a UI surface.
 
+## Audit 2026-06-17 findings (dispatched)
+
+### HIGH (fixed — PR #75)
+- ~~Stale test PollIntervalClampingTest (60→15)~~ ✅
+- ~~Stale KDoc FastPollManager.kt:26~~ ✅
+
+### MEDIUM
+
+- **ExportRestoreActivity exported without guard** — `AndroidManifest.xml:37`: any app can start the export/restore UI. Add intent-filter or custom permission so only Share sheet / internal nav can launch it. **Next fix.**
+- **connectedAndroidTest not in quality registry** — instrumented tests (Keystore, Room migrations, native .so) exist in `androidTest/` but aren't gated in `tools.json`. Add `./gradlew connectedAndroidTest` row (requires emulator/device).
+- **Debug logging of full member name map** — `AppContainer.kt:325` logs all name mappings at DEBUG level. Wrap in `BuildConfig.DEBUG` check or remove before release.
+
+### LOW
+
+- **`bound [?]` in architecture.md:47** — bound IS measured (1 MiB, readCapped). Replace `[?]` with actual value.
+- **markdown module "Planned" status** — add decision reference or "DESCOPED for MVP (plain-text only per contracts)".
+- **stack-notes.md last-reviewed date** — 2026-06-03, pre-dates recent features. Refresh.
+- **No SAST/dependency-CVE scanner** — add OWASP dependency-check or similar to `tools.json` review beat.
+- **No coverage threshold enforced** — architecture.md:140 says ≥80% but no JaCoCo/Kover row in tools.json.
+- **JNA 5.13.0 age** — conscious pin (→ `docs/decisions/jna-pin.md`). Periodic re-evaluation noted.
+
 ## Minor / cosmetic (noted during review)
 
 - **`crypto/KeySources.kt` is classified `data` (not text) by `file(1)`** — a pre-existing encoding quirk (present in `main`, unrelated to the feature that surfaced it during the x25519-identity Pass-2 review). It compiles, ktlint/lint/tests are all green, so it is cosmetic, but a stray non-UTF-8 byte in a source file is worth a one-line cleanup (re-save as clean UTF-8) so `git diff` stops rendering it as `Bin` and tooling treats it as text. Trivial; fold into any future touch of that file.
