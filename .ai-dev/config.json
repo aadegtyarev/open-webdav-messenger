@@ -12,7 +12,8 @@
     },
     "reviewer": {
       "agent": "dev-reviewer",
-      "model": "auto"
+      "model": "auto",
+      "_model_note": "auto resolves to a different model than the session where the platform supports it (cross-model independence); on OpenCode this is configured in the adapter's tool-map.json. Falls back to the session model when no second model is available."
     }
   }
 }

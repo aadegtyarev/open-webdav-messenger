@@ -40,6 +40,14 @@
       "run": "gitleaks detect --source . --config .gitleaks.toml --verbose",
       "beat": "review",
       "init": "install gitleaks (brew install gitleaks / go install)"
+    },
+    {
+      "id": "schema-drift",
+      "checks": "Room schema export directory exists and is non-empty — catches if exportSchema is turned off",
+      "config": null,
+      "run": "test -d app/schemas && test \"$(find app/schemas -name '*.json' | wc -l)\" -gt 0",
+      "beat": "build",
+      "init": "exportSchema=true in app/build.gradle.kts (already configured)"
     }
   ]
 }
