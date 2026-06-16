@@ -61,8 +61,12 @@ internal fun CreateCommunityScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     var passwordVisible by remember { mutableStateOf(false) }
 
-    // Inherit server settings from the first community
-    val existingConfig = remember { AppContainer.existingConnectionConfig() }
+    // Server inheritance: only available if the user is the host of an existing community.
+    // If the user only joined someone else's community, they must enter their own server details.
+    val isHost = remember { AppContainer.isHost }
+    val existingConfig = remember(isHost) {
+        if (isHost) AppContainer.existingConnectionConfig() else null
+    }
     val hasExistingConfig = existingConfig != null
     var useExistingConfig by remember { mutableStateOf(hasExistingConfig) }
 
