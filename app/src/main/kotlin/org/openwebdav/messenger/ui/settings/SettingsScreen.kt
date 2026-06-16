@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -34,13 +37,17 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.openwebdav.messenger.app.UpdateChecker
 import kotlin.math.roundToInt
 
 /** The ordered retention-window options the host can pick from. */
@@ -160,9 +167,88 @@ internal fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Spacer(Modifier.height(8.dp))
-            Text("App version: v0.14.0+", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(16.dp))
+            UpdateSection()
         }
+    }
+}
+
+@Composable
+private fun UpdateSection() {
+    val context = LocalContext.current
+    val versionName =
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+        } catch (_: Exception) {
+            "?"
+        }
+
+    var status by remember { mutableStateOf("") } // "", "checking", "up-to-date", "new: X", "error"
+    var updateUrl by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Text("Updates", style = MaterialTheme.typography.titleMedium)
+    Text("Current version: v$versionName", style = MaterialTheme.typography.bodySmall)
+
+    if (status.startsWith("new:")) {
+        Text(status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+        Button(
+            onClick = {
+                scope.launch {
+                    checking = true
+                    UpdateChecker.downloadApk(context, updateUrl).fold(
+                        onSuccess = { file -> UpdateChecker.installApk(context, file) },
+                        onFailure = { status = "Download failed" },
+                    )
+                    checking = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (checking) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            } else {
+                Text("Update")
+            }
+        }
+    } else {
+        Button(
+            onClick = {
+                scope.launch {
+                    checking = true
+                    status = "checking"
+                    UpdateChecker.check(versionName).fold(
+                        onSuccess = { info ->
+                            status =
+                                if (info.isNewer) {
+                                    "new: v${info.latestVersion}"
+                                } else {
+                                    "up-to-date"
+                                }
+                            updateUrl = info.apkUrl
+                        },
+                        onFailure = { status = "error" },
+                    )
+                    checking = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !checking,
+        ) {
+            if (checking) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            } else {
+                Text("Check for updates")
+            }
+        }
+    }
+    if (status == "up-to-date") {
+        Text("You're on the latest version.", style = MaterialTheme.typography.bodySmall)
+    } else if (status == "error") {
+        Text("Couldn't check for updates.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    } else if (status == "checking") {
+        Text("Checking...", style = MaterialTheme.typography.bodySmall)
     }
 }
 
