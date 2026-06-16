@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">WebDAV Chat</string>
+    <string name="app_name">DavChat</string>
     <string name="fast_poll_channel_name">Message sync</string>
     <string name="fast_poll_channel_description">Shown when fast polling is active</string>
     <string name="fast_poll_notification_title">Open WebDAV Messenger</string>
