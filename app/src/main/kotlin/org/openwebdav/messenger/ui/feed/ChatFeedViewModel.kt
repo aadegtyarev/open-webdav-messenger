@@ -122,6 +122,7 @@ internal class ChatFeedViewModel(
             body = body ?: "",
             isMine = senderSignPub == graph.senderIdentifier,
             sendStatus = sendStatus,
+            senderName = if (senderSignPub != graph.senderIdentifier) graph.memberNames[senderSignPub] else null,
         )
 
     /** A rendered feed row — literal plain-text [body], never styled / linked / auto-loaded (SC8). */
@@ -130,6 +131,7 @@ internal class ChatFeedViewModel(
         val body: String,
         val isMine: Boolean,
         val sendStatus: String,
+        val senderName: String? = null,
     )
 
     companion object {

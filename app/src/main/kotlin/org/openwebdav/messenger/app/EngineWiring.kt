@@ -126,6 +126,7 @@ internal object EngineWiring {
         chatName: String,
         chatKey: ChatKey,
         roster: List<String>,
+        memberNames: Map<String, String> = emptyMap(),
     ) {
         val base = graph ?: return
         graph =
@@ -140,6 +141,7 @@ internal object EngineWiring {
                 identity = base.identity,
                 senderIdentifier = base.senderIdentifier,
                 roster = roster,
+                memberNames = memberNames,
             )
         // If this chat is not yet in the poll subscription list, add it and reinstall.
         if (chatId !in activeChatIds) {

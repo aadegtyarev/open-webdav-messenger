@@ -164,7 +164,8 @@ internal object AppContainer {
         val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return
         val graph = runtimeGraph() ?: return
         val roster = listOf(graph.senderIdentifier, peerId)
-        EngineWiring.switchToChat(chatId, chatName, chatKey, roster)
+        val memberNames = mapOf(peerId to chatName)
+        EngineWiring.switchToChat(chatId, chatName, chatKey, roster, memberNames)
     }
 
     /**
