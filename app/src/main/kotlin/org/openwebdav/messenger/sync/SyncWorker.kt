@@ -32,6 +32,9 @@ class SyncWorker(
         AppContainer.bind(applicationContext)
         AppContainer.ensureWarmStarted()
         val outcome = SyncRunner.current().runOnce()
+        if (outcome.newCount > 0) {
+            SyncNotifier.showMessages(applicationContext, outcome.newCount)
+        }
         return if (outcome.backedOff) Result.retry() else Result.success()
     }
 }

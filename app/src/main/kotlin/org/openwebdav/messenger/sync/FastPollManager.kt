@@ -24,7 +24,8 @@ object FastPollManager {
     private const val KEY_INTERVAL_SECONDS = "interval_seconds"
 
     /** The platform floor for foreground fast poll: 60 seconds (Android allows sub-15-min foreground). */
-    const val PLATFORM_FLOOR_SECONDS = 60L
+    /** Minimum reasonable poll interval for foreground service: 15 seconds. */
+    const val PLATFORM_FLOOR_SECONDS = 15L
 
     /** Whether fast polling is currently enabled. */
     fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
@@ -63,7 +64,15 @@ object FastPollManager {
             .putLong(KEY_INTERVAL_SECONDS, intervalSeconds)
             .apply()
         SyncScheduler.cancel(workManager)
-        FastPollService.start(context, effectiveIntervalSeconds(context))
+        // Compute effective interval from the just-passed value (not from prefs — apply() is async).
+        val communityFloor =
+            try {
+                org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds.toLong()
+            } catch (_: Exception) {
+                PLATFORM_FLOOR_SECONDS
+            }
+        val effective = maxOf(intervalSeconds, communityFloor, PLATFORM_FLOOR_SECONDS)
+        FastPollService.start(context, effective)
     }
 
     /**

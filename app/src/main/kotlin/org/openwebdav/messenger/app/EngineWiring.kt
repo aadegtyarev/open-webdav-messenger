@@ -400,15 +400,15 @@ internal class AndroidDeps(
 
     override fun schedulePoll(communityMinPollSeconds: Int?) {
         val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalSeconds.toLong()
-        val effective = SyncScheduler.effectiveIntervalSeconds(memberPref, communityMinPollSeconds)
-        // WorkManager clamps every periodic request to 15 minutes. Anything below that needs
-        // the foreground service (which shows a persistent notification — Android requirement).
+        val communityFloor = (communityMinPollSeconds ?: 0).toLong()
+        // Raw effective: user prefs + community floor, no artificial platform clamp.
+        val rawEffective = maxOf(memberPref, communityFloor.coerceAtLeast(1))
         val workManagerFloorSeconds = PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS / 1000
-        if (effective < workManagerFloorSeconds) {
-            FastPollManager.enable(appContext, WorkManager.getInstance(appContext), effective)
+        if (rawEffective < workManagerFloorSeconds) {
+            FastPollManager.enable(appContext, WorkManager.getInstance(appContext), rawEffective)
         } else {
             FastPollManager.disable(appContext, WorkManager.getInstance(appContext))
-            SyncScheduler.schedule(WorkManager.getInstance(appContext), effective)
+            SyncScheduler.schedule(WorkManager.getInstance(appContext), SyncScheduler.effectiveIntervalSeconds(memberPref, communityMinPollSeconds))
         }
     }
 }

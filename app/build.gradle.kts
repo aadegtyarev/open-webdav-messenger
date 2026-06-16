@@ -1,4 +1,5 @@
 import java.util.Base64
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -55,24 +56,26 @@ android {
     // KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD = self-explanatory
     // On local builds, also reads from signing.properties (gitignored).
     // Falls back to debug signing when neither is available.
-    val signingProps =
-        runCatching {
-            val f = File(projectDir, "signing.properties")
-            if (f.exists()) java.util.Properties().apply { f.inputStream().use { load(it) } } else null
-        }.getOrNull()
-    val keystoreB64 = System.getenv("KEYSTORE_BASE64")
-        ?: signingProps?.let { null } // file-based: keystore already on disk
+    val localKeystoreFile = File(projectDir, "release.keystore")
+    val localPropFile = File(projectDir, "signing.properties")
+    val localProps =
+        if (localPropFile.exists()) {
+            val p = Properties()
+            localPropFile.inputStream().use { p.load(it) }
+            p
+        } else {
+            null
+        }
     val releaseSigningConfig =
-        if (keystoreB64 != null || (signingProps != null && File(projectDir, "release.keystore").exists())) {
+        if (System.getenv("KEYSTORE_BASE64") != null || localKeystoreFile.exists()) {
             signingConfigs.create("release") {
-                if (keystoreB64 != null) {
-                    val keystoreFile = File(projectDir, "release.keystore")
-                    keystoreFile.writeBytes(Base64.getDecoder().decode(keystoreB64))
+                if (System.getenv("KEYSTORE_BASE64") != null) {
+                    localKeystoreFile.writeBytes(Base64.getDecoder().decode(System.getenv("KEYSTORE_BASE64")))
                 }
-                storeFile = File(projectDir, "release.keystore")
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: signingProps?.getProperty("KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("KEY_ALIAS") ?: signingProps?.getProperty("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASSWORD") ?: signingProps?.getProperty("KEY_PASSWORD")
+                storeFile = localKeystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: localProps?.getProperty("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS") ?: localProps?.getProperty("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD") ?: localProps?.getProperty("KEY_PASSWORD")
             }
         } else {
             null
@@ -188,6 +191,7 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.lifecycle.process)
     // ui-tooling is debug-only (Compose @Preview rendering); never shipped in release.
     debugImplementation(libs.compose.ui.tooling)
 
