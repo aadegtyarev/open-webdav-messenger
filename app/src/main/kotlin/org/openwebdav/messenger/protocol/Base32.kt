@@ -42,6 +42,26 @@ internal object Base32 {
         return String(out)
     }
 
+    /**
+     * Decode a Base32hex string produced by [encodeBase32HexFixed] back to a [Long].
+     * Reads 5 bits per character (big-endian) from the hex alphabet. The input must be
+     * composed entirely of valid hex-alphabet characters; throws [IllegalArgumentException]
+     * on an invalid character.
+     *
+     * Used to extract the millisecond timestamp from an order-token's `ts-millis` segment
+     * for retention-window pruning ([RetentionPruner]).
+     */
+    fun decodeBase32HexFixed(input: String): Long {
+        require(input.isNotEmpty()) { "decodeBase32HexFixed: input must not be empty" }
+        var result = 0L
+        for (c in input) {
+            val index = HEX_ALPHABET.indexOf(c)
+            require(index >= 0) { "decodeBase32HexFixed: invalid character '$c'" }
+            result = (result shl 5) or index.toLong()
+        }
+        return result
+    }
+
     private fun encode(
         bytes: ByteArray,
         alphabet: String,
