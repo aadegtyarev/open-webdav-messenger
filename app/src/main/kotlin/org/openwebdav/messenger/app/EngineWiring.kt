@@ -145,7 +145,7 @@ internal object EngineWiring {
                 senderIdentifier = base.senderIdentifier,
                 roster = roster,
             )
-            graph!!.memberNames = memberNames
+        graph!!.memberNames = memberNames
         // If this chat is not yet in the poll subscription list, add it and reinstall.
         if (chatId !in activeChatIds) {
             activeChatIds = activeChatIds + chatId

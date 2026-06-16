@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -61,7 +62,14 @@ internal fun ChatFeedScreen(
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val sendError by viewModel.sendError.collectAsStateWithLifecycle()
+    val lastSyncText by viewModel.lastSyncText.collectAsStateWithLifecycle()
+    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+
+    // Trigger a sync when the screen first appears.
+    LaunchedEffect(Unit) {
+        viewModel.syncNow()
+    }
 
     val lastMessageId = messages.lastOrNull()?.messageId
     val visibleCount = listState.layoutInfo.visibleItemsInfo.size
@@ -74,13 +82,28 @@ internal fun ChatFeedScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(viewModel.communityName) },
+                title = {
+                    Column {
+                        Text(viewModel.communityName)
+                        Text(
+                            text = lastSyncText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { viewModel.syncNow() },
+                        enabled = !isSyncing,
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh messages")
+                    }
                     IconButton(onClick = onShowInvite) {
                         Icon(Icons.Filled.PersonAdd, contentDescription = "Invite someone")
                     }

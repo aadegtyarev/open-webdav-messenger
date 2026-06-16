@@ -1,5 +1,8 @@
 package org.openwebdav.messenger.sync
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.transport.WebDavTransport
@@ -30,6 +33,11 @@ internal class SyncEngine(
     private val communityFloorReader: (suspend () -> Int?)? = null,
     private val retentionWindowReader: (suspend () -> Int?)? = null,
 ) {
+    private val _lastSyncTime = MutableStateFlow(0L)
+
+    /** Epoch millis of the last successful poll cycle (0 if never synced). Updated after a non-backed-off cycle. */
+    val lastSyncTime: StateFlow<Long> = _lastSyncTime.asStateFlow()
+
     private val sendWriter = SendWriter(transport)
     private val pollReader = PollReader(transport, envelope, store, keyProvider, clock)
 
@@ -79,6 +87,7 @@ internal class SyncEngine(
                 retentionWindowDays = retentionDays,
             )
         if (!outcome.backedOff) {
+            _lastSyncTime.value = clock()
             subscriptions.forEach { sub ->
                 pruner?.pruneChat(sub.chatId)
             }

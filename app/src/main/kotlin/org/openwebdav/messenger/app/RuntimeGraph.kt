@@ -6,6 +6,7 @@ import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.message.MessageEnvelope
+import org.openwebdav.messenger.sync.ChatSubscription
 import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.transport.ConnectionConfig
 import java.util.concurrent.atomic.AtomicLong
@@ -46,7 +47,21 @@ internal class RuntimeGraph(
 
     var memberNames: Map<String, String>
         get() = _memberNames.value
-        set(value) { _memberNames.value = value }
+        set(value) {
+            _memberNames.value = value
+        }
+
+    /** Epoch millis of the last successful poll cycle (0 = never synced). Delegates to the engine's process-scoped state. */
+    val lastSyncTime: StateFlow<Long> = engine.lastSyncTime
+
+    /**
+     * Trigger an immediate poll cycle for the current chat. Suspends until the cycle completes
+     * (engine.pollCycle is a suspend function); the engine updates [lastSyncTime] on success.
+     */
+    suspend fun requestSync() {
+        engine.pollCycle(senderIdentifier, listOf(ChatSubscription(chatId)))
+    }
+
     /**
      * Per-process, strictly-increasing per-sender sequence for the §4 order-token. The token orders the
      * feed for display only (dedup is by §2 message-id), so a per-process counter is sufficient — the
