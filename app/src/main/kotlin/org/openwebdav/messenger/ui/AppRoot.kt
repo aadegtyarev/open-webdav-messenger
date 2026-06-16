@@ -118,13 +118,13 @@ private fun AppNav() {
         Screen.CreateCommunity ->
             CreateCommunityScreen(
                 onCreated = { screen = Screen.CommunityList },
-                onBack = { screen = Screen.Start },
+                onBack = { screen = Screen.CommunityList },
             )
 
         Screen.Join ->
             JoinScreen(
                 onJoined = { screen = Screen.CommunityList },
-                onBack = { screen = Screen.Start },
+                onBack = { screen = Screen.CommunityList },
             )
 
         Screen.Feed ->
