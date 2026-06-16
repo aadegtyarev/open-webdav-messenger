@@ -38,21 +38,21 @@ _No contracts yet._
 
 ## Infrastructure (no user-facing contract)
 
-| Feature | Done | Review |
+| Feature | Shipped | Plan |
 |---|---|---|---|
-| [webdav-transport](features/webdav-transport_plan.md) | 2026-06-03 | (transient, deleted after ship) |
-| [crypto](features/crypto_plan.md) | 2026-06-03 | (transient, deleted after ship) |
-| [identity](features/identity_plan.md) | 2026-06-03 | (transient, deleted after ship) |
-| [message-model](features/message-model_plan.md) | 2026-06-04 | (transient, deleted after ship) |
-| [sync](features/sync_plan.md) | 2026-06-04 | (transient, deleted after ship) |
-| [directory](features/directory_plan.md) | 2026-06-04 | (transient, deleted after ship) |
-| [chat-directory](features/chat-directory_plan.md) | 2026-06-04 | (transient, deleted after ship) |
-| [release-ci](features/release-ci_plan.md) | 2026-06-05 | (transient, deleted after ship) |
-| [identity-store-io-dispatch](features/identity-store-io-dispatch_plan.md) | 2026-06-05 | (transient, deleted after ship) |
-| [codec-dedup-and-send-hardening](features/codec-dedup-and-send-hardening_plan.md) | 2026-06-06 | (transient, deleted after ship) |
-| [x25519-identity](features/x25519-identity_plan.md) | 2026-06-06 | (transient, deleted after ship) |
-| compression (v0.10.0) | 2026-06-14 | (autonomous, plan not preserved) |
-| history-encryption (v0.11.0) | 2026-06-14 | (autonomous, plan not preserved) |
-| foreground-polling (v0.12.0) | 2026-06-14 | (autonomous, plan not preserved) |
-| export-restore (v0.13.0) | 2026-06-14 | (autonomous, plan not preserved) |
-| [ui-chat-surface](features/ui-chat-surface_plan.md) (v0.14.0) | 2026-06-15 | Pass-1 + Pass-2 (merged) |
+| webdav-transport | 2026-06-03 | deleted |
+| crypto | 2026-06-03 | deleted |
+| identity | 2026-06-03 | deleted |
+| message-model | 2026-06-04 | deleted |
+| sync | 2026-06-04 | deleted |
+| directory | 2026-06-04 | deleted |
+| chat-directory | 2026-06-04 | deleted |
+| release-ci | 2026-06-05 | deleted |
+| identity-store-io-dispatch | 2026-06-05 | deleted |
+| codec-dedup-and-send-hardening | 2026-06-06 | deleted |
+| x25519-identity | 2026-06-06 | deleted |
+| compression (v0.10.0) | 2026-06-14 | autonomous |
+| history-encryption (v0.11.0) | 2026-06-14 | autonomous |
+| foreground-polling (v0.12.0) | 2026-06-14 | autonomous |
+| export-restore (v0.13.0) | 2026-06-14 | autonomous |
+| ui-chat-surface (v0.14.0) | 2026-06-15 | deleted |
