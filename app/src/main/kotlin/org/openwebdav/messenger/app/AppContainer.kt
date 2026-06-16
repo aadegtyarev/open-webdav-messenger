@@ -53,8 +53,9 @@ internal object AppContainer {
     /** Bind the application context (idempotent). Called from `Application.onCreate()` before [warmStart]. */
     fun bind(context: Context) {
         if (appContext == null) {
-            appContext = context.applicationContext
-            UserSettings.init(appContext!!)
+            val ctx = context.applicationContext
+            appContext = ctx
+            UserSettings.init(ctx)
         }
     }
 

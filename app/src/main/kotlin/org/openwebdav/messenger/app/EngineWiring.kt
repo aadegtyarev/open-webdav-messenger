@@ -98,16 +98,18 @@ internal object EngineWiring {
         // assigned [deps]); this guard makes the narrow process-start window explicit rather than letting
         // a lateinit access throw if a reconfigure ever raced ahead of warm-start.
         check(::deps.isInitialized) { "EngineWiring.reconfigure before initialize" }
-        graph = deps.buildGraph(config, chatId, communityName, chatKey, identity)
-        installAndSchedule(graph!!)
+        val g = deps.buildGraph(config, chatId, communityName, chatKey, identity)
+        graph = g
+        installAndSchedule(g)
     }
 
     private fun rebuildFromStore() {
         val stored = deps.loadStoredConnection() ?: return // no config → keep the no-op runner (benign clean cycle)
         val chatKey = deps.loadChatKey(stored.chatId) ?: return // key gone → stay no-op
         val identity = deps.loadIdentity() ?: return
-        graph = deps.buildGraph(stored.config, stored.chatId, stored.communityName, chatKey, identity)
-        installAndSchedule(graph!!)
+        val g = deps.buildGraph(stored.config, stored.chatId, stored.communityName, chatKey, identity)
+        graph = g
+        installAndSchedule(g)
     }
 
     private fun installAndSchedule(graph: RuntimeGraph) {
