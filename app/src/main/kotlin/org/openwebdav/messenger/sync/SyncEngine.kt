@@ -3,6 +3,7 @@ package org.openwebdav.messenger.sync
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.transport.WebDavTransport
+import kotlin.time.Duration.Companion.days
 
 /**
  * The sync orchestration seam (`docs/features/sync_plan.md` → Contracts; arch note Variant A
@@ -27,6 +28,7 @@ internal class SyncEngine(
     private val pruner: RetentionPruner? = null,
     private val onNewMessages: (suspend (outcome: CycleOutcome) -> Unit)? = null,
     private val communityFloorReader: (suspend () -> Int?)? = null,
+    private val retentionWindowReader: (suspend () -> Int?)? = null,
 ) {
     private val sendWriter = SendWriter(transport)
     private val pollReader = PollReader(transport, envelope, store, keyProvider, clock)
@@ -65,8 +67,17 @@ internal class SyncEngine(
         subscriptions: List<ChatSubscription>,
     ): CycleOutcome {
         val communityFloor = readCommunityFloor()
+        val retentionDays = readRetentionWindow()
+        if (retentionDays != null) {
+            val days = retentionDays
+            pruner?.window = days.days
+        }
         val outcome = pollReader.cycle(memberIdentifier, subscriptions)
-        val result = outcome.copy(communityMinPollMinutes = communityFloor)
+        val result =
+            outcome.copy(
+                communityMinPollMinutes = communityFloor,
+                retentionWindowDays = retentionDays,
+            )
         if (!outcome.backedOff) {
             subscriptions.forEach { sub ->
                 pruner?.pruneChat(sub.chatId)
@@ -86,6 +97,15 @@ internal class SyncEngine(
     private suspend fun readCommunityFloor(): Int? {
         return try {
             communityFloorReader?.invoke()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Read the community retention window, or null if unavailable. Best-effort — never throws. */
+    private suspend fun readRetentionWindow(): Int? {
+        return try {
+            retentionWindowReader?.invoke()
         } catch (_: Exception) {
             null
         }

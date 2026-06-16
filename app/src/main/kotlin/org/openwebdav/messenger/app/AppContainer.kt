@@ -193,6 +193,42 @@ internal object AppContainer {
     fun runtimeGraph(): RuntimeGraph? = EngineWiring.current()
 
     /**
+     * Write community metadata (poll floor + retention window) to `meta/community.json` on the WebDAV
+     * disk, signed by the host identity. Best-effort — failures are silently ignored; the next poll
+     * cycle will re-read the current value from the disk.
+     *
+     * Also updates the local UserSettings cache immediately so the settings UI reflects the new values
+     * without waiting for the next poll cycle.
+     */
+    fun updateCommunityMetadata(
+        retentionDays: Int,
+        pollMinutes: Int,
+    ) {
+        val graph = runtimeGraph() ?: return
+        GlobalScope.launch {
+            try {
+                val transport = TransportFactory.create(graph.config)
+                val metadata =
+                    CommunityMetadata(
+                        minPollIntervalMinutes = pollMinutes,
+                        retentionWindowDays = retentionDays,
+                    )
+                CommunityMetadata.write(
+                    transport = transport,
+                    metadata = metadata,
+                    hostIdentity = graph.identity,
+                    identityCrypto = identityFactory.identityCrypto(),
+                )
+                // Update local cache immediately so the UI reflects the change.
+                UserSettings.communityMinPollMinutes = pollMinutes
+                UserSettings.communityRetentionWindowDays = retentionDays
+            } catch (_: Exception) {
+                // best-effort — the next poll cycle will re-read the current value from disk
+            }
+        }
+    }
+
+    /**
      * Build the `owdm1:` invite for the [graph]'s joined chat (the owner shares it). Role-agnostic at the
      * code level (any holder of the config + key can mint one — plan: "let any member invite" is later just
      * a UI toggle). Off the UI thread (the codec gzips/base64s on its own dispatcher). The raw key bytes
@@ -250,6 +286,7 @@ internal object AppContainer {
                 identity: Identity,
                 isHost: Boolean,
             ) {
+                UserSettings.isHost = isHost
                 EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity, communityId = chatId)
                 // Write on-disk metadata (async, best-effort).
                 kotlinx.coroutines.GlobalScope.launch {

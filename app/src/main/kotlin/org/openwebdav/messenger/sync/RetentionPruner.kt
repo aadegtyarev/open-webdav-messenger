@@ -27,7 +27,7 @@ import kotlin.time.Duration.Companion.days
 internal class RetentionPruner(
     private val transport: WebDavTransport,
     private val clock: Clock = Clock.systemUTC(),
-    private val window: Duration = 14.days,
+    var window: Duration = 14.days,
 ) {
     companion object {
         /**

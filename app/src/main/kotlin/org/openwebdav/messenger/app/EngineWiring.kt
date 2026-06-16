@@ -178,6 +178,11 @@ internal object EngineWiring {
                             outcome.communityMinPollMinutes
                         deps.schedulePoll(outcome.communityMinPollMinutes)
                     }
+                    // Cache the community retention window for the settings UI.
+                    if (outcome.retentionWindowDays != null) {
+                        org.openwebdav.messenger.ui.settings.UserSettings.communityRetentionWindowDays =
+                            outcome.retentionWindowDays
+                    }
                     return outcome
                 }
             },
@@ -249,14 +254,20 @@ internal class AndroidDeps(
         val envelope = MessageEnvelope.create(crypto.messageCrypto(), identityFactory.identityCrypto())
         val transport = TransportFactory.create(config)
         val idCrypto = identityFactory.identityCrypto()
-        // The community-floor reader: best-effort read of meta/community.json signed by the host.
+        // The community-metadata reader: best-effort read of meta/community.json signed by the host.
         // For now, verify against the local identity's signing key (correct when this device IS
         // the host; for non-host members, the signature verification fails and the reader returns
         // null → fallback to the default floor). A full host-key resolution (from roster/directory)
         // is deferred to when those features are complete.
         val hostPubKey = identity.copySignPublic()
+        val communityMetadataReader: suspend () -> CommunityMetadata? = {
+            CommunityMetadata.read(transport, idCrypto, hostPubKey)
+        }
         val communityFloorReader: suspend () -> Int? = {
-            CommunityMetadata.read(transport, idCrypto, hostPubKey)?.minPollIntervalMinutes
+            communityMetadataReader()?.minPollIntervalMinutes
+        }
+        val retentionWindowReader: suspend () -> Int? = {
+            communityMetadataReader()?.retentionWindowDays
         }
         // Notification callback: show a notification when new messages arrive during background poll.
         val ctx = appContext
@@ -274,6 +285,7 @@ internal class AndroidDeps(
                 pruner = RetentionPruner(transport = transport),
                 onNewMessages = onNewMessages,
                 communityFloorReader = communityFloorReader,
+                retentionWindowReader = retentionWindowReader,
             )
         return RuntimeGraph(
             engine = engine,

@@ -25,6 +25,7 @@ import org.openwebdav.messenger.ui.invite.InviteScreen
 import org.openwebdav.messenger.ui.onboarding.CreateCommunityScreen
 import org.openwebdav.messenger.ui.onboarding.JoinScreen
 import org.openwebdav.messenger.ui.settings.SettingsScreen
+import org.openwebdav.messenger.ui.settings.UserSettings
 import org.openwebdav.messenger.ui.start.StartScreen
 
 /**
@@ -95,8 +96,23 @@ private fun AppNav() {
                 onSettings = { screen = Screen.Settings },
             )
 
-        Screen.Settings ->
-            SettingsScreen(onBack = { screen = Screen.CommunityList })
+        Screen.Settings -> {
+            val host = remember { UserSettings.isHost }
+            val retentionDays = remember { UserSettings.communityRetentionWindowDays }
+            val pollFloor = remember { UserSettings.communityMinPollMinutes }
+            SettingsScreen(
+                onBack = { screen = Screen.CommunityList },
+                isHost = host,
+                retentionWindowDays = retentionDays,
+                communityPollFloor = pollFloor,
+                onRetentionChanged = { days ->
+                    AppContainer.updateCommunityMetadata(days, UserSettings.communityMinPollMinutes)
+                },
+                onPollFloorChanged = { minutes ->
+                    AppContainer.updateCommunityMetadata(UserSettings.communityRetentionWindowDays, minutes)
+                },
+            )
+        }
 
         Screen.CreateCommunity ->
             CreateCommunityScreen(
