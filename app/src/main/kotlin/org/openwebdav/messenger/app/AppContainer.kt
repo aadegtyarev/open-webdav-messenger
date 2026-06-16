@@ -97,6 +97,76 @@ internal object AppContainer {
     /** The composed onboarding service (owner-create / member-join). */
     fun onboarding(): OnboardingService = OnboardingService(productionOnboardingDeps())
 
+    /**
+     * Group chat creation within the current community.
+     * Generates a random key, derives a chat-id from BLAKE2b(key bytes + community-id),
+     * stores the key, registers the chat, and switches to it.
+     * Returns the new chat-id on success, or `null` if the graph is absent.
+     */
+    suspend fun createGroupChat(name: String): String? {
+        val graph = runtimeGraph() ?: return null
+        val keySources = crypto.keySources()
+        val chatKey = keySources.newRandomKey()
+        // Domain-separate group chat ids: BLAKE2b("owdm/group-chat/v1" ‖ 0x1F ‖ randomBytes ‖ communityId)
+        val context = "owdm/group-chat/v1".toByteArray(Charsets.UTF_8)
+        val input = context + byteArrayOf(0x1F) + chatKey.copyBytes() + currentCommunityId.toByteArray(Charsets.UTF_8)
+        val hash = crypto.nativeCrypto().genericHash(input, 16)
+        val chatId = Hex.encode(hash)
+        crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
+        chatRegistry.add(currentCommunityId, ChatRegistry.Entry(chatId, name, "group"))
+        // Switch to the new chat — roster will be the community members.
+        openGroupChat(chatId, name)
+        return chatId
+    }
+
+    /**
+     * Open an existing group chat by [chatId]. Loads the key, loads the roster from the directory,
+     * and switches the active send-path to this chat.
+     */
+    suspend fun openGroupChat(
+        chatId: String,
+        chatName: String,
+    ) {
+        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return
+        val graph = runtimeGraph() ?: return
+        // Roster: self + all community members from the directory.
+        val roster = mutableListOf(graph.senderIdentifier)
+        val memberNames = mutableMapOf<String, String>()
+        val stored = configStore.loadStored(currentCommunityId)
+        if (stored != null) {
+            try {
+                val chatKeyForDir = crypto.chatKeyStore(requireContext()).load(stored.chatId)
+                if (chatKeyForDir != null) {
+                    val service =
+                        directoryFactory.directoryService(
+                            baseUrl = stored.config.baseUrl,
+                            username = stored.config.username,
+                            appPassword = stored.config.appPassword,
+                            communityRoot = stored.config.chatRoot,
+                        )
+                    val entries = service.readDirectory(chatKeyForDir).entries
+                    for (entry in entries) {
+                        val memberHex = Hex.encode(entry.copySigningPublicKey())
+                        if (memberHex != graph.senderIdentifier) {
+                            roster.add(memberHex)
+                        }
+                        memberNames[memberHex] = entry.displayName
+                    }
+                }
+            } catch (_: Exception) {
+                // best-effort roster — start with just self
+            }
+        }
+        EngineWiring.switchToChat(chatId, chatName, chatKey, roster, memberNames)
+    }
+
+    /** All chats registered under [communityId]. */
+    fun chatsForCommunity(communityId: String): List<ChatRegistry.Entry> = chatRegistry.all(communityId)
+
+    /** The first existing connection config, or `null` if no community exists yet. Used by the
+     *  create-community flow to offer server setting inheritance. */
+    fun existingConnectionConfig(): ConnectionConfig? = configStore.loadStored()?.config
+
     /** All joined communities from the registry. */
     fun communities(): List<CommunityRegistry.Entry> = communityRegistry.all()
 

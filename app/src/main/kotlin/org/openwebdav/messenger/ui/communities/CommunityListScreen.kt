@@ -16,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RemoveCircleOutline
@@ -27,6 +28,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -56,6 +58,7 @@ import org.openwebdav.messenger.protocol.Hex
 internal fun CommunityListScreen(
     onOpenFeed: () -> Unit,
     onCreate: () -> Unit,
+    onJoin: () -> Unit,
     onSettings: () -> Unit,
 ) {
     val communities = remember { AppContainer.communities() }
@@ -242,6 +245,63 @@ internal fun CommunityListScreen(
         )
     }
 
+    // Create group chat dialog state
+    var showCreateGroupDialog by remember { mutableStateOf(false) }
+    var newGroupName by remember { mutableStateOf("") }
+    var creatingGroup by remember { mutableStateOf(false) }
+
+    // Create group chat dialog
+    if (showCreateGroupDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!creatingGroup) showCreateGroupDialog = false },
+            title = { Text("New group chat") },
+            text = {
+                OutlinedTextField(
+                    value = newGroupName,
+                    onValueChange = { newGroupName = it },
+                    label = { Text("Chat name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !creatingGroup,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (!creatingGroup && newGroupName.isNotBlank()) {
+                            creatingGroup = true
+                            scope.launch(Dispatchers.IO) {
+                                val chatId = AppContainer.createGroupChat(newGroupName.trim())
+                                withContext(Dispatchers.Main) {
+                                    creatingGroup = false
+                                    if (chatId != null) {
+                                        showCreateGroupDialog = false
+                                        newGroupName = ""
+                                        onOpenFeed()
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    enabled = !creatingGroup && newGroupName.isNotBlank(),
+                ) {
+                    Text(if (creatingGroup) "Creating…" else "Create")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showCreateGroupDialog = false
+                        newGroupName = ""
+                    },
+                    enabled = !creatingGroup,
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -254,108 +314,180 @@ internal fun CommunityListScreen(
             )
         },
     ) { padding ->
-        if (communities.isEmpty()) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text("No communities yet.", style = MaterialTheme.typography.bodyLarge)
-                Spacer(Modifier.height(16.dp))
-            }
-        } else {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),
-            ) {
-                for (community in communities) {
-                    val isSelected = selectedCommunityId == community.id
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    AppContainer.switchToCommunity(community.id)
-                                    onOpenFeed()
-                                }
-                                .padding(16.dp)
-                                .semantics { contentDescription = community.name },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Filled.Group, contentDescription = null, modifier = Modifier.size(24.dp))
-                        Spacer(Modifier.size(12.dp))
-                        Text(
-                            community.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(onClick = {
-                            AppContainer.switchToCommunity(community.id)
-                            selectedCommunityId =
-                                if (selectedCommunityId == community.id) null else community.id
-                        }) {
-                            Icon(
-                                Icons.Filled.Group,
-                                contentDescription = "Show members",
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            if (communities.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize().weight(1f).padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text("No communities yet.", style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(16.dp))
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize().weight(1f).verticalScroll(rememberScrollState()),
+                ) {
+                    for (community in communities) {
+                        val isSelected = selectedCommunityId == community.id
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        AppContainer.switchToCommunity(community.id)
+                                        onOpenFeed()
+                                    }
+                                    .padding(16.dp)
+                                    .semantics { contentDescription = community.name },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Filled.Group, contentDescription = null, modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.size(12.dp))
+                            Text(
+                                community.name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f),
                             )
-                        }
-                    }
-
-                    // Show members for the selected community
-                    if (isSelected) {
-                        HorizontalDivider()
-                        Text(
-                            "Members",
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                        when {
-                            loadingMembers -> {
-                                Box(
-                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                                }
-                            }
-                            members == null -> {
-                                Text(
-                                    "Could not load members.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            IconButton(onClick = {
+                                AppContainer.switchToCommunity(community.id)
+                                selectedCommunityId =
+                                    if (selectedCommunityId == community.id) null else community.id
+                            }) {
+                                Icon(
+                                    Icons.Filled.Group,
+                                    contentDescription = "Show members",
                                 )
                             }
-                            members!!.isEmpty() -> {
+                        }
+
+                        // Show details for the selected community
+                        if (isSelected) {
+                            HorizontalDivider()
+
+                            // Group chats section
+                            Text(
+                                "Group chats",
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                            val chats = remember(community.id) { AppContainer.chatsForCommunity(community.id) }
+                            if (chats.isEmpty()) {
                                 Text(
-                                    "No members yet.",
+                                    "No group chats yet.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                                 )
-                            }
-                            else -> {
-                                for (member in members!!) {
-                                    MemberRow(
-                                        member = member,
-                                        isHost = isHost,
-                                        onDm = {
-                                            scope.launch(Dispatchers.IO) {
-                                                val chatId = AppContainer.startDm(member)
-                                                if (chatId != null) {
-                                                    onOpenFeed()
+                            } else {
+                                for (chat in chats) {
+                                    Row(
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, modifier = Modifier.size(20.dp))
+                                        Spacer(Modifier.width(12.dp))
+                                        Text(chat.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                        OutlinedButton(
+                                            onClick = {
+                                                scope.launch(Dispatchers.IO) {
+                                                    AppContainer.openGroupChat(chat.id, chat.name)
+                                                    withContext(Dispatchers.Main) { onOpenFeed() }
                                                 }
-                                            }
-                                        },
-                                        onRemove = {
-                                            memberToRemove = member
-                                            showConfirmDialog = true
-                                        },
-                                    )
+                                            },
+                                        ) {
+                                            Text("Open")
+                                        }
+                                    }
                                 }
                             }
+
+                            // New group chat button
+                            OutlinedButton(
+                                onClick = { showCreateGroupDialog = true },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            ) {
+                                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("New group chat")
+                            }
+
+                            HorizontalDivider()
+
+                            // Members section
+                            Text(
+                                "Members",
+                                style = MaterialTheme.typography.labelLarge,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                            when {
+                                loadingMembers -> {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                    }
+                                }
+                                members == null -> {
+                                    Text(
+                                        "Could not load members.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                    )
+                                }
+                                members!!.isEmpty() -> {
+                                    Text(
+                                        "No members yet.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                                    )
+                                }
+                                else -> {
+                                    for (member in members!!) {
+                                        MemberRow(
+                                            member = member,
+                                            isHost = isHost,
+                                            onDm = {
+                                                scope.launch(Dispatchers.IO) {
+                                                    val chatId = AppContainer.startDm(member)
+                                                    if (chatId != null) {
+                                                        onOpenFeed()
+                                                    }
+                                                }
+                                            },
+                                            onRemove = {
+                                                memberToRemove = member
+                                                showConfirmDialog = true
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                            HorizontalDivider()
+                            Spacer(Modifier.height(8.dp))
                         }
-                        HorizontalDivider()
-                        Spacer(Modifier.height(8.dp))
                     }
+                }
+            }
+
+            // Bottom buttons: Create / Join
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(onClick = onCreate, modifier = Modifier.weight(1f)) {
+                    Text("Create")
+                }
+                OutlinedButton(onClick = onJoin, modifier = Modifier.weight(1f)) {
+                    Text("Join")
                 }
             }
         }

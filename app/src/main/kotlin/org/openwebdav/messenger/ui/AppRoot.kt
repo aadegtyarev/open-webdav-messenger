@@ -93,6 +93,7 @@ private fun AppNav() {
             CommunityListScreen(
                 onOpenFeed = { screen = Screen.Feed },
                 onCreate = { screen = Screen.CreateCommunity },
+                onJoin = { screen = Screen.Join },
                 onSettings = { screen = Screen.Settings },
             )
 

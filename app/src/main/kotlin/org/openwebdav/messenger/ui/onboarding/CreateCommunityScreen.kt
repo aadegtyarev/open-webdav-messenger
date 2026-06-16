@@ -2,6 +2,7 @@ package org.openwebdav.messenger.ui.onboarding
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -26,6 +28,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +42,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.ui.OnboardingViewModelFactory
 
 /**
@@ -56,6 +60,24 @@ internal fun CreateCommunityScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var passwordVisible by remember { mutableStateOf(false) }
+
+    // Inherit server settings from the first community
+    val existingConfig = remember { AppContainer.existingConnectionConfig() }
+    val hasExistingConfig = existingConfig != null
+    var useExistingConfig by remember { mutableStateOf(hasExistingConfig) }
+
+    // Pre-fill or clear server fields when the inherit toggle changes
+    LaunchedEffect(useExistingConfig) {
+        if (useExistingConfig && existingConfig != null) {
+            viewModel.onBaseUrl(existingConfig.baseUrl)
+            viewModel.onUsername(existingConfig.username)
+            viewModel.onAppPassword(existingConfig.appPassword)
+        } else {
+            viewModel.onBaseUrl("")
+            viewModel.onUsername("")
+            viewModel.onAppPassword("")
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -78,6 +100,25 @@ internal fun CreateCommunityScreen(
                     .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Inherit server settings toggle (only shown when another community exists)
+            if (hasExistingConfig) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = useExistingConfig,
+                        onCheckedChange = { useExistingConfig = it },
+                    )
+                    Text(
+                        "Use same WebDAV server as existing community",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            val serverFieldsReadOnly = useExistingConfig && hasExistingConfig
             OutlinedTextField(
                 value = state.baseUrl,
                 onValueChange = viewModel::onBaseUrl,
@@ -85,6 +126,7 @@ internal fun CreateCommunityScreen(
                 isError = state.urlError != null,
                 supportingText = state.urlError?.let { { Text(it) } },
                 singleLine = true,
+                readOnly = serverFieldsReadOnly,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Disk address" },
             )
@@ -93,6 +135,7 @@ internal fun CreateCommunityScreen(
                 onValueChange = viewModel::onUsername,
                 label = { Text("Login") },
                 singleLine = true,
+                readOnly = serverFieldsReadOnly,
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Login" },
             )
             OutlinedTextField(
@@ -100,14 +143,17 @@ internal fun CreateCommunityScreen(
                 onValueChange = viewModel::onAppPassword,
                 label = { Text("App password") },
                 singleLine = true,
+                readOnly = serverFieldsReadOnly,
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 trailingIcon = {
-                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Icon(
-                            imageVector = if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                            contentDescription = if (passwordVisible) "Hide password" else "Show password",
-                        )
+                    if (!serverFieldsReadOnly) {
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(
+                                imageVector = if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = if (passwordVisible) "Hide password" else "Show password",
+                            )
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "App password" },
