@@ -275,7 +275,7 @@ internal fun CommunityListScreen(
                                 .fillMaxWidth()
                                 .clickable {
                                     AppContainer.switchToCommunity(community.id)
-                                    selectedCommunityId = community.id
+                                    onOpenFeed()
                                 }
                                 .padding(16.dp)
                                 .semantics { contentDescription = community.name },
@@ -290,11 +290,12 @@ internal fun CommunityListScreen(
                         )
                         IconButton(onClick = {
                             AppContainer.switchToCommunity(community.id)
-                            onOpenFeed()
+                            selectedCommunityId =
+                                if (selectedCommunityId == community.id) null else community.id
                         }) {
                             Icon(
-                                Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = "Open chat",
+                                Icons.Filled.Group,
+                                contentDescription = "Show members",
                             )
                         }
                     }
