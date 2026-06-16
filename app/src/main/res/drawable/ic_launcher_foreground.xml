@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Open WebDAV Messenger icon — adaptive icon foreground.
-  A chat bubble inside a stylized cloud, representing "messaging over your own disk."
-  Designed for Android adaptive icons (safe zone: 66dp center on 108dp canvas).
+  WebDAV Chat launcher icon — cloud (your disk) + chat bubble (messenger).
+  Safe zone: 66dp center on 108dp canvas.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -10,27 +9,27 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Cloud shape (WebDAV disk) -->
+    <!-- Cloud shape representing your WebDAV disk -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M36,64 C30,64 24,60 22,55 C16,54 12,49 12,43 C12,36 17,31 24,30 C26,22 34,17 42,18 C50,18 57,23 60,30 C67,31 72,37 72,44 C72,51 67,56 61,58 C60,62 56,65 52,66 Z" />
+        android:pathData="M32,70 C26,70 20,66 18,60 C12,58 8,52 8,46 C8,39 14,34 21,32 C23,24 31,19 39,20 C47,20 54,25 57,32 C64,34 69,40 69,47 C69,54 64,59 58,62 C57,65 53,68 49,70 Z" />
 
     <!-- Chat bubble -->
     <path
-        android:fillColor="#5B9BD5"
-        android:pathData="M36,36 L36,54 L44,54 L44,62 L54,54 L66,54 L66,36 Z" />
+        android:fillColor="#4FC3F7"
+        android:pathData="M34,36 L34,60 L42,60 L42,68 L52,60 L66,60 L66,36 Z" />
 
-    <!-- Chat bubble tail -->
+    <!-- Bubble tail -->
     <path
-        android:fillColor="#5B9BD5"
-        android:pathData="M44,54 L38,60 L44,54 Z" />
+        android:fillColor="#4FC3F7"
+        android:pathData="M42,60 L36,66 L42,60 Z" />
 
-    <!-- Message lines -->
+    <!-- Two message lines inside the bubble -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M42,41 L60,41 L60,44 L42,44 Z" />
+        android:pathData="M40,42 L62,42 L62,45 L40,45 Z" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M42,47 L56,47 L56,50 L42,50 Z" />
+        android:pathData="M40,48 L56,48 L56,51 L40,51 Z" />
 
 </vector>
