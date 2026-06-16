@@ -6,6 +6,10 @@ Items noted during planning/review, not yet scheduled. The orchestrator records 
 
 - **(F7) UI automation** — register Compose UI tests (`createComposeRule`) or `connectedAndroidTest` in quality/tools.json. No automated coverage for the chat-surface contract's 8+ behavioural guarantees.
 
+- **Forward secrecy / double ratchet** — per-message key rotation for DM chats (Signal double ratchet). Deferred 2026-06-16 — complex crypto, needs dedicated implementation session.
+
+## UI polish (2026-06-16)
+
 ## UI polish (2026-06-16)
 
 - **Font size setting** — user-configurable text scale in settings. Apply to message body, composer, and UI labels. Store in SharedPreferences. Respect system font scale as baseline, let user override.

@@ -72,6 +72,13 @@ jobs:
         if: steps.tagcheck.outputs.exists == 'false'
         run: ./gradlew assembleDebug
 
+      - name: Rename APK
+        if: steps.tagcheck.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk "app/build/outputs/apk/debug/open-webdav-messenger-${TAG}.apk"
+
       # Create + push the annotated tag with the built-in token. Because the tag and the Release are
       # in this same job, the GITHUB_TOKEN no-retrigger pitfall does not apply.
       - name: Create and push tag
@@ -91,5 +98,5 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
-          files: app/build/outputs/apk/debug/app-debug.apk
+          files: app/build/outputs/apk/debug/open-webdav-messenger-${{ steps.version.outputs.tag }}.apk
           generate_release_notes: true
