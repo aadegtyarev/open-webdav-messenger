@@ -25,6 +25,8 @@ internal class SyncEngine(
     keyProvider: ChatKeyProvider,
     private val clock: () -> Long = System::currentTimeMillis,
     private val pruner: RetentionPruner? = null,
+    private val onNewMessages: (suspend (outcome: CycleOutcome) -> Unit)? = null,
+    private val communityFloorReader: (suspend () -> Int?)? = null,
 ) {
     private val sendWriter = SendWriter(transport)
     private val pollReader = PollReader(transport, envelope, store, keyProvider, clock)
@@ -50,19 +52,42 @@ internal class SyncEngine(
      * index, fetches new envelopes, validates/dedups/persists, advances cursors. Never throws —
      * returns a typed [CycleOutcome] (the [SyncWorker] maps `backedOff` to a retry).
      *
-     * After a successful cycle (no back-off), runs retention pruning over each subscribed chat's
-     * `log/` and `changes/` entries (§1.4). Pruning is best-effort and never affects the poll outcome.
+     * Before the poll: reads the community floor (best-effort, via [communityFloorReader]). If the reader
+     * is null or fails, the floor is absent — the caller falls back to the default.
+     *
+     * After a successful cycle (no back-off): runs retention pruning over each subscribed chat's
+     * `log/` and `changes/` entries (§1.4). Then invokes [onNewMessages] if new messages were found.
+     *
+     * Pruning and notifications are best-effort and never affect the poll outcome.
      */
     suspend fun pollCycle(
         memberIdentifier: String,
         subscriptions: List<ChatSubscription>,
     ): CycleOutcome {
+        val communityFloor = readCommunityFloor()
         val outcome = pollReader.cycle(memberIdentifier, subscriptions)
+        val result = outcome.copy(communityMinPollMinutes = communityFloor)
         if (!outcome.backedOff) {
             subscriptions.forEach { sub ->
                 pruner?.pruneChat(sub.chatId)
             }
+            if (outcome.newCount > 0) {
+                try {
+                    onNewMessages?.invoke(result)
+                } catch (_: Exception) {
+                    // Notification failure is never a poll-cycle failure.
+                }
+            }
         }
-        return outcome
+        return result
+    }
+
+    /** Read the community floor, or null if unavailable. Best-effort — never throws. */
+    private suspend fun readCommunityFloor(): Int? {
+        return try {
+            communityFloorReader?.invoke()
+        } catch (_: Exception) {
+            null
+        }
     }
 }

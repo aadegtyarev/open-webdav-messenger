@@ -248,14 +248,30 @@ internal object AppContainer {
                 communityName: String,
                 chatKey: ChatKey,
                 identity: Identity,
+                isHost: Boolean,
             ) {
                 EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity, communityId = chatId)
-                // Register ourselves in the disk roster (async, best-effort).
+                // Write on-disk metadata (async, best-effort).
                 kotlinx.coroutines.GlobalScope.launch {
                     try {
-                        RosterService(TransportFactory.create(config)).addMyself(
+                        val transport = TransportFactory.create(config)
+                        // Register ourselves in the disk roster.
+                        RosterService(transport).addMyself(
                             org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
                         )
+                        // The host writes the community metadata (polling floor, etc.).
+                        if (isHost) {
+                            val metadata =
+                                CommunityMetadata(
+                                    minPollIntervalMinutes = CommunityMetadata.DEFAULT_FLOOR_MINUTES,
+                                )
+                            CommunityMetadata.write(
+                                transport = transport,
+                                metadata = metadata,
+                                hostIdentity = identity,
+                                identityCrypto = identityFactory.identityCrypto(),
+                            )
+                        }
                     } catch (_: Exception) {
                         // best-effort
                     }

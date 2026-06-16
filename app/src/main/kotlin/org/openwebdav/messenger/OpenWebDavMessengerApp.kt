@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.NotificationHelper
 import org.openwebdav.messenger.sync.FastPollManager
 
 /**
@@ -30,6 +31,7 @@ class OpenWebDavMessengerApp : Application() {
     override fun onCreate() {
         super.onCreate()
         AppContainer.bind(this)
+        NotificationHelper.createChannel(this)
         // Off the main thread: the wiring unwraps Keystore-backed secrets and may touch Room/IO.
         appScope.launch {
             try {

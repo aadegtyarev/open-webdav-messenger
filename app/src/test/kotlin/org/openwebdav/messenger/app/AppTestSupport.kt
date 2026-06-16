@@ -108,6 +108,7 @@ internal class RecordingOnboardingDeps(
         communityName: String,
         chatKey: ChatKey,
         identity: Identity,
+        isHost: Boolean,
     ) {
         reconfiguredChatId = chatId
         reconfiguredKey = chatKey

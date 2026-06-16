@@ -2,6 +2,7 @@ package org.openwebdav.messenger.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -78,6 +80,11 @@ internal fun SettingsScreen(onBack: () -> Unit) {
             )
             Spacer(Modifier.height(8.dp))
 
+            // Poll interval section
+            PollIntervalSection()
+
+            Spacer(Modifier.height(8.dp))
+
             // Text size section
             var fontScale by remember { mutableFloatStateOf(UserSettings.fontScale) }
 
@@ -116,4 +123,42 @@ internal fun SettingsScreen(onBack: () -> Unit) {
             Text("App version: v0.14.0+", style = MaterialTheme.typography.bodyMedium)
         }
     }
+}
+
+@Composable
+private fun PollIntervalSection() {
+    val communityFloor = UserSettings.communityMinPollMinutes
+    var pollInterval by remember { mutableIntStateOf(UserSettings.pollIntervalMinutes) }
+
+    Text("Poll interval", style = MaterialTheme.typography.titleMedium)
+
+    // Community floor info — non-editable.
+    Text(
+        "Community minimum: $communityFloor min",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.semantics { contentDescription = "Community poll minimum" },
+    )
+
+    Spacer(Modifier.height(4.dp))
+
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "$pollInterval min",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.semantics { contentDescription = "Poll interval" },
+        )
+    }
+
+    Slider(
+        value = pollInterval.toFloat(),
+        onValueChange = { newValue ->
+            val rounded = newValue.toInt()
+            pollInterval = rounded
+            UserSettings.pollIntervalMinutes = rounded
+        },
+        valueRange = communityFloor.toFloat()..UserSettings.MAX_POLL_INTERVAL_MINUTES.toFloat(),
+        steps = UserSettings.MAX_POLL_INTERVAL_MINUTES - communityFloor - 1,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

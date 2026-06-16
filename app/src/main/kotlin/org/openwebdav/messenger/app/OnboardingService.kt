@@ -70,7 +70,7 @@ internal class OnboardingService(
             val identity = deps.ensureIdentity()
             val chatId = deps.newChatId()
             val chatKey = deps.keySources().newRandomKey()
-            persistAndReconfigure(config, chatId, communityName.trim(), chatKey, identity)
+            persistAndReconfigure(config, chatId, communityName.trim(), chatKey, identity, isHost = true)
             CreateResult.Created(chatId, communityName.trim(), fullRoot)
         }
 
@@ -111,10 +111,11 @@ internal class OnboardingService(
         communityName: String,
         chatKey: ChatKey,
         identity: Identity,
+        isHost: Boolean = false,
     ) {
         deps.chatKeyStore().store(chatId, chatKey)
         deps.saveConfig(config, chatId, communityName)
-        deps.reconfigure(config, chatId, communityName, chatKey, identity)
+        deps.reconfigure(config, chatId, communityName, chatKey, identity, isHost)
     }
 
     private fun isHttps(url: String): Boolean = url.trim().lowercase().startsWith("https://")
@@ -148,6 +149,7 @@ internal class OnboardingService(
             communityName: String,
             chatKey: ChatKey,
             identity: Identity,
+            isHost: Boolean = false,
         )
     }
 

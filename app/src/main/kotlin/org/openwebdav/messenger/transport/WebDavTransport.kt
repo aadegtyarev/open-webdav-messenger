@@ -55,6 +55,39 @@ internal class WebDavTransport(
     }
 
     /**
+     * GET a **raw** file at [path] without content-hash verification. For named metadata files
+     * (`meta/community.json`, `meta/roster.json`) whose integrity is protected by an application-layer
+     * mechanism (Ed25519 signature) rather than content-addressed naming.
+     *
+     * Bounded by [MAX_METADATA_FILE_BYTES] (64 KiB — metadata files are small JSON). Returns the raw
+     * file bytes on success, or a typed error. A 404 is [WebDavResult.TransportError] (unlike
+     * message reads where 404 is not-ready) so the caller can distinguish "file missing" from
+     * "file empty/corrupt".
+     */
+    suspend fun readRaw(path: String): WebDavResult<ByteArray> {
+        gate(path)?.let { return it }
+        return executor.execute(requests.get(path)) { response ->
+            if (response.code == HTTP_NOT_FOUND) {
+                WebDavResult.TransportError(code = 404, message = "not found: $path")
+            } else if (!response.isSuccessful) {
+                httpError(response)
+            } else {
+                val bytes = response.body?.bytes()
+                if (bytes == null || bytes.isEmpty()) {
+                    WebDavResult.TransportError(code = null, message = "empty body: $path")
+                } else if (bytes.size > MAX_METADATA_FILE_BYTES) {
+                    WebDavResult.TransportError(
+                        code = null,
+                        message = "oversize metadata: $path (${bytes.size} > $MAX_METADATA_FILE_BYTES)",
+                    )
+                } else {
+                    WebDavResult.Success(bytes)
+                }
+            }
+        }
+    }
+
+    /**
      * GET a **content-addressed** file whose whole name is `b32lower(SHA-256(file-bytes))[0:N]` (the
      * §10.4 directory-entry naming), as opposed to a §2 message-id (`order-token "~" content-hash`).
      * Verifies the §3 / §10.6 on-read content-hash: the recomputed `b32lower(SHA-256(file-bytes))[0:N]`
@@ -255,6 +288,9 @@ internal class WebDavTransport(
          * realistic encrypted text message while bounding the OOM-DoS surface (review finding 1).
          */
         const val MAX_MESSAGE_FILE_BYTES = 1L * 1024 * 1024
+
+        /** Hard cap on a single metadata file body (e.g. `meta/community.json`). */
+        const val MAX_METADATA_FILE_BYTES = 64L * 1024
     }
 }
 

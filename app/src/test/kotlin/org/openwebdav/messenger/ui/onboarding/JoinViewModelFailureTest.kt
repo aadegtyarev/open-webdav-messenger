@@ -83,6 +83,7 @@ class JoinViewModelFailureTest {
             communityName: String,
             chatKey: ChatKey,
             identity: Identity,
+            isHost: Boolean,
         ) = error("not reached")
 
         override suspend fun checkFolder(

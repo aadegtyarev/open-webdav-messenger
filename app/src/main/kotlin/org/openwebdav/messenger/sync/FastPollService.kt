@@ -51,11 +51,11 @@ class FastPollService : Service() {
         startId: Int,
     ): Int {
         // When the intent is null (START_STICKY restart after process kill), read the persisted
-        // interval from SharedPreferences so the user-configured interval survives the restart.
+        // effective interval so the user-configured interval (clamped to community floor) survives.
         val intervalMinutes =
             intent?.getLongExtra(EXTRA_INTERVAL_MINUTES, -1L)
                 ?.takeIf { it > 0 }
-                ?: FastPollManager.intervalMinutes(this)
+                ?: FastPollManager.effectiveIntervalMinutes(this)
 
         val notification = buildNotification(intervalMinutes)
         startForeground(NOTIFICATION_ID, notification)
