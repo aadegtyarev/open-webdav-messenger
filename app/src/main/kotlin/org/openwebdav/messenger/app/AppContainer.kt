@@ -252,8 +252,18 @@ internal object AppContainer {
      * or empty if the community is not found or the directory read fails.
      */
     suspend fun loadMembers(communityId: String): List<DirectoryEntry> {
-        val stored = configStore.loadStored(communityId) ?: return emptyList()
-        val chatKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return emptyList()
+        val stored = configStore.loadStored(communityId)
+        if (stored == null) {
+            android.util.Log.w("AppContainer", "loadMembers: no stored config for $communityId")
+            return emptyList()
+        }
+        android.util.Log.d("AppContainer", "loadMembers: loaded config, chatId=${stored.chatId}")
+        val chatKey = crypto.chatKeyStore(requireContext()).load(stored.chatId)
+        if (chatKey == null) {
+            android.util.Log.w("AppContainer", "loadMembers: no chat key for ${stored.chatId}")
+            return emptyList()
+        }
+        android.util.Log.d("AppContainer", "loadMembers: loaded chat key, reading directory...")
         val service =
             directoryFactory.directoryService(
                 baseUrl = stored.config.baseUrl,
@@ -262,8 +272,11 @@ internal object AppContainer {
                 communityRoot = stored.config.chatRoot,
             )
         return try {
-            service.readDirectory(chatKey).entries
-        } catch (_: Exception) {
+            val dir = service.readDirectory(chatKey)
+            android.util.Log.d("AppContainer", "loadMembers: read ${dir.entries.size} entries")
+            dir.entries
+        } catch (e: Exception) {
+            android.util.Log.e("AppContainer", "loadMembers: directory read failed", e)
             emptyList()
         }
     }

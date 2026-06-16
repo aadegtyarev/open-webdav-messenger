@@ -53,22 +53,35 @@ android {
     // Release signing: reads keystore from environment variables set by CI.
     // KEYSTORE_BASE64 = base64-encoded .keystore file
     // KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD = self-explanatory
-    // On local builds without these vars, falls back to debug signing.
+    // On local builds, also reads from signing.properties (gitignored).
+    // Falls back to debug signing when neither is available.
+    val signingProps =
+        runCatching {
+            val f = File(projectDir, "signing.properties")
+            if (f.exists()) java.util.Properties().apply { f.inputStream().use { load(it) } } else null
+        }.getOrNull()
+    val keystoreB64 = System.getenv("KEYSTORE_BASE64")
+        ?: signingProps?.let { null } // file-based: keystore already on disk
     val releaseSigningConfig =
-        if (System.getenv("KEYSTORE_BASE64") != null) {
+        if (keystoreB64 != null || (signingProps != null && File(projectDir, "release.keystore").exists())) {
             signingConfigs.create("release") {
-                val keystoreFile = File(projectDir, "release.keystore")
-                keystoreFile.writeBytes(Base64.getDecoder().decode(System.getenv("KEYSTORE_BASE64")))
-                storeFile = keystoreFile
-                storePassword = System.getenv("KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASSWORD")
+                if (keystoreB64 != null) {
+                    val keystoreFile = File(projectDir, "release.keystore")
+                    keystoreFile.writeBytes(Base64.getDecoder().decode(keystoreB64))
+                }
+                storeFile = File(projectDir, "release.keystore")
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: signingProps?.getProperty("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS") ?: signingProps?.getProperty("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD") ?: signingProps?.getProperty("KEY_PASSWORD")
             }
         } else {
             null
         }
 
     buildTypes {
+        debug {
+            if (releaseSigningConfig != null) signingConfig = releaseSigningConfig
+        }
         release {
             isMinifyEnabled = false
             if (releaseSigningConfig != null) signingConfig = releaseSigningConfig
