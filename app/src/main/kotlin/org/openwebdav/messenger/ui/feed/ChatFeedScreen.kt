@@ -30,11 +30,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -66,6 +69,14 @@ internal fun ChatFeedScreen(
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     val memberNamesError by viewModel.memberNamesError.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Show member-names error as a one-shot snackbar, then clear.
+    LaunchedEffect(memberNamesError) {
+        memberNamesError?.let {
+            snackbarHostState.showSnackbar(it)
+        }
+    }
 
     // Trigger a sync when the screen first appears.
     LaunchedEffect(Unit) {
@@ -81,6 +92,7 @@ internal fun ChatFeedScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -120,14 +132,6 @@ internal fun ChatFeedScreen(
             )
         },
     ) { padding ->
-        if (memberNamesError != null) {
-            Text(
-                text = memberNamesError!!,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(padding).padding(horizontal = 12.dp, vertical = 4.dp),
-            )
-        }
         if (messages.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("No messages yet — say hello.", style = MaterialTheme.typography.bodyLarge)
