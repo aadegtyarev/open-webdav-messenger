@@ -269,38 +269,48 @@ private fun PollFloorSection(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
     val communityFloor = UserSettings.communityMinPollSeconds
-    var pollInterval by remember { mutableIntStateOf(UserSettings.pollIntervalSeconds) }
+    var selected by remember { mutableIntStateOf(UserSettings.pollIntervalSeconds) }
+    var expanded by remember { mutableStateOf(false) }
+    val options =
+        generateSequence(communityFloor) { it + 60 }
+            .takeWhile { it <= UserSettings.MAX_POLL_INTERVAL_SECONDS }
+            .toList()
     val scope = rememberCoroutineScope()
 
     Text("My poll interval", style = MaterialTheme.typography.titleMedium)
 
-    Row(modifier = Modifier.fillMaxWidth()) {
-        val label = UserSettings.formatPollInterval(pollInterval)
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.semantics { contentDescription = "Poll interval" },
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        OutlinedTextField(
+            value = UserSettings.formatPollInterval(selected),
+            onValueChange = {},
+            readOnly = true,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
         )
-    }
-
-    Slider(
-        value = pollInterval.toFloat(),
-        onValueChange = { newValue ->
-            val rounded = newValue.toInt()
-            if (rounded != pollInterval) {
-                pollInterval = rounded
-                UserSettings.pollIntervalSeconds = rounded
-                val label = UserSettings.formatPollInterval(rounded)
-                scope.launch { snackbarHostState.showSnackbar("Poll interval: $label") }
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { seconds ->
+                DropdownMenuItem(
+                    text = { Text(UserSettings.formatPollInterval(seconds)) },
+                    onClick = {
+                        selected = seconds
+                        expanded = false
+                        UserSettings.pollIntervalSeconds = seconds
+                        scope.launch { snackbarHostState.showSnackbar("My interval: ${UserSettings.formatPollInterval(seconds)}") }
+                    },
+                )
             }
-        },
-        valueRange = communityFloor.toFloat()..UserSettings.MAX_POLL_INTERVAL_SECONDS.toFloat(),
-        steps = UserSettings.MAX_POLL_INTERVAL_SECONDS - communityFloor - 1,
-        modifier = Modifier.fillMaxWidth(),
-    )
+        }
+    }
 }
 
 @Composable
