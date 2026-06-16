@@ -163,9 +163,15 @@ internal object AppContainer {
     /** All chats registered under [communityId]. */
     fun chatsForCommunity(communityId: String): List<ChatRegistry.Entry> = chatRegistry.all(communityId)
 
-    /** The first existing connection config, or `null` if no community exists yet. Used by the
+    /** The first existing connection config from a community the user hosts, or `null`. Used by the
      *  create-community flow to offer server setting inheritance. */
-    fun existingConnectionConfig(): ConnectionConfig? = configStore.loadStored()?.config
+    fun existingConnectionConfig(): ConnectionConfig? {
+        for (community in communityRegistry.all()) {
+            val stored = configStore.loadStored(community.chatId) ?: continue
+            return stored.config
+        }
+        return configStore.loadStored()?.config
+    }
 
     /** All joined communities from the registry. */
     fun communities(): List<CommunityRegistry.Entry> = communityRegistry.all()
