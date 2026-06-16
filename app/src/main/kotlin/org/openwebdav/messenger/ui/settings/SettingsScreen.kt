@@ -378,12 +378,18 @@ private fun UpdateSection() {
                 onClick = {
                     if (checking) return@Button
                     checking = true
+                    status = "downloading"
                     scope.launch(Dispatchers.IO) {
                         val result = UpdateChecker.downloadApk(context, updateUrl)
                         withContext(Dispatchers.Main) {
                             result.fold(
-                                onSuccess = { file -> UpdateChecker.installApk(context, file) },
-                                onFailure = { status = "Download failed" },
+                                onSuccess = { file ->
+                                    status = "installing"
+                                    UpdateChecker.installApk(context, file)
+                                },
+                                onFailure = {
+                                    status = "download-failed"
+                                },
                             )
                             checking = false
                         }
@@ -391,14 +397,22 @@ private fun UpdateSection() {
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                if (checking) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                } else {
-                    Text("Update")
-                }
+                if (checking) CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                else Text("Update")
             }
         }
-        status == "error" -> {
+        status == "downloading" -> {
+            Button(onClick = {}, modifier = Modifier.fillMaxWidth(), enabled = false) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            }
+            Text("Downloading…", style = MaterialTheme.typography.bodySmall)
+        }
+        status == "installing" -> {
+            Text("Opening installer…", style = MaterialTheme.typography.bodySmall)
+        }
+        status == "download-failed" -> {
+            Text("Download failed. Check your connection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Button(
             Button(
                 onClick = {
                     if (checking) return@Button
