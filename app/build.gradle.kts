@@ -30,8 +30,8 @@ android {
         applicationId = "org.openwebdav.messenger"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "0.15.0"
+        versionCode = 18
+        versionName = "0.15.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -48,9 +48,28 @@ android {
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
+    // Release signing: reads keystore from environment variables set by CI.
+    // KEYSTORE_BASE64 = base64-encoded .keystore file
+    // KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD = self-explanatory
+    // On local builds without these vars, falls back to debug signing.
+    val releaseSigningConfig =
+        if (System.getenv("KEYSTORE_BASE64") != null) {
+            signingConfigs.create("release") {
+                val keystoreFile = File(projectDir, "release.keystore")
+                keystoreFile.writeBytes(java.util.Base64.getDecoder().decode(System.getenv("KEYSTORE_BASE64")))
+                storeFile = keystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        } else {
+            null
+        }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (releaseSigningConfig != null) signingConfig = releaseSigningConfig
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
