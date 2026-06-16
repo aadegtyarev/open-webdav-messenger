@@ -138,5 +138,7 @@ class AppRootTest {
         }
 
         override fun schedulePoll() = Unit
+
+        override fun communityChatIds(communityId: String): List<String> = listOf(chatId)
     }
 }

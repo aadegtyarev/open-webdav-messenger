@@ -13,6 +13,7 @@ import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.identity.IdentityLoadResult
+import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
@@ -50,6 +51,12 @@ internal object EngineWiring {
     private var graph: RuntimeGraph? = null
 
     @Volatile
+    private var communityId: String = "default"
+
+    @Volatile
+    private var activeChatIds: List<String> = emptyList()
+
+    @Volatile
     private lateinit var deps: Deps
 
     private val _ready = MutableStateFlow(false)
@@ -62,7 +69,7 @@ internal object EngineWiring {
      */
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
-    /** The composed graph for the joined chat, or `null` if no config exists yet (no chat joined). */
+    /** The composed graph for the active chat, or `null` if no config exists yet (no chat joined). */
     fun current(): RuntimeGraph? = graph
 
     /** Suspend until process-start [initialize] has resolved the graph (used by the cold-start poll path). */
@@ -85,7 +92,8 @@ internal object EngineWiring {
     /**
      * Rebuild the graph after the onboarding flow persisted a new config + stored the chat key. The
      * [identity] and raw-imported [chatKey] are passed in (the onboarding ViewModel already loaded/minted
-     * them) so the rebuild does not re-read them.
+     * them) so the rebuild does not re-read them. [communityId] identifies the community for multi-chat
+     * subscription enumeration.
      */
     fun reconfigure(
         config: ConnectionConfig,
@@ -93,30 +101,73 @@ internal object EngineWiring {
         communityName: String,
         chatKey: ChatKey,
         identity: Identity,
+        communityId: String = "default",
     ) {
         // Onboarding can only run after the UI is shown, which waits on [ready] (i.e. after [initialize]
         // assigned [deps]); this guard makes the narrow process-start window explicit rather than letting
         // a lateinit access throw if a reconfigure ever raced ahead of warm-start.
         check(::deps.isInitialized) { "EngineWiring.reconfigure before initialize" }
+        this.communityId = communityId
+        val allChats = deps.communityChatIds(communityId)
         val g = deps.buildGraph(config, chatId, communityName, chatKey, identity)
         graph = g
+        activeChatIds = allChats
         installAndSchedule(g)
+    }
+
+    /**
+     * Switch the active send-path chat within the current community (e.g. from community chat to a DM).
+     * The poll subscriptions (all community chats) stay unchanged; only the active [RuntimeGraph] is
+     * replaced so the send path uses the correct [chatId], [chatKey], display name, and roster.
+     */
+    fun switchToChat(
+        chatId: String,
+        chatName: String,
+        chatKey: ChatKey,
+        roster: List<String>,
+    ) {
+        val base = graph ?: return
+        graph =
+            RuntimeGraph(
+                engine = base.engine,
+                store = base.store,
+                envelope = base.envelope,
+                config = base.config,
+                chatId = chatId,
+                communityName = chatName,
+                chatKey = chatKey,
+                identity = base.identity,
+                senderIdentifier = base.senderIdentifier,
+                roster = roster,
+            )
+        // If this chat is not yet in the poll subscription list, add it and reinstall.
+        if (chatId !in activeChatIds) {
+            activeChatIds = activeChatIds + chatId
+            installAndSchedule(graph!!)
+        }
     }
 
     private fun rebuildFromStore() {
         val stored = deps.loadStoredConnection() ?: return // no config → keep the no-op runner (benign clean cycle)
         val chatKey = deps.loadChatKey(stored.chatId) ?: return // key gone → stay no-op
         val identity = deps.loadIdentity() ?: return
+        val allChats = deps.communityChatIds(communityId)
         val g = deps.buildGraph(stored.config, stored.chatId, stored.communityName, chatKey, identity)
         graph = g
+        activeChatIds = allChats
         installAndSchedule(g)
     }
 
-    private fun installAndSchedule(graph: RuntimeGraph) {
-        val subscriptions = listOf(ChatSubscription(graph.chatId))
+    private fun installAndSchedule(g: RuntimeGraph) {
+        val subscriptions =
+            if (activeChatIds.isNotEmpty()) {
+                activeChatIds.map { ChatSubscription(it) }
+            } else {
+                listOf(ChatSubscription(g.chatId))
+            }
         SyncRunner.install(
             object : SyncRunner {
-                override suspend fun runOnce(): CycleOutcome = graph.engine.pollCycle(graph.senderIdentifier, subscriptions)
+                override suspend fun runOnce(): CycleOutcome = g.engine.pollCycle(g.senderIdentifier, subscriptions)
             },
         )
         deps.schedulePoll()
@@ -138,6 +189,9 @@ internal object EngineWiring {
             identity: Identity,
         ): RuntimeGraph
 
+        /** All chat-ids in the active community (for multi-chat poll subscriptions). */
+        fun communityChatIds(communityId: String): List<String>
+
         fun schedulePoll()
     }
 }
@@ -155,16 +209,21 @@ internal class AndroidDeps(
     private val crypto: CryptoFactory,
     private val identityFactory: IdentityFactory,
     private val configStore: ConnectionConfigStore,
+    private val chatRegistry: ChatRegistry,
 ) : EngineWiring.Deps {
+    private val chatKeyStore by lazy { crypto.chatKeyStore(appContext) }
+
     override fun loadStoredConnection(): StoredConnection? = configStore.loadStored()
 
-    override fun loadChatKey(chatId: String): ChatKey? = crypto.chatKeyStore(appContext).load(chatId)
+    override fun loadChatKey(chatId: String): ChatKey? = chatKeyStore.load(chatId)
 
     override fun loadIdentity(): Identity? =
         when (val result = identityFactory.identityStore(appContext).load()) {
             is IdentityLoadResult.Loaded -> result.identity
             else -> null // None (nothing joined yet) or Unrecoverable — onboarding surfaces it
         }
+
+    override fun communityChatIds(communityId: String): List<String> = chatRegistry.all(communityId).map { it.id }
 
     override fun buildGraph(
         config: ConnectionConfig,
@@ -181,7 +240,7 @@ internal class AndroidDeps(
                 transport = TransportFactory.create(config),
                 envelope = envelope,
                 store = store,
-                keyProvider = { requested -> if (requested == chatId) chatKey else null },
+                keyProvider = { requested -> chatKeyStore.load(requested) ?: if (requested == chatId) chatKey else null },
             )
         return RuntimeGraph(
             engine = engine,
