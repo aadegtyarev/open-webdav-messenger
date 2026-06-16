@@ -64,19 +64,33 @@ internal object UpdateChecker {
             }
         }
 
-    /** Download the APK from [url] to a cache file. Returns the file on success. */
+    /** Download the APK from [url] to a cache file, reporting [onProgress] (0f..1f). */
     suspend fun downloadApk(
         context: Context,
         url: String,
+        onProgress: suspend (Float) -> Unit = {},
     ): Result<File> =
         withContext(Dispatchers.IO) {
             try {
                 val connection = URL(url).openConnection() as HttpURLConnection
                 connection.connectTimeout = 30_000
                 connection.readTimeout = 120_000
+                val totalBytes = connection.contentLengthLong
                 val apkFile = File(context.cacheDir, "update.apk")
                 FileOutputStream(apkFile).use { out ->
-                    connection.inputStream.use { it.copyTo(out) }
+                    connection.inputStream.use { input ->
+                        val buffer = ByteArray(8192)
+                        var bytesRead: Int
+                        var totalRead = 0L
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            out.write(buffer, 0, bytesRead)
+                            totalRead += bytesRead
+                            if (totalBytes > 0) {
+                                val progress = (totalRead.toFloat() / totalBytes).coerceIn(0f, 1f)
+                                withContext(Dispatchers.Main) { onProgress(progress) }
+                            }
+                        }
+                    }
                 }
                 connection.disconnect()
                 Result.success(apkFile)

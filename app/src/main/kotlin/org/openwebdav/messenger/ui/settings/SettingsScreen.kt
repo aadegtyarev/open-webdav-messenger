@@ -23,6 +23,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
@@ -390,6 +391,7 @@ private fun UpdateSection() {
     var status by remember { mutableStateOf("") }
     var updateUrl by remember { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
 
     Text("Updates", style = MaterialTheme.typography.titleMedium)
@@ -404,7 +406,9 @@ private fun UpdateSection() {
                     checking = true
                     status = "downloading"
                     scope.launch(Dispatchers.IO) {
-                        val result = UpdateChecker.downloadApk(context, updateUrl)
+                        val result = UpdateChecker.downloadApk(context, updateUrl) { progress ->
+                            downloadProgress = progress
+                        }
                         withContext(Dispatchers.Main) {
                             result.fold(
                                 onSuccess = { file ->
@@ -428,10 +432,9 @@ private fun UpdateSection() {
         }
 
         status == "downloading" -> {
-            Button(onClick = {}, modifier = Modifier.fillMaxWidth(), enabled = false) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp))
-            }
-            Text("Downloading\u2026", style = MaterialTheme.typography.bodySmall)
+            val pct = (downloadProgress * 100).toInt()
+            Text("Downloading\u2026 $pct%", style = MaterialTheme.typography.bodySmall)
+            LinearProgressIndicator(progress = { downloadProgress }, modifier = Modifier.fillMaxWidth())
         }
 
         status == "installing" -> {
