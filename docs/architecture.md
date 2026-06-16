@@ -133,7 +133,7 @@ Package root: `org.openwebdav.messenger` under `app/src/main/kotlin/`.
 
 ## Release flow
 
-PR-checks (`pr-checks.yml`): on every PR to `main`, runs `./gradlew test ktlintCheck lint` + gitleaks (SC21). Release (`release.yml`): on push to `main`, auto-tags, publishes debug APK. Idempotent. Debug-signing only; `connectedAndroidTest` not in CI.
+PR-checks (`pr-checks.yml`): on every PR to `main`, runs the review-beat quality suite via `node .ai-dev/quality/run.mjs review` — currently secret-scan (SC21) only. Build-beat tools (`./gradlew test ktlintCheck lint`) run locally before pushing: `node .ai-dev/quality/run.mjs build`. Release (`release.yml`): on push to `main`, auto-tags, publishes debug APK. Idempotent. Debug-signing only; `connectedAndroidTest` not in CI.
 
 ## Code conventions
 
