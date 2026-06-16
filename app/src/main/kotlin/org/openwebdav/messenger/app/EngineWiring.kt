@@ -10,7 +10,9 @@ import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
+import org.openwebdav.messenger.directory.CredentialRotation
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.identity.IdentityLoadResult
 import org.openwebdav.messenger.keystore.ChatRegistry
@@ -26,6 +28,7 @@ import org.openwebdav.messenger.sync.SyncRunner
 import org.openwebdav.messenger.sync.SyncScheduler
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
+import org.openwebdav.messenger.transport.WebDavResult
 
 /**
  * The app's single composition root (`ui-chat-surface` arch note Choice 1, RECOMMENDED Option A),
@@ -171,6 +174,60 @@ internal object EngineWiring {
         SyncRunner.install(
             object : SyncRunner {
                 override suspend fun runOnce(): CycleOutcome {
+                    // Pre-poll credential rotation check: if the host rotated the WebDAV credential,
+                    // a blob at meta/credentials/<mySignPubHex> exists on disk. Download it, open it
+                    // with our box keypair, verify the host's Ed25519 signature, and auto-replace the
+                    // local config so the poll cycle below uses the new credential.
+                    val mySignPubHex = g.senderIdentifier
+                    val credentialPath = "meta/credentials/$mySignPubHex"
+                    val idCrypto = deps.identityCrypto()
+                    try {
+                        val blob = deps.readRawFile(g.config, credentialPath)
+                        if (blob != null) {
+                            val newConfig =
+                                CredentialRotation.openForMember(
+                                    blob = blob,
+                                    identity = g.identity,
+                                    identityCrypto = idCrypto,
+                                )
+                            if (newConfig != null) {
+                                // Apply the new credential: persist it and rebuild the engine so
+                                // the poll cycle below (and all future cycles) use the new URL.
+                                if (deps.saveRotatedConfig(newConfig, g.chatId, g.communityName)) {
+                                    // Delete the credential blob from disk (best-effort — if it
+                                    // stays, the next cycle re-opens and no-ops idempotently).
+                                    try {
+                                        val delTransport = TransportFactory.create(newConfig)
+                                        @Suppress("TooGenericExceptionCaught")
+                                        delTransport.delete(credentialPath)
+                                    } catch (_: Exception) {
+                                        // best-effort — blob stays on disk, next cycle retries
+                                    }
+                                    // Rebuild the engine with the new config. The current graph
+                                    // fields (chatId, communityName, chatKey, identity) stay the same;
+                                    // only the ConnectionConfig changes.
+                                    reconfigure(
+                                        config = newConfig,
+                                        chatId = g.chatId,
+                                        communityName = g.communityName,
+                                        chatKey = g.chatKey,
+                                        identity = g.identity,
+                                        communityId = communityId,
+                                    )
+                                    // Return immediately — the engine was rebuilt with the new
+                                    // credential; the next scheduled poll will use it.
+                                    return CycleOutcome(
+                                        newCount = 0,
+                                        skippedCount = 0,
+                                        backedOff = false,
+                                    )
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // Credential check failure is never a poll failure — the next cycle retries.
+                    }
+
                     val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions)
                     // Cache the community floor for the settings UI and reschedule.
                     if (outcome.communityMinPollMinutes != null) {
@@ -197,6 +254,24 @@ internal object EngineWiring {
         fun loadChatKey(chatId: String): ChatKey?
 
         fun loadIdentity(): Identity?
+
+        fun identityCrypto(): IdentityCrypto
+
+        /** Read a raw WebDAV file at [path] using the [config], or null on any failure. */
+        suspend fun readRawFile(
+            config: ConnectionConfig,
+            path: String,
+        ): ByteArray?
+
+        /**
+         * Save [newConfig] to the config store with the existing [chatId] and [communityName].
+         * Returns `true` on success.
+         */
+        fun saveRotatedConfig(
+            newConfig: ConnectionConfig,
+            chatId: String,
+            communityName: String,
+        ): Boolean
 
         fun buildGraph(
             config: ConnectionConfig,
@@ -239,6 +314,29 @@ internal class AndroidDeps(
             is IdentityLoadResult.Loaded -> result.identity
             else -> null // None (nothing joined yet) or Unrecoverable — onboarding surfaces it
         }
+
+    override fun identityCrypto(): IdentityCrypto = identityFactory.identityCrypto()
+
+    override suspend fun readRawFile(
+        config: ConnectionConfig,
+        path: String,
+    ): ByteArray? {
+        val transport = TransportFactory.create(config)
+        return when (val result = transport.readRaw(path)) {
+            is WebDavResult.Success -> result.value
+            else -> null
+        }
+    }
+
+    override fun saveRotatedConfig(
+        newConfig: ConnectionConfig,
+        chatId: String,
+        communityName: String,
+    ): Boolean {
+        val stored = configStore.loadStored() ?: return false
+        configStore.save(newConfig, stored.chatId, stored.communityName)
+        return true
+    }
 
     override fun communityChatIds(communityId: String): List<String> = chatRegistry.all(communityId).map { it.id }
 

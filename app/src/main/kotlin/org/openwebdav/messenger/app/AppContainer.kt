@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
+import org.openwebdav.messenger.directory.CredentialRotation
 import org.openwebdav.messenger.directory.DirectoryEntry
 import org.openwebdav.messenger.directory.DirectoryFactory
 import org.openwebdav.messenger.directory.RemoteChatProvisioner
@@ -226,6 +227,102 @@ internal object AppContainer {
                 // best-effort — the next poll cycle will re-read the current value from disk
             }
         }
+    }
+
+    /** Whether the current user is the host of the active community. */
+    val isHost: Boolean get() = UserSettings.isHost
+
+    /**
+     * Rotate the WebDAV credential for all members EXCEPT [excludeMemberSignPub]. The host provides a new
+     * [newUrl], [newUsername], and [newPassword]; the method reads the current verified member list from
+     * the directory, seals the new config for each member (except the excluded one) via
+     * [CredentialRotation.sealForMember], writes each blob to `meta/credentials/<memberSignPubHex>` on
+     * the WebDAV disk, and updates the local [ConnectionConfig] via [configStore].
+     *
+     * Returns `true` on success (all blobs written + local config updated), `false` on any failure.
+     * Best-effort: a partial write (some members written, some failed) is still reported as failure;
+     * the host re-runs to retry.
+     */
+    suspend fun rotateCredential(
+        newUrl: String,
+        newUsername: String,
+        newPassword: String,
+        excludeMemberSignPub: String,
+    ): Boolean {
+        val graph = runtimeGraph() ?: return false
+        val stored = configStore.loadStored(activeCommunityId) ?: return false
+        val chatKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return false
+
+        // Read verified members from the directory.
+        val service =
+            directoryFactory.directoryService(
+                baseUrl = stored.config.baseUrl,
+                username = stored.config.username,
+                appPassword = stored.config.appPassword,
+                communityRoot = stored.config.chatRoot,
+            )
+        val members =
+            try {
+                service.readDirectory(chatKey).entries
+            } catch (_: Exception) {
+                return false
+            }
+
+        val idCrypto = identityFactory.identityCrypto()
+        val hostIdentity = graph.identity
+        val newConfig =
+            ConnectionConfig(
+                baseUrl = newUrl,
+                username = newUsername,
+                appPassword = newPassword,
+                chatRoot = stored.config.chatRoot,
+            )
+        val transport = TransportFactory.create(graph.config)
+
+        // Ensure meta/credentials/ exists.
+        transport.ensureCollection("meta/credentials")
+
+        var allOk = true
+        for (member in members) {
+            val memberHex = Hex.encode(member.copySigningPublicKey())
+            if (memberHex == excludeMemberSignPub) continue
+
+            try {
+                val blob =
+                    CredentialRotation.sealForMember(
+                        config = newConfig,
+                        memberBoxPublicKey = member.copyBoxPublicKey(),
+                        identityCrypto = idCrypto,
+                        hostIdentity = hostIdentity,
+                    )
+                val path = "meta/credentials/$memberHex"
+                val result = transport.write(path, blob)
+                if (result !is WebDavResult.Success) {
+                    allOk = false
+                }
+            } catch (_: Exception) {
+                allOk = false
+            }
+        }
+
+        // Update local config so the host uses the new credential.
+        if (allOk) {
+            configStore.save(
+                newConfig,
+                stored.chatId,
+                stored.communityName,
+                communityId = activeCommunityId,
+            )
+            EngineWiring.reconfigure(
+                config = newConfig,
+                chatId = stored.chatId,
+                communityName = stored.communityName,
+                chatKey = chatKey,
+                identity = hostIdentity,
+                communityId = activeCommunityId,
+            )
+        }
+        return allOk
     }
 
     /**

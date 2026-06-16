@@ -19,15 +19,19 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +50,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.directory.DirectoryEntry
+import org.openwebdav.messenger.protocol.Hex
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,6 +64,18 @@ internal fun CommunityListScreen(
     var selectedCommunityId by remember { mutableStateOf<String?>(null) }
     var members by remember { mutableStateOf<List<DirectoryEntry>?>(null) }
     var loadingMembers by remember { mutableStateOf(false) }
+    val isHost by remember { mutableStateOf(AppContainer.isHost) }
+
+    // Rotation dialog state
+    var memberToRemove by remember { mutableStateOf<DirectoryEntry?>(null) }
+    var showConfirmDialog by remember { mutableStateOf(false) }
+    var showRotationForm by remember { mutableStateOf(false) }
+    var rotationUrl by remember { mutableStateOf("") }
+    var rotationUsername by remember { mutableStateOf("") }
+    var rotationPassword by remember { mutableStateOf("") }
+    var rotating by remember { mutableStateOf(false) }
+    var rotationError by remember { mutableStateOf<String?>(null) }
+    var rotationSuccess by remember { mutableStateOf(false) }
 
     // Load members when a community is selected
     LaunchedEffect(selectedCommunityId) {
@@ -73,6 +90,157 @@ internal fun CommunityListScreen(
         } else {
             members = null
         }
+    }
+
+    // Confirmation dialog: "Remove <name>?"
+    if (showConfirmDialog && memberToRemove != null) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            title = { Text("Remove member?") },
+            text = {
+                Text(
+                    "Remove ${memberToRemove!!.displayName} from this community and rotate the " +
+                        "WebDAV credential? All other members will receive the new credential automatically.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConfirmDialog = false
+                    showRotationForm = true
+                }) {
+                    Text("Continue")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    // Rotation form: enter new WebDAV URL, username, password
+    if (showRotationForm && memberToRemove != null) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!rotating) {
+                    showRotationForm = false
+                    rotationError = null
+                }
+            },
+            title = { Text("New WebDAV credential") },
+            text = {
+                Column {
+                    Text(
+                        "Enter the new WebDAV URL, username, and app password. " +
+                            "All remaining members will receive the new credential automatically.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = rotationUrl,
+                        onValueChange = { rotationUrl = it },
+                        label = { Text("WebDAV URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !rotating,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = rotationUsername,
+                        onValueChange = { rotationUsername = it },
+                        label = { Text("Username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !rotating,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = rotationPassword,
+                        onValueChange = { rotationPassword = it },
+                        label = { Text("App password") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !rotating,
+                    )
+                    if (rotating) {
+                        Spacer(Modifier.height(8.dp))
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                    if (rotationError != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            rotationError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (!rotating && rotationUrl.isNotBlank() && rotationUsername.isNotBlank() && rotationPassword.isNotBlank()) {
+                            val member = memberToRemove!!
+                            val excludedHex = Hex.encode(member.copySigningPublicKey())
+                            rotating = true
+                            rotationError = null
+                            scope.launch(Dispatchers.IO) {
+                                val ok =
+                                    AppContainer.rotateCredential(
+                                        newUrl = rotationUrl.trim(),
+                                        newUsername = rotationUsername.trim(),
+                                        newPassword = rotationPassword.trim(),
+                                        excludeMemberSignPub = excludedHex,
+                                    )
+                                withContext(Dispatchers.Main) {
+                                    rotating = false
+                                    if (ok) {
+                                        rotationSuccess = true
+                                        showRotationForm = false
+                                    } else {
+                                        rotationError = "Rotation failed. Check the new credential and try again."
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    enabled = !rotating && rotationUrl.isNotBlank() && rotationUsername.isNotBlank() && rotationPassword.isNotBlank(),
+                ) {
+                    Text(if (rotating) "Rotating…" else "Rotate credential")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showRotationForm = false
+                        rotationError = null
+                    },
+                    enabled = !rotating,
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    // Success feedback
+    if (rotationSuccess) {
+        AlertDialog(
+            onDismissRequest = { rotationSuccess = false },
+            title = { Text("Credential rotated") },
+            text = {
+                Text(
+                    "The WebDAV credential has been rotated. " +
+                        "All remaining members will receive the new credential on their next poll cycle.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { rotationSuccess = false }) {
+                    Text("OK")
+                }
+            },
+        )
     }
 
     Scaffold(
@@ -168,6 +336,7 @@ internal fun CommunityListScreen(
                                 for (member in members!!) {
                                     MemberRow(
                                         member = member,
+                                        isHost = isHost,
                                         onDm = {
                                             scope.launch(Dispatchers.IO) {
                                                 val chatId = AppContainer.startDm(member)
@@ -175,6 +344,10 @@ internal fun CommunityListScreen(
                                                     onOpenFeed()
                                                 }
                                             }
+                                        },
+                                        onRemove = {
+                                            memberToRemove = member
+                                            showConfirmDialog = true
                                         },
                                     )
                                 }
@@ -192,7 +365,9 @@ internal fun CommunityListScreen(
 @Composable
 private fun MemberRow(
     member: DirectoryEntry,
+    isHost: Boolean,
     onDm: () -> Unit,
+    onRemove: () -> Unit,
 ) {
     Row(
         modifier =
@@ -206,6 +381,11 @@ private fun MemberRow(
         Text(member.displayName, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         IconButton(onClick = onDm, modifier = Modifier.semantics { contentDescription = "DM ${member.displayName}" }) {
             Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, modifier = Modifier.size(20.dp))
+        }
+        if (isHost) {
+            IconButton(onClick = onRemove, modifier = Modifier.semantics { contentDescription = "Remove ${member.displayName}" }) {
+                Icon(Icons.Filled.RemoveCircleOutline, contentDescription = null, modifier = Modifier.size(20.dp))
+            }
         }
     }
 }
