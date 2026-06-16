@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
@@ -64,11 +63,12 @@ internal class ChatFeedViewModel(
         _draft.value = ""
         _sendError.value = null
         viewModelScope.launch {
-            val result = try {
-                sendService.send(text)
-            } catch (_: Exception) {
-                null
-            }
+            val result =
+                try {
+                    sendService.send(text)
+                } catch (_: Exception) {
+                    null
+                }
             if (result != null && result.logWritten) {
                 graph.store.markSent(result.messageId)
             } else {
@@ -82,14 +82,18 @@ internal class ChatFeedViewModel(
     }
 
     /** Retry sending a failed message — re-seal and re-send. */
-    fun retryFailed(messageId: String, body: String) {
+    fun retryFailed(
+        messageId: String,
+        body: String,
+    ) {
         _sendError.value = null
         viewModelScope.launch {
-            val result = try {
-                sendService.send(body)
-            } catch (_: Exception) {
-                null
-            }
+            val result =
+                try {
+                    sendService.send(body)
+                } catch (_: Exception) {
+                    null
+                }
             if (result != null && result.logWritten) {
                 graph.store.markSent(result.messageId)
             } else {

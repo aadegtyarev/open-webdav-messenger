@@ -36,11 +36,13 @@ internal class ChatRegistry(private val context: Context) {
     ) {
         val arr = JSONArray()
         for (e in list) {
-            arr.put(JSONObject().apply {
-                put("id", e.id)
-                put("name", e.name)
-                put("kind", e.kind)
-            })
+            arr.put(
+                JSONObject().apply {
+                    put("id", e.id)
+                    put("name", e.name)
+                    put("kind", e.kind)
+                },
+            )
         }
         val f = file(communityId)
         f.parentFile?.mkdirs()

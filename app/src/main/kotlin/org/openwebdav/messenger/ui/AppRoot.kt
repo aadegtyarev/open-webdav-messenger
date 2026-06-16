@@ -9,7 +9,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -17,17 +16,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.delay
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.ui.communities.CommunityListScreen
 import org.openwebdav.messenger.ui.feed.ChatFeedScreen
-import org.openwebdav.messenger.ui.settings.SettingsScreen
 import org.openwebdav.messenger.ui.invite.InviteScreen
 import org.openwebdav.messenger.ui.onboarding.CreateCommunityScreen
 import org.openwebdav.messenger.ui.onboarding.JoinScreen
+import org.openwebdav.messenger.ui.settings.SettingsScreen
 import org.openwebdav.messenger.ui.start.StartScreen
 
 /**
@@ -132,7 +129,9 @@ private fun AppNav() {
 /** The thin nav graph for this slice: the first-launch fork, the two onboarding screens, the feed + invite. */
 private sealed interface Screen {
     data object Start : Screen
+
     data object CommunityList : Screen
+
     data object CreateCommunity : Screen
 
     data object Join : Screen
@@ -140,5 +139,6 @@ private sealed interface Screen {
     data object Feed : Screen
 
     data object Invite : Screen
+
     data object Settings : Screen
 }

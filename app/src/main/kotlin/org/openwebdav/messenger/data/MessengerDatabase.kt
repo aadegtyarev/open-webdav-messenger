@@ -42,13 +42,14 @@ abstract class MessengerDatabase : RoomDatabase() {
         /** On-device database file name. */
         const val DB_NAME = "owdm-messages.db"
 
-        val MIGRATION_1_2 = object : Migration(1, 2) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "ALTER TABLE messages ADD COLUMN sendStatus TEXT NOT NULL DEFAULT 'SENT'",
-                )
+        val MIGRATION_1_2 =
+            object : Migration(1, 2) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "ALTER TABLE messages ADD COLUMN sendStatus TEXT NOT NULL DEFAULT 'SENT'",
+                    )
+                }
             }
-        }
 
         @Volatile
         private var instance: MessengerDatabase? = null
