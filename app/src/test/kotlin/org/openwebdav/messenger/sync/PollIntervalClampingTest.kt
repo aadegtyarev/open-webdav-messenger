@@ -30,7 +30,7 @@ class PollIntervalClampingTest {
     }
 
     @Test
-    fun fastPoll_platform_floor_is_60_seconds() {
-        assertEquals(60L, FastPollManager.PLATFORM_FLOOR_SECONDS)
+    fun fastPoll_platform_floor_is_15_seconds() {
+        assertEquals(15L, FastPollManager.PLATFORM_FLOOR_SECONDS)
     }
 }

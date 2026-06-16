@@ -23,8 +23,7 @@ object FastPollManager {
     private const val KEY_ENABLED = "enabled"
     private const val KEY_INTERVAL_SECONDS = "interval_seconds"
 
-    /** The platform floor for foreground fast poll: 60 seconds (Android allows sub-15-min foreground). */
-    /** Minimum reasonable poll interval for foreground service: 15 seconds. */
+    /** Minimum reasonable poll interval for foreground service: 15 seconds (Android allows sub-15-min foreground). */
     const val PLATFORM_FLOOR_SECONDS = 15L
 
     /** Whether fast polling is currently enabled. */
