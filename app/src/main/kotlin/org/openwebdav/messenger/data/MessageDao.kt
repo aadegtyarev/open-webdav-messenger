@@ -61,4 +61,8 @@ interface MessageDao {
         chatId: String,
         orderToken: String,
     )
+
+    /** Count unread (SENT status) messages in a chat. Observable. */
+    @Query("SELECT COUNT(*) FROM messages WHERE chatId = :chatId AND sendStatus = 'SENT'")
+    fun observeUnreadCount(chatId: String): Flow<Int>
 }
