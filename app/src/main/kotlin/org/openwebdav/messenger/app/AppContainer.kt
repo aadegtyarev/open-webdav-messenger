@@ -272,21 +272,28 @@ internal object AppContainer {
     fun runtimeGraph(): RuntimeGraph? = EngineWiring.current()
 
     /**
+     * Load member names from the on-disk directories of all joined communities.
+     * Returns a map of signing-pubkey-hex → displayName. Suspending — call from a coroutine.
+     */
+    suspend fun loadMemberNames(): Map<String, String> {
+        for (community in communityRegistry.all()) {
+            val entries = loadMembers(community.chatId)
+            if (entries.isNotEmpty()) {
+                return entries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
+            }
+        }
+        return emptyMap()
+    }
+
+    /**
      * Refresh [RuntimeGraph.memberNames] from the on-disk directory for the current community.
      * Best-effort, async — failures are silently ignored; member names appear on the next successful read.
      */
     private fun refreshMemberNames() {
         GlobalScope.launch {
             try {
-                // Load members for every joined community (each has its own directory)
-                for (community in communityRegistry.all()) {
-                    val entries = loadMembers(community.chatId)
-                    if (entries.isNotEmpty()) {
-                        val names = entries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
-                        runtimeGraph()?.memberNames = names
-                        break // Use the first community that has entries
-                    }
-                }
+                val names = loadMemberNames()
+                if (names.isNotEmpty()) runtimeGraph()?.memberNames = names
             } catch (_: Exception) {
                 // best-effort
             }

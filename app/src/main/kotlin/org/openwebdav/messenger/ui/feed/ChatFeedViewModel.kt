@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
@@ -32,6 +33,27 @@ internal class ChatFeedViewModel(
     private val sendService: MessageSendService = MessageSendService(graph),
 ) : ViewModel() {
     val communityName: String = graph.communityName
+
+    init {
+        // Load member names from directory so sender labels appear without waiting for a poll cycle.
+        viewModelScope.launch {
+            try {
+                val names = AppContainer.loadMemberNames()
+                if (names.isNotEmpty()) graph.memberNames = names
+            } catch (_: Exception) { /* best-effort */ }
+        }
+    }
+
+    private val _isSyncing = MutableStateFlow(false)
+
+    /** `true` while a manual sync is in progress — the UI shows a loading state on the refresh button. */
+    val isSyncing: StateFlow<Boolean> = _isSyncing
+
+    /** Human-readable relative time of the last successful sync ("Just now", "N seconds ago", …, "Never"). */
+    val lastSyncText: StateFlow<String> =
+        graph.lastSyncTime
+            .map { millis -> formatLastSyncTime(millis) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), "Never")
 
     /** The chat history, oldest→newest, observed from Room — re-maps when member names change. */
     val messages: StateFlow<List<FeedRow>> =
@@ -102,6 +124,31 @@ internal class ChatFeedViewModel(
             } else {
                 _sendError.value = SEND_FAILED_MESSAGE
             }
+        }
+    }
+
+    /** Trigger an immediate poll cycle for the current chat. No-op if a sync is already in progress. */
+    fun syncNow() {
+        if (_isSyncing.value) return
+        _isSyncing.value = true
+        viewModelScope.launch {
+            try {
+                graph.requestSync()
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    /** Format an epoch-millis [lastSyncMillis] (0 = never) as a human-readable relative time. */
+    private fun formatLastSyncTime(lastSyncMillis: Long): String {
+        if (lastSyncMillis <= 0L) return "Never"
+        val elapsed = System.currentTimeMillis() - lastSyncMillis
+        return when {
+            elapsed < 10_000L -> "Just now"
+            elapsed < 60_000L -> "${elapsed / 1_000} seconds ago"
+            elapsed < 3_600_000L -> "${elapsed / 60_000} minutes ago"
+            else -> "${elapsed / 3_600_000} hours ago"
         }
     }
 
