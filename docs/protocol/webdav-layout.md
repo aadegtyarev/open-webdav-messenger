@@ -32,7 +32,9 @@ One chat == one shared chat-root folder, reachable by one credential (decision 2
 <webdav-base-url>/<chat-root>/           # the one shared folder for this chat
 ├── meta/                                # chat metadata / roster (see §1.3)
 │   ├── chat.json                        # chat descriptor: chat-id, chat-type, protocol-version  [populated by a later feature]
-│   └── roster.json                      # member list (recipient identifiers)                     [populated by a later feature]
+│   ├── roster.json                      # member list (recipient identifiers)                     [populated by a later feature]
+│   └── credentials/                     # per-member credential rotation blobs (see §1.3)
+│       └── <memberSignPubHex>           # one blob per member (host-written sealed signed config)
 ├── log/                                 # the ONE shared per-chat message log (see §1.2)
 │   ├── <message-id>                     # one file per message, content-addressed (§2, §3) — ONE copy, not per-recipient
 │   ├── <message-id>
@@ -75,6 +77,21 @@ Named **now** so the layout is stable, but **populated by a later feature** (ros
 - **`meta/roster.json`** — member list: the member-identifiers a sender writes change entries to (§9.1). **In the sync feature the member set is supplied out-of-band / from config** (decision 2) — the sender takes the roster as input and writes a change entry per member; sync does **not** manage membership. A later roster/directory feature owns writing and signing `meta/roster.json`. The change-index write (§9.1) takes the member set as a parameter precisely so it does not depend on this file existing yet.
 
 > `meta/` carries **no secret** material (no passphrase, no key — Security constraints). Whether the roster itself is encrypted is the roster feature's call; this spec only reserves the path and the JSON shape.
+
+- **`meta/credentials/<memberSignPubHex>`** — a per-member credential rotation blob, written by the host when rotating the WebDAV credential. The file name is the lowercase hex of the member's Ed25519 signing public key (64 hex chars), so each member's next poll cycle can find its own blob by computing its own key's hex. The blob is an **anonymous sealed box** (libsodium `crypto_box_seal`) containing a host-Ed25519-signed JSON payload with the new `baseUrl`, `username`, and `appPassword`. The inner format:
+
+  ```
+  signed-payload = ConnectionConfig-JSON ‖ Ed25519-detached-signature(64, host-signSecret, over ConnectionConfig-JSON)
+  blob           = crypto_box_seal(signed-payload, member-boxPublicKey)
+  ```
+
+  - The `ConnectionConfig-JSON` is a flat JSON object of four string fields: `{ "baseUrl": "...", "username": "...", "appPassword": "...", "chatRoot": "..." }`, UTF-8 encoded, no whitespace.
+  - The Ed25519 detached signature (64 bytes) is computed over the JSON bytes with the **host's** signing secret key. The signature authenticates the host as the source of the new credential.
+  - The signed payload (JSON ‖ signature) is then sealed with the member's X25519 box public key (`crypto_box_seal`), so only the member's box keypair can open it.
+  - The reader (member): `crypto_box_seal_open` → verify host's Ed25519 signature → parse JSON → update local config. Any failure (wrong recipient, bad signature, malformed JSON) is a silent drop — the file is skipped.
+  - After a member successfully applies the rotated credential, it `DELETE`s the blob from disk (best-effort). If the delete fails, the next poll cycle re-opens and no-ops (the JSON config is identical — idempotent application).
+  - The chat-root in the new credential MUST be identical to the current one (the host rotates only the baseUrl + username + appPassword, never the chat-root).
+  - **Metadata exposed:** the file name (a hex Ed25519 public key) and size (a sealed blob ≈ 200–300 bytes) are visible to the disk operator. The inner JSON fields (URL, username, app-password) are sealed and never visible.
 
 ### 1.4 Retention window (IMPLEMENTED — time-based pruning, 14-day default window)
 

@@ -19,6 +19,7 @@ import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.Hex
@@ -140,5 +141,18 @@ class AppRootTest {
         override fun schedulePoll(communityMinPollMinutes: Int?) = Unit
 
         override fun communityChatIds(communityId: String): List<String> = listOf(chatId)
+
+        override fun identityCrypto(): IdentityCrypto = AppTestSupport.identityCrypto()
+
+        override suspend fun readRawFile(
+            config: ConnectionConfig,
+            path: String,
+        ): ByteArray? = null
+
+        override fun saveRotatedConfig(
+            newConfig: ConnectionConfig,
+            chatId: String,
+            communityName: String,
+        ): Boolean = false
     }
 }

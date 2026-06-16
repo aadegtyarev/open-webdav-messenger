@@ -163,5 +163,18 @@ class InviteViewModelTest {
         override fun schedulePoll(communityMinPollMinutes: Int?) = Unit
 
         override fun communityChatIds(communityId: String): List<String> = listOf(chatId)
+
+        override fun identityCrypto() = AppTestSupport.identityCrypto()
+
+        override suspend fun readRawFile(
+            config: org.openwebdav.messenger.transport.ConnectionConfig,
+            path: String,
+        ): ByteArray? = null
+
+        override fun saveRotatedConfig(
+            newConfig: org.openwebdav.messenger.transport.ConnectionConfig,
+            chatId: String,
+            communityName: String,
+        ): Boolean = false
     }
 }
