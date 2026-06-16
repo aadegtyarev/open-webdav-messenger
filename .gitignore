@@ -21,3 +21,4 @@ captures/
 .ai-dev/state/
 .ai-dev/feedback/
 .ai-dev/worktrees/
+app/release.keystore
