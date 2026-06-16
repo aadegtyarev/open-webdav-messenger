@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.app.UpdateChecker
 import kotlin.math.roundToInt
 
@@ -368,11 +369,14 @@ private fun UpdateSection() {
                     if (checking) return@Button
                     checking = true
                     scope.launch(Dispatchers.IO) {
-                        UpdateChecker.downloadApk(context, updateUrl).fold(
-                            onSuccess = { file -> UpdateChecker.installApk(context, file) },
-                            onFailure = { status = "Download failed" },
-                        )
-                        checking = false
+                        val result = UpdateChecker.downloadApk(context, updateUrl)
+                        withContext(Dispatchers.Main) {
+                            result.fold(
+                                onSuccess = { file -> UpdateChecker.installApk(context, file) },
+                                onFailure = { status = "Download failed" },
+                            )
+                            checking = false
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
