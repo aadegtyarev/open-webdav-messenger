@@ -6,31 +6,31 @@ import org.junit.Test
 class PollIntervalClampingTest {
     @Test
     fun syncScheduler_member_above_floor_uses_member_pref() {
-        assertEquals(30L, SyncScheduler.effectiveIntervalMinutes(30L, 15))
+        assertEquals(120L, SyncScheduler.effectiveIntervalSeconds(120L, 60))
     }
 
     @Test
     fun syncScheduler_member_below_floor_uses_floor() {
-        assertEquals(15L, SyncScheduler.effectiveIntervalMinutes(5L, 15))
+        assertEquals(60L, SyncScheduler.effectiveIntervalSeconds(30L, 60))
     }
 
     @Test
     fun syncScheduler_member_below_platform_floor_uses_platform() {
-        assertEquals(15L, SyncScheduler.effectiveIntervalMinutes(1L, 1))
+        assertEquals(60L, SyncScheduler.effectiveIntervalSeconds(15L, 15))
     }
 
     @Test
     fun syncScheduler_null_community_floor_defaults_to_platform() {
-        assertEquals(15L, SyncScheduler.effectiveIntervalMinutes(5L, null))
+        assertEquals(60L, SyncScheduler.effectiveIntervalSeconds(30L, null))
     }
 
     @Test
     fun syncScheduler_all_equal_returns_value() {
-        assertEquals(15L, SyncScheduler.effectiveIntervalMinutes(15L, 15))
+        assertEquals(60L, SyncScheduler.effectiveIntervalSeconds(60L, 60))
     }
 
     @Test
-    fun fastPoll_platform_floor_is_1_minute() {
-        assertEquals(1L, FastPollManager.PLATFORM_FLOOR_MINUTES)
+    fun fastPoll_platform_floor_is_60_seconds() {
+        assertEquals(60L, FastPollManager.PLATFORM_FLOOR_SECONDS)
     }
 }

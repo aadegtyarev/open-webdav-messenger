@@ -99,17 +99,17 @@ private fun AppNav() {
         Screen.Settings -> {
             val host = remember { UserSettings.isHost }
             val retentionDays = remember { UserSettings.communityRetentionWindowDays }
-            val pollFloor = remember { UserSettings.communityMinPollMinutes }
+            val pollFloor = remember { UserSettings.communityMinPollSeconds }
             SettingsScreen(
                 onBack = { screen = Screen.CommunityList },
                 isHost = host,
                 retentionWindowDays = retentionDays,
                 communityPollFloor = pollFloor,
                 onRetentionChanged = { days ->
-                    AppContainer.updateCommunityMetadata(days, UserSettings.communityMinPollMinutes)
+                    AppContainer.updateCommunityMetadata(days, UserSettings.communityMinPollSeconds)
                 },
-                onPollFloorChanged = { minutes ->
-                    AppContainer.updateCommunityMetadata(UserSettings.communityRetentionWindowDays, minutes)
+                onPollFloorChanged = { seconds ->
+                    AppContainer.updateCommunityMetadata(UserSettings.communityRetentionWindowDays, seconds)
                 },
             )
         }

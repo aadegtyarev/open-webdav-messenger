@@ -230,10 +230,10 @@ internal object EngineWiring {
 
                     val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions)
                     // Cache the community floor for the settings UI and reschedule.
-                    if (outcome.communityMinPollMinutes != null) {
-                        org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollMinutes =
-                            outcome.communityMinPollMinutes
-                        deps.schedulePoll(outcome.communityMinPollMinutes)
+                    if (outcome.communityMinPollSeconds != null) {
+                        org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds =
+                            outcome.communityMinPollSeconds
+                        deps.schedulePoll(outcome.communityMinPollSeconds)
                     }
                     // Cache the community retention window for the settings UI.
                     if (outcome.retentionWindowDays != null) {
@@ -284,7 +284,7 @@ internal object EngineWiring {
         /** All chat-ids in the active community (for multi-chat poll subscriptions). */
         fun communityChatIds(communityId: String): List<String>
 
-        fun schedulePoll(communityMinPollMinutes: Int? = null)
+        fun schedulePoll(communityMinPollSeconds: Int? = null)
     }
 }
 
@@ -362,7 +362,7 @@ internal class AndroidDeps(
             CommunityMetadata.read(transport, idCrypto, hostPubKey)
         }
         val communityFloorReader: suspend () -> Int? = {
-            communityMetadataReader()?.minPollIntervalMinutes
+            communityMetadataReader()?.minPollIntervalSeconds
         }
         val retentionWindowReader: suspend () -> Int? = {
             communityMetadataReader()?.retentionWindowDays
@@ -398,9 +398,9 @@ internal class AndroidDeps(
         )
     }
 
-    override fun schedulePoll(communityMinPollMinutes: Int?) {
-        val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalMinutes.toLong()
-        val effective = SyncScheduler.effectiveIntervalMinutes(memberPref, communityMinPollMinutes)
+    override fun schedulePoll(communityMinPollSeconds: Int?) {
+        val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalSeconds.toLong()
+        val effective = SyncScheduler.effectiveIntervalSeconds(memberPref, communityMinPollSeconds)
         SyncScheduler.schedule(WorkManager.getInstance(appContext), effective)
     }
 }

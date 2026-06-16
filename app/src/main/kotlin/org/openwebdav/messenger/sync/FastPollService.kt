@@ -52,17 +52,17 @@ class FastPollService : Service() {
     ): Int {
         // When the intent is null (START_STICKY restart after process kill), read the persisted
         // effective interval so the user-configured interval (clamped to community floor) survives.
-        val intervalMinutes =
-            intent?.getLongExtra(EXTRA_INTERVAL_MINUTES, -1L)
+        val intervalSeconds =
+            intent?.getLongExtra(EXTRA_INTERVAL_SECONDS, -1L)
                 ?.takeIf { it > 0 }
-                ?: FastPollManager.effectiveIntervalMinutes(this)
+                ?: FastPollManager.effectiveIntervalSeconds(this)
 
-        val notification = buildNotification(intervalMinutes)
+        val notification = buildNotification(intervalSeconds)
         startForeground(NOTIFICATION_ID, notification)
 
         // Restart the loop if the interval changed (cancel old, start new)
         pollingJob?.cancel()
-        pollingJob = startPolling(intervalMinutes)
+        pollingJob = startPolling(intervalSeconds)
 
         return START_STICKY
     }
@@ -110,8 +110,10 @@ class FastPollService : Service() {
         }
     }
 
-    private fun buildNotification(intervalMinutes: Long): Notification {
-        val contentText = getString(R.string.fast_poll_notification_text, intervalMinutes)
+    private fun buildNotification(intervalSeconds: Long): Notification {
+        val readable =
+            org.openwebdav.messenger.ui.settings.UserSettings.formatPollInterval(intervalSeconds.toInt())
+        val contentText = getString(R.string.fast_poll_notification_text, readable)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.fast_poll_notification_title))
             .setContentText(contentText)
@@ -121,9 +123,9 @@ class FastPollService : Service() {
             .build()
     }
 
-    private fun startPolling(intervalMinutes: Long): Job =
+    private fun startPolling(intervalSeconds: Long): Job =
         scope.launch {
-            val intervalMillis = intervalMinutes * 60_000L
+            val intervalMillis = intervalSeconds * 1000L
             while (isActive) {
                 try {
                     SyncRunner.current().runOnce()
@@ -140,16 +142,16 @@ class FastPollService : Service() {
         private const val TAG = "FastPollService"
         const val NOTIFICATION_ID = 1
         const val CHANNEL_ID = "owdm.fast_poll"
-        const val EXTRA_INTERVAL_MINUTES = "owdm.fastpoll.interval_minutes"
+        const val EXTRA_INTERVAL_SECONDS = "owdm.fastpoll.interval_seconds"
 
-        /** Start the foreground service with the given poll interval (minutes). */
+        /** Start the foreground service with the given poll interval (seconds). */
         fun start(
             context: Context,
-            intervalMinutes: Long,
+            intervalSeconds: Long,
         ) {
             val intent =
                 Intent(context, FastPollService::class.java).apply {
-                    putExtra(EXTRA_INTERVAL_MINUTES, intervalMinutes)
+                    putExtra(EXTRA_INTERVAL_SECONDS, intervalSeconds)
                 }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

@@ -203,7 +203,7 @@ internal object AppContainer {
      */
     fun updateCommunityMetadata(
         retentionDays: Int,
-        pollMinutes: Int,
+        pollSeconds: Int,
     ) {
         val graph = runtimeGraph() ?: return
         GlobalScope.launch {
@@ -211,7 +211,7 @@ internal object AppContainer {
                 val transport = TransportFactory.create(graph.config)
                 val metadata =
                     CommunityMetadata(
-                        minPollIntervalMinutes = pollMinutes,
+                        minPollIntervalSeconds = pollSeconds,
                         retentionWindowDays = retentionDays,
                     )
                 CommunityMetadata.write(
@@ -221,7 +221,7 @@ internal object AppContainer {
                     identityCrypto = identityFactory.identityCrypto(),
                 )
                 // Update local cache immediately so the UI reflects the change.
-                UserSettings.communityMinPollMinutes = pollMinutes
+                UserSettings.communityMinPollSeconds = pollSeconds
                 UserSettings.communityRetentionWindowDays = retentionDays
             } catch (_: Exception) {
                 // best-effort — the next poll cycle will re-read the current value from disk
@@ -397,7 +397,7 @@ internal object AppContainer {
                         if (isHost) {
                             val metadata =
                                 CommunityMetadata(
-                                    minPollIntervalMinutes = CommunityMetadata.DEFAULT_FLOOR_MINUTES,
+                                    minPollIntervalSeconds = CommunityMetadata.DEFAULT_FLOOR_SECONDS,
                                 )
                             CommunityMetadata.write(
                                 transport = transport,

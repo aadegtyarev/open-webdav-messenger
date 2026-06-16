@@ -165,7 +165,7 @@ class EngineWiringTest {
             )
         }
 
-        override fun schedulePoll(communityMinPollMinutes: Int?) {
+        override fun schedulePoll(communityMinPollSeconds: Int?) {
             scheduled = true
         }
 

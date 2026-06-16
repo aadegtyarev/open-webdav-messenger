@@ -15,9 +15,9 @@ class CommunityMetadataTest {
     @Test
     fun sign_and_verify_round_trip() {
         val hostIdentity = crypto.generateIdentity()
-        val metadata = CommunityMetadata(minPollIntervalMinutes = 10)
+        val metadata = CommunityMetadata(minPollIntervalSeconds = 60)
 
-        val payloadBytes = """{"minPollIntervalMinutes":10}""".toByteArray(Charsets.UTF_8)
+        val payloadBytes = """{"minPollIntervalSeconds":60}""".toByteArray(Charsets.UTF_8)
         val signSecret = hostIdentity.copySignSecret()
         val signature = crypto.sign(payloadBytes, signSecret)
         val fileBytes = signature + payloadBytes
@@ -31,7 +31,7 @@ class CommunityMetadataTest {
     @Test
     fun tampered_payload_fails_verification() {
         val hostIdentity = crypto.generateIdentity()
-        val payloadBytes = """{"minPollIntervalMinutes":10}""".toByteArray(Charsets.UTF_8)
+        val payloadBytes = """{"minPollIntervalSeconds":60}""".toByteArray(Charsets.UTF_8)
         val signSecret = hostIdentity.copySignSecret()
         val signature = crypto.sign(payloadBytes, signSecret)
         signSecret.fill(0)
@@ -46,7 +46,7 @@ class CommunityMetadataTest {
     fun wrong_signer_fails_verification() {
         val hostIdentity = crypto.generateIdentity()
         val attackerIdentity = crypto.generateIdentity()
-        val payloadBytes = """{"minPollIntervalMinutes":10}""".toByteArray(Charsets.UTF_8)
+        val payloadBytes = """{"minPollIntervalSeconds":60}""".toByteArray(Charsets.UTF_8)
 
         val attackerSecret = attackerIdentity.copySignSecret()
         val attackerSig = crypto.sign(payloadBytes, attackerSecret)
@@ -56,17 +56,17 @@ class CommunityMetadataTest {
     }
 
     @Test
-    fun floorMinutes_clamps_to_default_when_null() {
+    fun floorSeconds_clamps_to_default_when_null() {
         assertEquals(
-            CommunityMetadata.DEFAULT_FLOOR_MINUTES,
-            CommunityMetadata.floorMinutes(null),
+            CommunityMetadata.DEFAULT_FLOOR_SECONDS,
+            CommunityMetadata.floorSeconds(null),
         )
     }
 
     @Test
-    fun floorMinutes_uses_max_of_remote_and_default() {
-        assertEquals(15, CommunityMetadata.floorMinutes(15))
-        assertEquals(30, CommunityMetadata.floorMinutes(30))
-        assertEquals(CommunityMetadata.DEFAULT_FLOOR_MINUTES, CommunityMetadata.floorMinutes(5))
+    fun floorSeconds_uses_max_of_remote_and_default() {
+        assertEquals(120, CommunityMetadata.floorSeconds(120))
+        assertEquals(300, CommunityMetadata.floorSeconds(300))
+        assertEquals(CommunityMetadata.DEFAULT_FLOOR_SECONDS, CommunityMetadata.floorSeconds(30))
     }
 }

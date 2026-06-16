@@ -23,40 +23,40 @@ object SyncScheduler {
     /** Unique work name so re-scheduling replaces rather than stacks the periodic request. */
     const val WORK_NAME = "owdm.sync.poll"
 
-    /** The WorkManager platform floor: 15 minutes (900000 ms). */
-    const val PLATFORM_FLOOR_MINUTES = 15L
+    /** The sync scheduler platform floor: 60 seconds. */
+    const val PLATFORM_FLOOR_SECONDS = 60L
 
     /**
      * Compute the effective WorkManager poll interval: `max(memberPref, communityFloor, platformFloor)`.
-     * [communityFloor] may be null (metadata not read yet) — defaults to [PLATFORM_FLOOR_MINUTES].
+     * [communityFloor] may be null (metadata not read yet) — defaults to [PLATFORM_FLOOR_SECONDS].
      */
-    fun effectiveIntervalMinutes(
+    fun effectiveIntervalSeconds(
         memberPref: Long,
         communityFloor: Int?,
-    ): Long = maxOf(memberPref, (communityFloor ?: PLATFORM_FLOOR_MINUTES.toInt()).toLong(), PLATFORM_FLOOR_MINUTES)
+    ): Long = maxOf(memberPref, (communityFloor ?: PLATFORM_FLOOR_SECONDS.toInt()).toLong(), PLATFORM_FLOOR_SECONDS)
 
     /**
-     * Build a periodic poll request at `max(requestedMinutes, 15-min floor)`. Exposed (not just used
+     * Build a periodic poll request at `max(requestedSeconds, 900s floor)`. Exposed (not just used
      * internally) so a test can assert the enqueued interval is ≥ the floor without enqueuing
      * (`periodic_request_clamped_to_15min_floor`).
      */
-    fun pollRequest(requestedMinutes: Long): PeriodicWorkRequest {
-        val requestedMillis = TimeUnit.MINUTES.toMillis(requestedMinutes)
+    fun pollRequest(requestedSeconds: Long): PeriodicWorkRequest {
+        val requestedMillis = TimeUnit.SECONDS.toMillis(requestedSeconds)
         val intervalMillis = maxOf(requestedMillis, PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS)
         return PeriodicWorkRequest
             .Builder(SyncWorker::class.java, intervalMillis, TimeUnit.MILLISECONDS)
             .build()
     }
 
-    /** Enqueue (or replace) the periodic poll under [WORK_NAME] at [requestedMinutes]. */
+    /** Enqueue (or replace) the periodic poll under [WORK_NAME] at [requestedSeconds]. */
     fun schedule(
         workManager: WorkManager,
-        requestedMinutes: Long = DEFAULT_INTERVAL_MINUTES,
+        requestedSeconds: Long = DEFAULT_INTERVAL_SECONDS,
     ) {
         workManager.enqueueUniquePeriodicWork(
             WORK_NAME,
             ExistingPeriodicWorkPolicy.UPDATE,
-            pollRequest(requestedMinutes),
+            pollRequest(requestedSeconds),
         )
     }
 
@@ -66,5 +66,5 @@ object SyncScheduler {
     }
 
     /** Default requested interval = the platform floor. */
-    const val DEFAULT_INTERVAL_MINUTES = PLATFORM_FLOOR_MINUTES
+    const val DEFAULT_INTERVAL_SECONDS = PLATFORM_FLOOR_SECONDS
 }

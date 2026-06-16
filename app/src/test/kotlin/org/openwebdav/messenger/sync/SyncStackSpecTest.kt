@@ -61,8 +61,8 @@ class SyncStackSpecTest {
      */
     @Test
     fun `periodic poll request is at least the 15 minute floor`() {
-        // Even when the app requests 1 minute, the built request's interval is clamped to the floor.
-        val request = SyncScheduler.pollRequest(requestedMinutes = 1)
+        // Even when the app requests 60 seconds, the built request's interval is clamped to the floor.
+        val request = SyncScheduler.pollRequest(requestedSeconds = 60)
         val intervalMillis = request.workSpec.intervalDuration
         assertTrue(
             "interval $intervalMillis must be >= MIN_PERIODIC_INTERVAL_MILLIS ${PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS}",
@@ -84,7 +84,7 @@ class SyncStackSpecTest {
 
         // The installed runner reports a clean cycle → the Worker must succeed.
         SyncRunner.install(SyncRunner { CycleOutcome(newCount = 0, skippedCount = 0, backedOff = false) })
-        val request = SyncScheduler.pollRequest(requestedMinutes = 15)
+        val request = SyncScheduler.pollRequest(requestedSeconds = 900)
         wm.enqueue(request).result.get()
 
         // Drive the periodic work's first run deterministically (TestDriver).

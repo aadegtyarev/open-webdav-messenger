@@ -47,16 +47,14 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.app.UpdateChecker
 import kotlin.math.roundToInt
 
-/** The ordered retention-window options the host can pick from. */
 private val RETENTION_OPTIONS = listOf(7, 14, 30, 60, 90)
-
-/** The ordered poll-floor options the host can pick from (minutes). */
-private val POLL_FLOOR_OPTIONS = listOf(1, 5, 10, 15, 30, 60, 120, 240)
+private val POLL_FLOOR_OPTIONS = listOf(15, 30, 60, 120, 300, 600, 900, 1800, 3600)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,17 +62,20 @@ internal fun SettingsScreen(
     onBack: () -> Unit,
     isHost: Boolean = false,
     retentionWindowDays: Int = UserSettings.DEFAULT_RETENTION_WINDOW_DAYS,
-    communityPollFloor: Int = UserSettings.DEFAULT_POLL_INTERVAL_MINUTES,
+    communityPollFloor: Int = UserSettings.DEFAULT_POLL_INTERVAL_SECONDS,
     onRetentionChanged: (Int) -> Unit = {},
     onPollFloorChanged: (Int) -> Unit = {},
 ) {
     var name by remember { mutableStateOf(UserSettings.displayName) }
+    var nameChanged by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Debounced save feedback: show "Saved" 1 second after the user stops typing.
+    // Only show name-saved feedback after the user actually edited the name
     LaunchedEffect(name) {
-        delay(1_000)
-        snackbarHostState.showSnackbar("Name saved")
+        if (nameChanged) {
+            delay(800)
+            snackbarHostState.showSnackbar("Name saved")
+        }
     }
 
     Scaffold(
@@ -91,13 +92,19 @@ internal fun SettingsScreen(
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             OutlinedTextField(
                 value = name,
                 onValueChange = {
                     name = it
+                    nameChanged = true
                     UserSettings.displayName = it
                 },
                 label = { Text("Your name") },
@@ -105,69 +112,18 @@ internal fun SettingsScreen(
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Your name" },
             )
-            Spacer(Modifier.height(8.dp))
 
-            // Theme toggle section
             ThemeSection()
 
-            Spacer(Modifier.height(8.dp))
+            RetentionSection(isHost, retentionWindowDays, onRetentionChanged)
 
-            // Retention window section (host-governed)
-            RetentionSection(
-                isHost = isHost,
-                currentDays = retentionWindowDays,
-                onChanged = onRetentionChanged,
-            )
+            PollFloorSection(isHost, communityPollFloor, onPollFloorChanged, snackbarHostState)
+
+            PersonalPollSection(snackbarHostState)
 
             Spacer(Modifier.height(8.dp))
 
-            // Community poll floor section (host-governed)
-            PollFloorSection(
-                isHost = isHost,
-                currentFloor = communityPollFloor,
-                onChanged = onPollFloorChanged,
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            // Personal poll interval section
-            PersonalPollSection()
-
-            Spacer(Modifier.height(8.dp))
-
-            // Text size section
-            var fontScale by remember { mutableFloatStateOf(UserSettings.fontScale) }
-
-            Text(
-                "The quick brown fox jumps over the lazy dog",
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            val scaleLabel =
-                buildString {
-                    append(String.format("%.1f", fontScale))
-                    append("x")
-                    if (fontScale == 1.0f) append(" (standard)")
-                }
-            Text(
-                scaleLabel,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.semantics { contentDescription = "Font scale" },
-            )
-
-            Slider(
-                value = fontScale,
-                onValueChange = { newValue ->
-                    val rounded = (newValue * 10).roundToInt() / 10f
-                    fontScale = rounded
-                    UserSettings.fontScale = rounded
-                },
-                valueRange = 0.8f..1.5f,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            FontScaleSection(snackbarHostState)
 
             Spacer(Modifier.height(16.dp))
             UpdateSection()
@@ -176,90 +132,12 @@ internal fun SettingsScreen(
 }
 
 @Composable
-private fun UpdateSection() {
-    val context = LocalContext.current
-    val versionName =
-        try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
-        } catch (_: Exception) {
-            "?"
-        }
-
-    var status by remember { mutableStateOf("") } // "", "checking", "up-to-date", "new: X", "error"
-    var updateUrl by remember { mutableStateOf("") }
-    var checking by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    Text("Updates", style = MaterialTheme.typography.titleMedium)
-    Text("Current version: v$versionName", style = MaterialTheme.typography.bodySmall)
-
-    if (status.startsWith("new:")) {
-        Text(status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-        Button(
-            onClick = {
-                scope.launch {
-                    checking = true
-                    UpdateChecker.downloadApk(context, updateUrl).fold(
-                        onSuccess = { file -> UpdateChecker.installApk(context, file) },
-                        onFailure = { status = "Download failed" },
-                    )
-                    checking = false
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (checking) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp))
-            } else {
-                Text("Update")
-            }
-        }
-    } else {
-        Button(
-            onClick = {
-                scope.launch {
-                    checking = true
-                    status = "checking"
-                    UpdateChecker.check(versionName).fold(
-                        onSuccess = { info ->
-                            status =
-                                if (info.isNewer) {
-                                    "new: v${info.latestVersion}"
-                                } else {
-                                    "up-to-date"
-                                }
-                            updateUrl = info.apkUrl
-                        },
-                        onFailure = { status = "error" },
-                    )
-                    checking = false
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !checking,
-        ) {
-            if (checking) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp))
-            } else {
-                Text("Check for updates")
-            }
-        }
-    }
-    if (status == "up-to-date") {
-        Text("You're on the latest version.", style = MaterialTheme.typography.bodySmall)
-    } else if (status == "error") {
-        Text("Couldn't check for updates.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-    } else if (status == "checking") {
-        Text("Checking...", style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
 private fun ThemeSection() {
     val currentMode = UserSettings.themeMode
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     Text("Appearance", style = MaterialTheme.typography.titleMedium)
-
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(
             selected = currentMode == "system",
@@ -338,7 +216,10 @@ private fun PollFloorSection(
     isHost: Boolean,
     currentFloor: Int,
     onChanged: (Int) -> Unit,
+    snackbarHostState: SnackbarHostState,
 ) {
+    val scope = rememberCoroutineScope()
+
     Text("Community poll floor", style = MaterialTheme.typography.titleMedium)
 
     if (isHost) {
@@ -350,7 +231,7 @@ private fun PollFloorSection(
             onExpandedChange = { expanded = it },
         ) {
             OutlinedTextField(
-                value = "$selectedFloor min",
+                value = UserSettings.formatPollInterval(selectedFloor),
                 onValueChange = {},
                 readOnly = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
@@ -363,13 +244,15 @@ private fun PollFloorSection(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
             ) {
-                POLL_FLOOR_OPTIONS.forEach { minutes ->
+                POLL_FLOOR_OPTIONS.forEach { seconds ->
+                    val label = UserSettings.formatPollInterval(seconds)
                     DropdownMenuItem(
-                        text = { Text("$minutes min") },
+                        text = { Text(label) },
                         onClick = {
-                            selectedFloor = minutes
+                            selectedFloor = seconds
                             expanded = false
-                            onChanged(minutes)
+                            onChanged(seconds)
+                            scope.launch { snackbarHostState.showSnackbar("Poll floor: $label") }
                         },
                     )
                 }
@@ -377,7 +260,7 @@ private fun PollFloorSection(
         }
     } else {
         Text(
-            "Community minimum: $currentFloor min",
+            "Community minimum: ${UserSettings.formatPollInterval(currentFloor)}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.semantics { contentDescription = "Community poll minimum" },
@@ -386,15 +269,17 @@ private fun PollFloorSection(
 }
 
 @Composable
-private fun PersonalPollSection() {
-    val communityFloor = UserSettings.communityMinPollMinutes
-    var pollInterval by remember { mutableIntStateOf(UserSettings.pollIntervalMinutes) }
+private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
+    val communityFloor = UserSettings.communityMinPollSeconds
+    var pollInterval by remember { mutableIntStateOf(UserSettings.pollIntervalSeconds) }
+    val scope = rememberCoroutineScope()
 
     Text("My poll interval", style = MaterialTheme.typography.titleMedium)
 
     Row(modifier = Modifier.fillMaxWidth()) {
+        val label = UserSettings.formatPollInterval(pollInterval)
         Text(
-            "$pollInterval min",
+            label,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.semantics { contentDescription = "Poll interval" },
         )
@@ -404,11 +289,204 @@ private fun PersonalPollSection() {
         value = pollInterval.toFloat(),
         onValueChange = { newValue ->
             val rounded = newValue.toInt()
-            pollInterval = rounded
-            UserSettings.pollIntervalMinutes = rounded
+            if (rounded != pollInterval) {
+                pollInterval = rounded
+                UserSettings.pollIntervalSeconds = rounded
+                val label = UserSettings.formatPollInterval(rounded)
+                scope.launch { snackbarHostState.showSnackbar("Poll interval: $label") }
+            }
         },
-        valueRange = communityFloor.toFloat()..UserSettings.MAX_POLL_INTERVAL_MINUTES.toFloat(),
-        steps = UserSettings.MAX_POLL_INTERVAL_MINUTES - communityFloor - 1,
+        valueRange = communityFloor.toFloat()..UserSettings.MAX_POLL_INTERVAL_SECONDS.toFloat(),
+        steps = UserSettings.MAX_POLL_INTERVAL_SECONDS - communityFloor - 1,
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+@Composable
+private fun FontScaleSection(snackbarHostState: SnackbarHostState) {
+    var fontScale by remember { mutableFloatStateOf(UserSettings.fontScale) }
+    val scope = rememberCoroutineScope()
+
+    Text(
+        "The quick brown fox jumps over the lazy dog",
+        style = MaterialTheme.typography.bodyLarge,
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    Spacer(Modifier.height(8.dp))
+
+    val scaleLabel =
+        buildString {
+            append(String.format("%.1f", fontScale))
+            append("x")
+            if (fontScale == 1.0f) append(" (standard)")
+        }
+    Text(
+        scaleLabel,
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.semantics { contentDescription = "Font scale" },
+    )
+
+    Slider(
+        value = fontScale,
+        onValueChange = { newValue ->
+            val rounded = (newValue * 10).roundToInt() / 10f
+            if (rounded != fontScale) {
+                fontScale = rounded
+                UserSettings.fontScale = rounded
+                scope.launch { snackbarHostState.showSnackbar("Font size: ${String.format("%.1f", rounded)}x") }
+            }
+        },
+        valueRange = 0.8f..1.5f,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun UpdateSection() {
+    val context = LocalContext.current
+    val versionName =
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+        } catch (_: Exception) {
+            "?"
+        }
+
+    var status by remember { mutableStateOf("") }
+    var updateUrl by remember { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Text("Updates", style = MaterialTheme.typography.titleMedium)
+    Text("Current version: v$versionName", style = MaterialTheme.typography.bodySmall)
+
+    when {
+        status.startsWith("new:") -> {
+            Text(status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            Button(
+                onClick = {
+                    if (checking) return@Button
+                    checking = true
+                    scope.launch(Dispatchers.IO) {
+                        UpdateChecker.downloadApk(context, updateUrl).fold(
+                            onSuccess = { file -> UpdateChecker.installApk(context, file) },
+                            onFailure = { status = "Download failed" },
+                        )
+                        checking = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Update")
+                }
+            }
+        }
+        status == "error" -> {
+            Button(
+                onClick = {
+                    if (checking) return@Button
+                    checking = true
+                    status = "checking"
+                    scope.launch(Dispatchers.IO) {
+                        UpdateChecker.check(versionName).fold(
+                            onSuccess = { info ->
+                                status =
+                                    if (info.isNewer) {
+                                        "new: v${info.latestVersion}"
+                                    } else {
+                                        "up-to-date"
+                                    }
+                                updateUrl = info.apkUrl
+                            },
+                            onFailure = { status = "error" },
+                        )
+                        checking = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !checking,
+            ) {
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Check for updates")
+                }
+            }
+            Text("Couldn't check for updates.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        status == "checking" -> {
+            Button(onClick = {}, modifier = Modifier.fillMaxWidth(), enabled = false) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+            }
+            Text("Checking…", style = MaterialTheme.typography.bodySmall)
+        }
+        status == "up-to-date" -> {
+            Button(
+                onClick = {
+                    if (checking) return@Button
+                    checking = true
+                    status = "checking"
+                    scope.launch(Dispatchers.IO) {
+                        UpdateChecker.check(versionName).fold(
+                            onSuccess = { info ->
+                                status =
+                                    if (info.isNewer) {
+                                        "new: v${info.latestVersion}"
+                                    } else {
+                                        "up-to-date"
+                                    }
+                                updateUrl = info.apkUrl
+                            },
+                            onFailure = { status = "error" },
+                        )
+                        checking = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !checking,
+            ) {
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Check for updates")
+                }
+            }
+            Text("You're on the latest version.", style = MaterialTheme.typography.bodySmall)
+        }
+        else -> {
+            Button(
+                onClick = {
+                    if (checking) return@Button
+                    checking = true
+                    status = "checking"
+                    scope.launch(Dispatchers.IO) {
+                        UpdateChecker.check(versionName).fold(
+                            onSuccess = { info ->
+                                status =
+                                    if (info.isNewer) {
+                                        "new: v${info.latestVersion}"
+                                    } else {
+                                        "up-to-date"
+                                    }
+                                updateUrl = info.apkUrl
+                            },
+                            onFailure = { status = "error" },
+                        )
+                        checking = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !checking,
+            ) {
+                if (checking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Check for updates")
+                }
+            }
+        }
+    }
 }

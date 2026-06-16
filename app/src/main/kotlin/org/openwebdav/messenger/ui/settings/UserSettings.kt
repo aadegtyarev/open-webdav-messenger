@@ -9,8 +9,8 @@ internal object UserSettings {
     private const val PREFS = "owdm_user"
     private const val KEY_DISPLAY_NAME = "display_name"
     private const val KEY_FONT_SCALE = "font_scale"
-    private const val KEY_POLL_INTERVAL_MINUTES = "poll_interval_minutes"
-    private const val KEY_COMMUNITY_MIN_POLL_MINUTES = "community_min_poll_minutes"
+    private const val KEY_POLL_INTERVAL_SECONDS = "poll_interval_seconds"
+    private const val KEY_COMMUNITY_MIN_POLL_SECONDS = "community_min_poll_seconds"
     private const val KEY_IS_HOST = "is_host"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_COMMUNITY_RETENTION_WINDOW_DAYS = "community_retention_window_days"
@@ -22,11 +22,11 @@ internal object UserSettings {
     private val _themeMode = MutableStateFlow("system")
     val themeModeFlow: StateFlow<String> = _themeMode
 
-    /** Default poll interval: 15 minutes (platform floor). */
-    const val DEFAULT_POLL_INTERVAL_MINUTES = 15
+    /** Default poll interval: 60 seconds. */
+    const val DEFAULT_POLL_INTERVAL_SECONDS = 60
 
-    /** Maximum user-selectable poll interval: 60 minutes. */
-    const val MAX_POLL_INTERVAL_MINUTES = 60
+    /** Maximum user-selectable poll interval: 3600 seconds (60 minutes). */
+    const val MAX_POLL_INTERVAL_SECONDS = 3600
 
     /** Default retention window: 14 days. */
     const val DEFAULT_RETENTION_WINDOW_DAYS = 14
@@ -52,28 +52,34 @@ internal object UserSettings {
             prefs.edit().putFloat(KEY_FONT_SCALE, clamped).apply()
         }
 
-    /** The member's preferred poll interval in minutes. Defaults to [DEFAULT_POLL_INTERVAL_MINUTES]. */
-    var pollIntervalMinutes: Int
+    /** The member's preferred poll interval in seconds. Defaults to [DEFAULT_POLL_INTERVAL_SECONDS]. */
+    var pollIntervalSeconds: Int
         get() =
-            prefs.getInt(KEY_POLL_INTERVAL_MINUTES, DEFAULT_POLL_INTERVAL_MINUTES)
-                .coerceIn(communityMinPollMinutes, MAX_POLL_INTERVAL_MINUTES)
+            prefs.getInt(KEY_POLL_INTERVAL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS)
+                .coerceIn(communityMinPollSeconds, MAX_POLL_INTERVAL_SECONDS)
         set(value) {
-            val clamped = value.coerceIn(communityMinPollMinutes, MAX_POLL_INTERVAL_MINUTES)
-            prefs.edit().putInt(KEY_POLL_INTERVAL_MINUTES, clamped).apply()
+            val clamped = value.coerceIn(communityMinPollSeconds, MAX_POLL_INTERVAL_SECONDS)
+            prefs.edit().putInt(KEY_POLL_INTERVAL_SECONDS, clamped).apply()
         }
 
     /**
      * The community-governed minimum poll interval read from `meta/community.json`.
      * Updated by the poll cycle and used as the lower bound for the user's slider.
-     * Defaults to [DEFAULT_POLL_INTERVAL_MINUTES] until the first read.
+     * Defaults to [DEFAULT_POLL_INTERVAL_SECONDS] until the first read.
+     * Setting also auto-adjusts [pollIntervalSeconds] up to the floor if it is below it
+     * (handles the case where a new member joins — their interval becomes the community floor).
      */
-    var communityMinPollMinutes: Int
+    var communityMinPollSeconds: Int
         get() =
-            prefs.getInt(KEY_COMMUNITY_MIN_POLL_MINUTES, DEFAULT_POLL_INTERVAL_MINUTES)
-                .coerceIn(1, 1440)
+            prefs.getInt(KEY_COMMUNITY_MIN_POLL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS)
+                .coerceIn(1, 3600)
         set(value) {
-            val clamped = value.coerceIn(1, 1440)
-            prefs.edit().putInt(KEY_COMMUNITY_MIN_POLL_MINUTES, clamped).apply()
+            val clamped = value.coerceIn(1, 3600)
+            prefs.edit().putInt(KEY_COMMUNITY_MIN_POLL_SECONDS, clamped).apply()
+            // Auto-adjust the member's personal interval up to the new floor.
+            if (pollIntervalSeconds < clamped) {
+                pollIntervalSeconds = clamped
+            }
         }
 
     /**
@@ -112,4 +118,15 @@ internal object UserSettings {
     var isHost: Boolean
         get() = prefs.getBoolean(KEY_IS_HOST, false)
         set(value) = prefs.edit().putBoolean(KEY_IS_HOST, value).apply()
+
+    /**
+     * Convert a poll interval in seconds to a human-readable string.
+     * 15→"15s", 60→"1m", 120→"2m", 300→"5m", etc.
+     */
+    fun formatPollInterval(seconds: Int): String =
+        when {
+            seconds < 60 -> "${seconds}s"
+            seconds % 60 == 0 -> "${seconds / 60}m"
+            else -> "${seconds}s"
+        }
 }
