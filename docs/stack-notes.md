@@ -42,7 +42,7 @@ If this document is missing or empty for a component the feature touches — tha
 - **Canonical docs:** <https://kotlinlang.org/docs/home.html>
 - **Spec / reference:** Null safety — <https://kotlinlang.org/docs/null-safety.html> ; coroutines — <https://kotlinlang.org/docs/coroutines-overview.html>
 - **Required validators:**
-  - `./gradlew ktlintCheck` (or `./gradlew detekt`) — static analysis / style; run before every commit. Gates: style + a class of code smells. See Gradle component for which one the project wires in.
+  - `./gradlew ktlintCheck` — static analysis / style; run before every commit. Gates: style + a class of code smells.
   - `./gradlew test` — JVM unit tests; gates logic correctness off-device.
 - **Idioms and constraints** (each item: rule + source URL):
   - Non-nullable types cannot hold `null`; nullable types are declared with `?` and cannot be dereferenced without a null check. Prefer safe-call `?.` and Elvis `?:` over `!!`. Source: <https://kotlinlang.org/docs/null-safety.html>
@@ -211,14 +211,13 @@ If this document is missing or empty for a component the feature touches — tha
 
 - **Role in this project:** Build system and host of all validators (test, lint, style).
 - **Canonical docs:** <https://docs.gradle.org/current/userguide/kotlin_dsl.html> ; Android Gradle Plugin — <https://developer.android.com/build>
-- **Spec / reference:** ktlint-gradle — <https://github.com/JLLeitschuh/ktlint-gradle> ; detekt — <https://detekt.dev/docs/gettingstarted/gradle> ; Android Lint — <https://developer.android.com/studio/write/lint>
+- **Spec / reference:** ktlint-gradle — <https://github.com/JLLeitschuh/ktlint-gradle> ; Android Lint — <https://developer.android.com/studio/write/lint>
 - **Required validators:**
   - `./gradlew test` — JVM unit tests. Source: <https://developer.android.com/build>
   - `./gradlew lint` — Android Lint; "If set to true (default), [`abortOnError`] stops the build if errors are found." Source: <https://developer.android.com/studio/write/lint>
   - `./gradlew ktlintCheck` — ktlint style (jlleitschuh plugin `org.jlleitschuh.gradle.ktlint`); `ktlintFormat` auto-fixes. Source: <https://github.com/JLLeitschuh/ktlint-gradle>
-  - `./gradlew detekt` — detekt static analysis; can `failOnSeverity`. (Alternative/complement to ktlint.) Source: <https://detekt.dev/docs/gettingstarted/gradle>
 - **Idioms and constraints** (each item: rule + source URL):
-  - **Pick one style/static-analysis stack and wire it into the pipeline** — ktlint (format-focused) or detekt (smell-focused), or both; both expose Gradle tasks (`ktlintCheck` / `detekt`). The architect picks; the pipeline below assumes ktlint + lint as the default and notes detekt as alternative. Source: <https://github.com/JLLeitschuh/ktlint-gradle> ; <https://detekt.dev/docs/gettingstarted/gradle>
+  - **Ktlint chosen over detekt for style/formatting** — the project uses ktlint only (architecture decision 6); detekt is not wired. Source: <https://github.com/JLLeitschuh/ktlint-gradle>
   - **Android Lint aborts the build on errors by default** (`abortOnError = true`); keep it that way and use a checked-in `lint-baseline.xml` only for pre-existing debt. Source: <https://developer.android.com/studio/write/lint>
 - **Known gotchas:**
   - ktlint-gradle only activates on projects that apply the Kotlin plugin — applying it at the root without Kotlin yields no tasks. Source: <https://github.com/JLLeitschuh/ktlint-gradle>
@@ -376,12 +375,10 @@ Every validator listed here must be in the project's Pipeline block in `AGENTS.m
 |---|---|---|
 | Unit tests | `./gradlew test` | Logic correctness off-device (WebDAV request shaping via MockWebServer, crypto round-trips, Room DAO logic). |
 | Android Lint | `./gradlew lint` | Manifest/permission/API-level/security issues; aborts on error by default. |
-| Kotlin style (ktlint) | `./gradlew ktlintCheck` | Kotlin formatting/style. (Or `./gradlew detekt` if detekt is chosen — architect's call.) |
-| Instrumented tests | `./gradlew connectedAndroidTest` | Device-backed paths: lazysodium native `.so` ABI loading (symmetric AEAD/Argon2id **and** public-key `crypto_box` / `crypto_box_seal` / `crypto_sign` / `crypto_generichash` paths), Android Keystore wrap/unwrap (incl. identity secret key), Room migrations. Requires emulator/device in CI. |
+| Kotlin style (ktlint) | `./gradlew ktlintCheck` | Kotlin formatting/style. |
+| Instrumented tests — NOT WIRED | `./gradlew connectedAndroidTest` | Device-backed paths: lazysodium native `.so` ABI loading, Android Keystore wrap/unwrap, Room migrations. Requires emulator/device; not in CI (architecture decision 6, descoped). |
 | Secret scan (gitleaks) | `gitleaks detect --source . --config .gitleaks.toml --verbose` | Enforces **SC21** — no secret material (keys, credentials, passphrases) in the source tree or git history. Runs as the sole CI gate via `node .ai-dev/quality/run.mjs review` in `.github/workflows/pr-checks.yml`; scans full history (`fetch-depth: 0`). Source: <https://github.com/gitleaks/gitleaks> |
 | Workflow lint (actionlint) — OPTIONAL, NOT YET WIRED | `actionlint` | GitHub Actions workflow YAML correctness (syntax, `runs-on` labels, `run:` shell). Optional for this hobby project; the plan decides whether to wire it. Source: <https://github.com/rhysd/actionlint> |
-
-> Detekt (`./gradlew detekt`) is listed as an alternative/complement to ktlint; if the architect selects detekt, swap or add the row. Both are documented validators.
 
 ---
 
