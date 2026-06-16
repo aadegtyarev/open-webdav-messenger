@@ -1,5 +1,7 @@
 package org.openwebdav.messenger.app
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.identity.Identity
@@ -37,10 +39,14 @@ internal class RuntimeGraph(
     val senderIdentifier: String,
     /** All member identifiers in this chat (for change-entry fan-out). */
     val roster: List<String> = listOf(senderIdentifier),
-    /** Signing-pubkey-hex → display name (from directory). Updated asynchronously after graph construction. */
-    @Volatile
-    var memberNames: Map<String, String> = emptyMap(),
 ) {
+    /** Signing-pubkey-hex → display name (from directory). Updated asynchronously. */
+    private val _memberNames = MutableStateFlow<Map<String, String>>(emptyMap())
+    val memberNamesFlow: StateFlow<Map<String, String>> = _memberNames
+
+    var memberNames: Map<String, String>
+        get() = _memberNames.value
+        set(value) { _memberNames.value = value }
     /**
      * Per-process, strictly-increasing per-sender sequence for the §4 order-token. The token orders the
      * feed for display only (dedup is by §2 message-id), so a per-process counter is sufficient — the

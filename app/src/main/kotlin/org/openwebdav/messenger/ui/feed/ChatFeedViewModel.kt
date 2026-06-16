@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -32,12 +33,14 @@ internal class ChatFeedViewModel(
 ) : ViewModel() {
     val communityName: String = graph.communityName
 
-    /** The chat history, oldest→newest, observed from Room (offline, off-main-thread). */
+    /** The chat history, oldest→newest, observed from Room — re-maps when member names change. */
     val messages: StateFlow<List<FeedRow>> =
-        graph.store
-            .observeChat(graph.chatId)
-            .map { rows -> rows.map { it.toFeedRow() } }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
+        combine(
+            graph.store.observeChat(graph.chatId),
+            graph.memberNamesFlow,
+        ) { rows, names ->
+            rows.map { it.toFeedRow(names) }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     private val _draft = MutableStateFlow("")
     val draft: StateFlow<String> = _draft
@@ -116,13 +119,13 @@ internal class ChatFeedViewModel(
         }
     }
 
-    private fun MessageEntity.toFeedRow(): FeedRow =
+    private fun MessageEntity.toFeedRow(names: Map<String, String>): FeedRow =
         FeedRow(
             messageId = messageId,
             body = body ?: "",
             isMine = senderSignPub == graph.senderIdentifier,
             sendStatus = sendStatus,
-            senderName = if (senderSignPub != graph.senderIdentifier) graph.memberNames[senderSignPub] else null,
+            senderName = if (senderSignPub != graph.senderIdentifier) names[senderSignPub] else null,
         )
 
     /** A rendered feed row — literal plain-text [body], never styled / linked / auto-loaded (SC8). */
