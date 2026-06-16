@@ -22,6 +22,7 @@ import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.ChatSubscription
 import org.openwebdav.messenger.sync.CycleOutcome
+import org.openwebdav.messenger.sync.FastPollManager
 import org.openwebdav.messenger.sync.RetentionPruner
 import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.sync.SyncRunner
@@ -399,6 +400,12 @@ internal class AndroidDeps(
     override fun schedulePoll(communityMinPollSeconds: Int?) {
         val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalSeconds.toLong()
         val effective = SyncScheduler.effectiveIntervalSeconds(memberPref, communityMinPollSeconds)
-        SyncScheduler.schedule(WorkManager.getInstance(appContext), effective)
+        // WorkManager floor is 15 minutes. Sub-minute intervals need foreground service.
+        if (effective < 60) {
+            FastPollManager.enable(appContext, WorkManager.getInstance(appContext), effective)
+        } else {
+            FastPollManager.disable(appContext, WorkManager.getInstance(appContext))
+            SyncScheduler.schedule(WorkManager.getInstance(appContext), effective)
+        }
     }
 }
