@@ -142,4 +142,25 @@ class ProtocolPrimitivesTest {
         assertNull(MessageId.splitMessageId("a~b~c"))
         assertNull(MessageId.splitMessageId("token~tooshort"))
     }
+
+    // Base32hex round-trip: encode → decode → same value.
+    @Test
+    fun base32hex_round_trip() {
+        val testValues = longArrayOf(0L, 1L, 31L, 255L, 1000L, Long.MAX_VALUE ushr 10, 1687389200123L)
+        for (value in testValues) {
+            val encoded = Base32.encodeBase32HexFixed(value, 11)
+            val decoded = Base32.decodeBase32HexFixed(encoded)
+            assertEquals("round-trip failed for $value", value, decoded)
+        }
+    }
+
+    @Test
+    fun base32hex_decode_rejects_invalid_chars() {
+        try {
+            Base32.decodeBase32HexFixed("???????????")
+            org.junit.Assert.fail("expected IllegalArgumentException")
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
 }

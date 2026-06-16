@@ -20,6 +20,7 @@ import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.ChatSubscription
 import org.openwebdav.messenger.sync.CycleOutcome
+import org.openwebdav.messenger.sync.RetentionPruner
 import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.sync.SyncRunner
 import org.openwebdav.messenger.sync.SyncScheduler
@@ -235,12 +236,14 @@ internal class AndroidDeps(
         val db = MessengerDatabase.get(appContext)
         val store = MessageStore(db.messageDao(), db.syncCursorDao())
         val envelope = MessageEnvelope.create(crypto.messageCrypto(), identityFactory.identityCrypto())
+        val transport = TransportFactory.create(config)
         val engine =
             SyncEngine(
-                transport = TransportFactory.create(config),
+                transport = transport,
                 envelope = envelope,
                 store = store,
                 keyProvider = { requested -> chatKeyStore.load(requested) ?: if (requested == chatId) chatKey else null },
+                pruner = RetentionPruner(transport = transport),
             )
         return RuntimeGraph(
             engine = engine,

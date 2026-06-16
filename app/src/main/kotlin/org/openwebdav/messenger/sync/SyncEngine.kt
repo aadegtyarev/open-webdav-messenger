@@ -24,6 +24,7 @@ internal class SyncEngine(
     store: MessageStore,
     keyProvider: ChatKeyProvider,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val pruner: RetentionPruner? = null,
 ) {
     private val sendWriter = SendWriter(transport)
     private val pollReader = PollReader(transport, envelope, store, keyProvider, clock)
@@ -48,9 +49,20 @@ internal class SyncEngine(
      * §9.3: run one poll cycle for [memberIdentifier] over its joined [subscriptions]. Reads the change
      * index, fetches new envelopes, validates/dedups/persists, advances cursors. Never throws —
      * returns a typed [CycleOutcome] (the [SyncWorker] maps `backedOff` to a retry).
+     *
+     * After a successful cycle (no back-off), runs retention pruning over each subscribed chat's
+     * `log/` and `changes/` entries (§1.4). Pruning is best-effort and never affects the poll outcome.
      */
     suspend fun pollCycle(
         memberIdentifier: String,
         subscriptions: List<ChatSubscription>,
-    ): CycleOutcome = pollReader.cycle(memberIdentifier, subscriptions)
+    ): CycleOutcome {
+        val outcome = pollReader.cycle(memberIdentifier, subscriptions)
+        if (!outcome.backedOff) {
+            subscriptions.forEach { sub ->
+                pruner?.pruneChat(sub.chatId)
+            }
+        }
+        return outcome
+    }
 }
