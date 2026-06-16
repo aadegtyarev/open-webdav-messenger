@@ -11,10 +11,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -38,9 +43,22 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
+/** The ordered retention-window options the host can pick from. */
+private val RETENTION_OPTIONS = listOf(7, 14, 30, 60, 90)
+
+/** The ordered poll-floor options the host can pick from (minutes). */
+private val POLL_FLOOR_OPTIONS = listOf(1, 5, 10, 15, 30, 60, 120, 240)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun SettingsScreen(onBack: () -> Unit) {
+internal fun SettingsScreen(
+    onBack: () -> Unit,
+    isHost: Boolean = false,
+    retentionWindowDays: Int = UserSettings.DEFAULT_RETENTION_WINDOW_DAYS,
+    communityPollFloor: Int = UserSettings.DEFAULT_POLL_INTERVAL_MINUTES,
+    onRetentionChanged: (Int) -> Unit = {},
+    onPollFloorChanged: (Int) -> Unit = {},
+) {
     var name by remember { mutableStateOf(UserSettings.displayName) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -80,8 +98,31 @@ internal fun SettingsScreen(onBack: () -> Unit) {
             )
             Spacer(Modifier.height(8.dp))
 
-            // Poll interval section
-            PollIntervalSection()
+            // Theme toggle section
+            ThemeSection()
+
+            Spacer(Modifier.height(8.dp))
+
+            // Retention window section (host-governed)
+            RetentionSection(
+                isHost = isHost,
+                currentDays = retentionWindowDays,
+                onChanged = onRetentionChanged,
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // Community poll floor section (host-governed)
+            PollFloorSection(
+                isHost = isHost,
+                currentFloor = communityPollFloor,
+                onChanged = onPollFloorChanged,
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            // Personal poll interval section
+            PersonalPollSection()
 
             Spacer(Modifier.height(8.dp))
 
@@ -126,21 +167,142 @@ internal fun SettingsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun PollIntervalSection() {
+private fun ThemeSection() {
+    val currentMode = UserSettings.themeMode
+
+    Text("Appearance", style = MaterialTheme.typography.titleMedium)
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = currentMode == "system",
+            onClick = { UserSettings.themeMode = "system" },
+            label = { Text("System") },
+        )
+        FilterChip(
+            selected = currentMode == "light",
+            onClick = { UserSettings.themeMode = "light" },
+            label = { Text("Light") },
+        )
+        FilterChip(
+            selected = currentMode == "dark",
+            onClick = { UserSettings.themeMode = "dark" },
+            label = { Text("Dark") },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RetentionSection(
+    isHost: Boolean,
+    currentDays: Int,
+    onChanged: (Int) -> Unit,
+) {
+    Text("Keep messages", style = MaterialTheme.typography.titleMedium)
+
+    if (isHost) {
+        var expanded by remember { mutableStateOf(false) }
+        var selectedDays by remember { mutableIntStateOf(currentDays) }
+
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it },
+        ) {
+            OutlinedTextField(
+                value = "$selectedDays days",
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                RETENTION_OPTIONS.forEach { days ->
+                    DropdownMenuItem(
+                        text = { Text("$days days") },
+                        onClick = {
+                            selectedDays = days
+                            expanded = false
+                            onChanged(days)
+                        },
+                    )
+                }
+            }
+        }
+    } else {
+        Text(
+            "$currentDays days",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics { contentDescription = "Retention window" },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PollFloorSection(
+    isHost: Boolean,
+    currentFloor: Int,
+    onChanged: (Int) -> Unit,
+) {
+    Text("Community poll floor", style = MaterialTheme.typography.titleMedium)
+
+    if (isHost) {
+        var expanded by remember { mutableStateOf(false) }
+        var selectedFloor by remember { mutableIntStateOf(currentFloor) }
+
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it },
+        ) {
+            OutlinedTextField(
+                value = "$selectedFloor min",
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                POLL_FLOOR_OPTIONS.forEach { minutes ->
+                    DropdownMenuItem(
+                        text = { Text("$minutes min") },
+                        onClick = {
+                            selectedFloor = minutes
+                            expanded = false
+                            onChanged(minutes)
+                        },
+                    )
+                }
+            }
+        }
+    } else {
+        Text(
+            "Community minimum: $currentFloor min",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics { contentDescription = "Community poll minimum" },
+        )
+    }
+}
+
+@Composable
+private fun PersonalPollSection() {
     val communityFloor = UserSettings.communityMinPollMinutes
     var pollInterval by remember { mutableIntStateOf(UserSettings.pollIntervalMinutes) }
 
-    Text("Poll interval", style = MaterialTheme.typography.titleMedium)
-
-    // Community floor info — non-editable.
-    Text(
-        "Community minimum: $communityFloor min",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.semantics { contentDescription = "Community poll minimum" },
-    )
-
-    Spacer(Modifier.height(4.dp))
+    Text("My poll interval", style = MaterialTheme.typography.titleMedium)
 
     Row(modifier = Modifier.fillMaxWidth()) {
         Text(

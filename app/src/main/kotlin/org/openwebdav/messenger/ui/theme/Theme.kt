@@ -26,7 +26,14 @@ fun OpenWebDavMessengerTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    val colors = if (darkTheme) darkColorScheme() else lightColorScheme()
+    val themeMode by UserSettings.themeModeFlow.collectAsState()
+    val effectiveDarkTheme =
+        when (themeMode) {
+            "dark" -> true
+            "light" -> false
+            else -> darkTheme // "system" or unknown — follow the OS setting
+        }
+    val colors = if (effectiveDarkTheme) darkColorScheme() else lightColorScheme()
     val systemFontScale = LocalDensity.current.fontScale
     val userFontScale by UserSettings.fontScaleFlow.collectAsState()
     val scaledTypography = buildScaledTypography(userFontScale * systemFontScale)

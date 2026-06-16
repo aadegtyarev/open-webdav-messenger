@@ -21,4 +21,5 @@ data class CycleOutcome(
     val skippedCount: Int,
     val backedOff: Boolean,
     val communityMinPollMinutes: Int? = null,
+    val retentionWindowDays: Int? = null,
 )

@@ -20,9 +20,11 @@ import org.openwebdav.messenger.transport.WebDavTransport
  * already grants every member read/write/delete on the shared disk).
  *
  * @param minPollIntervalMinutes the community-wide minimum poll interval in minutes (1..1440).
+ * @param retentionWindowDays how many days of message history to keep (7..90, default 14).
  */
 internal data class CommunityMetadata(
     val minPollIntervalMinutes: Int,
+    val retentionWindowDays: Int = DEFAULT_RETENTION_DAYS,
 ) {
     companion object {
         /** Default community floor: 15 minutes (matches WorkManager's platform floor). */
@@ -33,6 +35,15 @@ internal data class CommunityMetadata(
 
         /** Minimum allowed floor: 1 minute. */
         const val MIN_FLOOR_MINUTES = 1
+
+        /** Default retention window: 14 days. */
+        const val DEFAULT_RETENTION_DAYS = 14
+
+        /** Minimum retention window: 7 days. */
+        const val MIN_RETENTION_DAYS = 7
+
+        /** Maximum retention window: 90 days. */
+        const val MAX_RETENTION_DAYS = 90
 
         /** The file path on the WebDAV disk (under the community root, next to `meta/roster.json`). */
         const val FILE_PATH = "meta/community.json"
@@ -104,7 +115,10 @@ internal data class CommunityMetadata(
                 val minutes =
                     json.getInt("minPollIntervalMinutes")
                         .coerceIn(MIN_FLOOR_MINUTES, MAX_FLOOR_MINUTES)
-                CommunityMetadata(minPollIntervalMinutes = minutes)
+                val retentionDays =
+                    json.optInt("retentionWindowDays", DEFAULT_RETENTION_DAYS)
+                        .coerceIn(MIN_RETENTION_DAYS, MAX_RETENTION_DAYS)
+                CommunityMetadata(minPollIntervalMinutes = minutes, retentionWindowDays = retentionDays)
             } catch (_: Exception) {
                 null
             }
@@ -136,6 +150,7 @@ internal data class CommunityMetadata(
     private fun toJson(): String {
         return JSONObject().apply {
             put("minPollIntervalMinutes", minPollIntervalMinutes)
+            put("retentionWindowDays", retentionWindowDays)
         }.toString()
     }
 }
