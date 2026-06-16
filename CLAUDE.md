@@ -78,7 +78,7 @@ gitleaks detect --source . --redact --exit-code 1   # secret scan — enforces S
 
 A green tests + lint with a failing validator is still a failed pipeline. The Reviewer blocks if a validator listed in `stack-notes.md` is not present here, or if it is present here but not actually run by the Builder.
 
-The three JVM gates (`test` + `ktlintCheck` + `lint`) also run in CI on every pull request via `.github/workflows/pr-checks.yml`, alongside a **`secret-scan`** job (gitleaks over full git history — enforces SC21); `connectedAndroidTest` stays the manual on-device gate (no CI emulator — decision 8).
+The `review-gates` job in CI (`.github/workflows/pr-checks.yml`) runs the review-beat quality suite (`node .ai-dev/quality/run.mjs review`) — currently **secret-scan** (gitleaks over full git history, enforces SC21). The three JVM gates (`test` + `ktlintCheck` + `lint`) run locally before pushing (`node .ai-dev/quality/run.mjs build`); `connectedAndroidTest` is the manual on-device gate (no CI emulator — decision 6, descoped).
 
 ---
 
