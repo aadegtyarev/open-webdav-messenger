@@ -181,7 +181,8 @@ internal object AppContainer {
     data class UnifiedChat(
         val chatId: String,
         val name: String,
-        val kind: String, // "general", "group", "dm"
+        // "general", "group", "dm"
+        val kind: String,
         val communityId: String,
         val communityName: String,
     )

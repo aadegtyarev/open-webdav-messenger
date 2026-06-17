@@ -41,22 +41,33 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppContainer.UnifiedChat
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun UnifiedChatListScreen(
-    onCreateChat: () -> Unit,
+    onCreateCommunity: () -> Unit,
     onJoin: () -> Unit,
     onOpenFeed: () -> Unit,
     onSettings: () -> Unit,
 ) {
     val chats = remember { AppContainer.allChats() }
     var fabExpanded by remember { mutableStateOf(false) }
+    var showCreateChatDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+
+    if (showCreateChatDialog) {
+        CreateChatDialog(
+            onDismiss = { showCreateChatDialog = false },
+            onCreated = {
+                showCreateChatDialog = false
+                onOpenFeed()
+            },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -76,12 +87,20 @@ internal fun UnifiedChatListScreen(
                     onDismissRequest = { fabExpanded = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("New chat") },
+                        text = { Text("New group chat") },
                         onClick = {
                             fabExpanded = false
-                            onCreateChat()
+                            showCreateChatDialog = true
                         },
                         leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("New community") },
+                        onClick = {
+                            fabExpanded = false
+                            onCreateCommunity()
+                        },
+                        leadingIcon = { Icon(Icons.Filled.Group, contentDescription = null) },
                     )
                     DropdownMenuItem(
                         text = { Text("Join") },
@@ -89,12 +108,7 @@ internal fun UnifiedChatListScreen(
                             fabExpanded = false
                             onJoin()
                         },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Filled.Person,
-                                contentDescription = null,
-                            )
-                        },
+                        leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
                     )
                 }
                 FloatingActionButton(onClick = { fabExpanded = true }) {
@@ -148,15 +162,17 @@ private fun ChatRow(
     chat: UnifiedChat,
     onClick: () -> Unit,
 ) {
-    val icon = when (chat.kind) {
-        "dm" -> Icons.Filled.Person
-        else -> Icons.Filled.Group
-    }
-    val label = when (chat.kind) {
-        "general" -> "${chat.communityName} · General"
-        "group" -> "${chat.communityName} · ${chat.name}"
-        else -> chat.name
-    }
+    val icon =
+        when (chat.kind) {
+            "dm" -> Icons.Filled.Person
+            else -> Icons.Filled.Group
+        }
+    val label =
+        when (chat.kind) {
+            "general" -> "${chat.communityName} · General"
+            "group" -> "${chat.communityName} · ${chat.name}"
+            else -> chat.name
+        }
     Row(
         modifier =
             Modifier
