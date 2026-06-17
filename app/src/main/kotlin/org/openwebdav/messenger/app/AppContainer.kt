@@ -2,7 +2,9 @@ package org.openwebdav.messenger.app
 
 import android.content.Context
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.openwebdav.messenger.crypto.ChatKey
@@ -180,6 +182,9 @@ internal object AppContainer {
 
     /** All joined communities from the registry. */
     fun communities(): List<CommunityRegistry.Entry> = communityRegistry.all()
+
+    /** Observable count of unread messages for a chat. Falls back to 0 if no engine is active. */
+    fun observeUnreadCount(chatId: String): Flow<Int> = runtimeGraph()?.store?.observeUnreadCount(chatId) ?: flowOf(0)
 
     /** Switch the active community to [communityId] — rebuilds the engine for that community. */
     fun switchToCommunity(communityId: String) {
