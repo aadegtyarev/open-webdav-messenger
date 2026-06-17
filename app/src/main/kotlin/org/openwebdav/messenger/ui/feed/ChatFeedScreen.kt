@@ -89,6 +89,7 @@ internal fun ChatFeedScreen(
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
+        viewModel.markLatestRead()
     }
 
     Scaffold(
