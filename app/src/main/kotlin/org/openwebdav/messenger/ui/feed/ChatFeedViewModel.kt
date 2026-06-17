@@ -180,21 +180,13 @@ internal class ChatFeedViewModel(
         }
     }
 
-    /** Mark the latest message in the current chat as read (called when the feed opens and after sync). */
-    fun markLatestRead() {
-        viewModelScope.launch {
-            val allMessages = graph.store.messagesForChat(graph.chatId)
-            val lastToken = allMessages.lastOrNull()?.orderToken ?: return@launch
-            markRead(lastToken)
-        }
-    }
-
     private fun MessageEntity.toFeedRow(names: Map<String, String>): FeedRow =
         FeedRow(
             messageId = messageId,
             body = body ?: "",
             isMine = senderSignPub == graph.senderIdentifier,
             sendStatus = sendStatus,
+            orderToken = orderToken,
             senderName = if (senderSignPub != graph.senderIdentifier) names[senderSignPub] else null,
             senderKey = if (senderSignPub != graph.senderIdentifier) senderSignPub.take(8) else null,
         )
@@ -205,6 +197,7 @@ internal class ChatFeedViewModel(
         val body: String,
         val isMine: Boolean,
         val sendStatus: String,
+        val orderToken: String,
         val senderName: String? = null,
         val senderKey: String? = null,
     )
