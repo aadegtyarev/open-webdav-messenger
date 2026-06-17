@@ -333,7 +333,7 @@ private fun Composer(
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
+    Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
         sendError?.let {
             Text(
                 it,
