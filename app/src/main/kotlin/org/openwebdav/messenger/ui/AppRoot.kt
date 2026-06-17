@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.ui
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -98,6 +100,7 @@ private fun AppNav() {
             )
 
         Screen.Settings -> {
+            val context = LocalContext.current
             val host = remember { UserSettings.isHost }
             val retentionDays = remember { UserSettings.communityRetentionWindowDays }
             val pollFloor = remember { UserSettings.communityMinPollSeconds }
@@ -111,6 +114,9 @@ private fun AppNav() {
                 },
                 onPollFloorChanged = { seconds ->
                     AppContainer.updateCommunityMetadata(UserSettings.communityRetentionWindowDays, seconds)
+                },
+                onExportRestore = {
+                    context.startActivity(Intent(context, ExportRestoreActivity::class.java))
                 },
             )
         }

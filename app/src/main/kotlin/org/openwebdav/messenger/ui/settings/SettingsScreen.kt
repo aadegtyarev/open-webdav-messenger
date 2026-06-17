@@ -69,6 +69,7 @@ internal fun SettingsScreen(
     communityPollFloor: Int = UserSettings.DEFAULT_POLL_INTERVAL_SECONDS,
     onRetentionChanged: (Int) -> Unit = {},
     onPollFloorChanged: (Int) -> Unit = {},
+    onExportRestore: () -> Unit = {},
 ) {
     var name by remember { mutableStateOf(UserSettings.displayName) }
     var nameChanged by remember { mutableStateOf(false) }
@@ -124,6 +125,10 @@ internal fun SettingsScreen(
             PollFloorSection(isHost, communityPollFloor, onPollFloorChanged, snackbarHostState)
 
             PersonalPollSection(snackbarHostState)
+
+            Spacer(Modifier.height(8.dp))
+
+            ExportRestoreSection(onExportRestore)
 
             Spacer(Modifier.height(8.dp))
 
@@ -335,6 +340,17 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun ExportRestoreSection(onExportRestore: () -> Unit) {
+    Text("Account", style = MaterialTheme.typography.titleMedium)
+    Button(
+        onClick = onExportRestore,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text("Export / Restore")
     }
 }
 
