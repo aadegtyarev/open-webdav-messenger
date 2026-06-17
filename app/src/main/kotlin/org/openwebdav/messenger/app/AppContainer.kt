@@ -133,9 +133,11 @@ internal object AppContainer {
             } else {
                 keySources.newRandomKey()
             }
-        // Domain-separate group chat ids: BLAKE2b("owdm/group-chat/v1" ‖ 0x1F ‖ randomBytes ‖ communityId)
+        // Domain-separate group chat ids — mix communityId + chat name + random nonce for uniqueness.
+        // Public chats share the community key, so a per-chat uniqueness source is needed.
+        val nonce = keySources.newRandomKey().copyBytes().take(8).toByteArray()
         val ctx = "owdm/group-chat/v1".toByteArray(Charsets.UTF_8)
-        val input = ctx + byteArrayOf(0x1F) + chatKey.copyBytes() + communityId.toByteArray(Charsets.UTF_8)
+        val input = ctx + byteArrayOf(0x1F) + nonce + communityId.toByteArray(Charsets.UTF_8) + name.toByteArray(Charsets.UTF_8)
         val hash = crypto.nativeCrypto().genericHash(input, 16)
         val chatId = Hex.encode(hash)
         crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
@@ -154,7 +156,7 @@ internal object AppContainer {
                 val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
                 service.publishChatEntry(
                     identity = graph.identity,
-                    chatId = chatId.toByteArray(Charsets.UTF_8),
+                    chatId = hash, // raw hash bytes, not the hex string
                     kind = ChatKind.GROUP,
                     access = ChatAccess.PUBLIC,
                     title = name,
@@ -248,6 +250,8 @@ internal object AppContainer {
                     // Only add if not already registered locally.
                     val existing = chatRegistry.all(community.id)
                     if (existing.none { it.id == chatIdHex }) {
+                        // Store the community key under this chat-id so openGroupChat can load it.
+                        crypto.chatKeyStore(requireContext()).store(chatIdHex, communityKey)
                         chatRegistry.add(
                             community.id,
                             ChatRegistry.Entry(chatIdHex, entry.title, "group"),
