@@ -83,7 +83,7 @@ internal object AppContainer {
     fun warmStart() {
         if (warmStarted.compareAndSet(false, true)) {
             EngineWiring.initialize(
-                AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry),
+                AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory),
             )
             refreshMemberNames()
         }
