@@ -12,6 +12,7 @@ import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.CredentialRotation
+import org.openwebdav.messenger.directory.DirectoryFactory
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityFactory
@@ -230,6 +231,20 @@ internal object EngineWiring {
                         // Credential check failure is never a poll failure — the next cycle retries.
                     }
 
+                    // Publish the current member's directory entry so other members can resolve
+                    // display names. Content-addressed (same entry → same file), idempotent, and
+                    // best-effort: a failure leaves the hex-key fallback working as before.
+                    try {
+                        deps.publishDirectoryEntry(
+                            config = g.config,
+                            identity = g.identity,
+                            chatKey = g.chatKey,
+                            displayName = org.openwebdav.messenger.ui.settings.UserSettings.displayName,
+                        )
+                    } catch (_: Exception) {
+                        // best-effort — directory publish failure is never a poll failure
+                    }
+
                     val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions)
                     // Cache the community floor for the settings UI and reschedule.
                     if (outcome.communityMinPollSeconds != null) {
@@ -287,6 +302,21 @@ internal object EngineWiring {
         fun communityChatIds(communityId: String): List<String>
 
         fun schedulePoll(communityMinPollSeconds: Int? = null)
+
+        /**
+         * Publish the current member's directory entry to the community `directory/` collection.
+         * Best-effort: failure is caught silently — the hex-key fallback remains the graceful
+         * degradation. Content-addressed, so re-publishing identical (identity, displayName,
+         * versionCounter) bytes is idempotent (same file, no duplicate write).
+         */
+        suspend fun publishDirectoryEntry(
+            config: ConnectionConfig,
+            identity: Identity,
+            chatKey: ChatKey,
+            displayName: String,
+        ) {
+            // no-op default — JVM test doubles skip directory publishing
+        }
     }
 }
 
@@ -304,6 +334,7 @@ internal class AndroidDeps(
     private val identityFactory: IdentityFactory,
     private val configStore: ConnectionConfigStore,
     private val chatRegistry: ChatRegistry,
+    private val directoryFactory: DirectoryFactory,
 ) : EngineWiring.Deps {
     private val chatKeyStore by lazy { crypto.chatKeyStore(appContext) }
 
@@ -410,5 +441,21 @@ internal class AndroidDeps(
             FastPollManager.disable(appContext, WorkManager.getInstance(appContext))
             SyncScheduler.schedule(WorkManager.getInstance(appContext), SyncScheduler.effectiveIntervalSeconds(memberPref, communityMinPollSeconds))
         }
+    }
+
+    override suspend fun publishDirectoryEntry(
+        config: ConnectionConfig,
+        identity: Identity,
+        chatKey: ChatKey,
+        displayName: String,
+    ) {
+        val service =
+            directoryFactory.directoryService(
+                baseUrl = config.baseUrl,
+                username = config.username,
+                appPassword = config.appPassword,
+                communityRoot = config.chatRoot,
+            )
+        service.publishEntry(identity, displayName, versionCounter = 1, communityKey = chatKey)
     }
 }
