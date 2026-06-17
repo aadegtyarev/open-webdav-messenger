@@ -34,7 +34,7 @@
 
         <activity
             android:name=".ui.ExportRestoreActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="@string/export_restore_title" />
 
         <provider
