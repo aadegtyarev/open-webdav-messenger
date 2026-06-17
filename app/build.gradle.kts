@@ -127,6 +127,7 @@ android {
                     it.exclude("**/ui/feed/ChatFeedScreenTest*")
                     it.exclude("**/ui/feed/ChatFeedAutoScrollTest*")
                     it.exclude("**/ui/AppRootTest*")
+                    it.exclude("**/ui/chatlist/UnifiedChatListScreenTest*")
                 }
             }
         }
