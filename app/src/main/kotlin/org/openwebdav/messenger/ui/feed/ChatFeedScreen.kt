@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -37,7 +38,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -46,6 +49,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filter
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.ui.FeedViewModelFactory
 
@@ -83,13 +88,45 @@ internal fun ChatFeedScreen(
         viewModel.syncNow()
     }
 
-    val lastMessageId = messages.lastOrNull()?.messageId
-    val visibleCount = listState.layoutInfo.visibleItemsInfo.size
-    LaunchedEffect(lastMessageId, visibleCount) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    // Derive the message list with a "New messages" divider inserted at the READ→SENT boundary.
+    val itemsWithDivider =
+        remember(messages) {
+            buildList<Any> {
+                var dividerInserted = false
+                for (msg in messages) {
+                    if (!dividerInserted && msg.sendStatus == MessageEntity.STATUS_SENT) {
+                        add(DividerMarker)
+                        dividerInserted = true
+                    }
+                    add(msg)
+                }
+            }
         }
-        viewModel.markLatestRead()
+
+    // On first open, scroll to the divider (first unread) if present, else to bottom.
+    val didInitialScroll = remember { mutableStateOf(false) }
+    LaunchedEffect(itemsWithDivider) {
+        if (!didInitialScroll.value && itemsWithDivider.isNotEmpty()) {
+            val dividerIndex = itemsWithDivider.indexOfFirst { it is DividerMarker }
+            val targetIndex = if (dividerIndex >= 0) dividerIndex else itemsWithDivider.size - 1
+            listState.scrollToItem(targetIndex)
+            didInitialScroll.value = true
+        }
+    }
+
+    // Progressive markRead: mark the highest visible message as READ as the user scrolls.
+    // Only fires once per visible set — uses the visible item's orderToken as the key.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
+            .filter { it != null }
+            .collectLatest {
+                val visibleRows =
+                    listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
+                        itemsWithDivider.getOrNull(info.index) as? ChatFeedViewModel.FeedRow
+                    }
+                val maxOrderToken = visibleRows.maxByOrNull { it.orderToken }?.orderToken ?: return@collectLatest
+                viewModel.markRead(maxOrderToken)
+            }
     }
 
     Scaffold(
@@ -148,19 +185,55 @@ internal fun ChatFeedScreen(
                         .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(messages, key = { it.messageId }) { row ->
-                    MessageRow(row, onRetry = { viewModel.retryFailed(row.messageId, row.body) })
+                itemsIndexed(itemsWithDivider, key = { _, item ->
+                    when (item) {
+                        is DividerMarker -> "divider"
+                        is ChatFeedViewModel.FeedRow -> item.messageId
+                        else -> "unknown"
+                    }
+                }) { _, item ->
+                    when (item) {
+                        is DividerMarker -> NewMessagesDivider()
+                        is ChatFeedViewModel.FeedRow ->
+                            MessageRow(item, onRetry = { viewModel.retryFailed(item.messageId, item.body) })
+                    }
                 }
             }
         }
     }
 }
 
+/** Sentinel inserted into the message list at the READ→SENT boundary. */
+private data object DividerMarker
+
 /**
- * Whether the feed is scrolled to (or within [NEAR_BOTTOM_SLACK] rows of) the bottom. When nothing has been
- * laid out yet (first open) this is `true`, so the feed still scrolls to the latest message on open; once
- * the user scrolls up to read history it becomes `false`, so an inbound message no longer yanks the viewport.
+ * The "New messages" divider line shown between read and unread messages. A thin horizontal rule
+ * with a muted label, aligned to the same visual grid as message rows.
  */
+@Composable
+private fun NewMessagesDivider() {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant,
+        )
+        Text(
+            text = "New messages",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant,
+        )
+    }
+}
+
+/** True when no messages exist beyond the unread boundary. */
 private fun androidx.compose.foundation.lazy.LazyListState.isAtBottom(): Boolean {
     val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return true
     val totalItems = layoutInfo.totalItemsCount
