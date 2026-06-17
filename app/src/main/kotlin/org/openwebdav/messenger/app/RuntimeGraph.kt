@@ -51,6 +51,15 @@ internal class RuntimeGraph(
             _memberNames.value = value
         }
 
+    /** Error from the last member-name refresh, or null. Observed by the chat feed for banners. */
+    private val _memberNamesError = MutableStateFlow<String?>(null)
+    val memberNamesError: StateFlow<String?> = _memberNamesError
+
+    /** Publish a transient member-names error — cleared on the next successful refresh. */
+    fun setMemberNamesError(message: String?) {
+        _memberNamesError.value = message
+    }
+
     /** Epoch millis of the last successful poll cycle (0 = never synced). Delegates to the engine's process-scoped state. */
     val lastSyncTime: StateFlow<Long> = engine.lastSyncTime
 

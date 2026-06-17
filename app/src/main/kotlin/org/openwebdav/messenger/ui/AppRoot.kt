@@ -104,16 +104,26 @@ private fun AppNav() {
             val host = remember { UserSettings.isHost }
             val retentionDays = remember { UserSettings.communityRetentionWindowDays }
             val pollFloor = remember { UserSettings.communityMinPollSeconds }
+            val metadataError = remember { mutableStateOf<String?>(null) }
             SettingsScreen(
                 onBack = { screen = Screen.CommunityList },
                 isHost = host,
                 retentionWindowDays = retentionDays,
                 communityPollFloor = pollFloor,
+                metadataError = metadataError.value,
                 onRetentionChanged = { days ->
-                    AppContainer.updateCommunityMetadata(days, UserSettings.communityMinPollSeconds)
+                    AppContainer.updateCommunityMetadata(
+                        days,
+                        UserSettings.communityMinPollSeconds,
+                        onError = { metadataError.value = it },
+                    )
                 },
                 onPollFloorChanged = { seconds ->
-                    AppContainer.updateCommunityMetadata(UserSettings.communityRetentionWindowDays, seconds)
+                    AppContainer.updateCommunityMetadata(
+                        UserSettings.communityRetentionWindowDays,
+                        seconds,
+                        onError = { metadataError.value = it },
+                    )
                 },
                 onExportRestore = {
                     context.startActivity(Intent(context, ExportRestoreActivity::class.java))

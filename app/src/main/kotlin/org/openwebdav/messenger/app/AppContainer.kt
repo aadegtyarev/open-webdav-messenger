@@ -1,6 +1,8 @@
 package org.openwebdav.messenger.app
 
 import android.content.Context
+import androidx.work.PeriodicWorkRequest
+import androidx.work.WorkManager
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,14 +26,12 @@ import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.protocol.Hex
+import org.openwebdav.messenger.sync.FastPollManager
+import org.openwebdav.messenger.sync.SyncScheduler
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
 import org.openwebdav.messenger.transport.WebDavResult
 import org.openwebdav.messenger.ui.settings.UserSettings
-import androidx.work.PeriodicWorkRequest
-import androidx.work.WorkManager
-import org.openwebdav.messenger.sync.FastPollManager
-import org.openwebdav.messenger.sync.SyncScheduler
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -343,9 +343,15 @@ internal object AppContainer {
         GlobalScope.launch {
             try {
                 val names = loadMemberNames()
-                if (names.isNotEmpty()) runtimeGraph()?.memberNames = names
-            } catch (_: Exception) {
-                // best-effort
+                val graph = runtimeGraph()
+                if (names.isNotEmpty()) {
+                    graph?.memberNames = names
+                    graph?.setMemberNamesError(null)
+                } else {
+                    graph?.setMemberNamesError("Member names not available — showing key prefixes")
+                }
+            } catch (e: Exception) {
+                runtimeGraph()?.setMemberNamesError("Couldn't load member names: ${e.message}")
             }
         }
     }
@@ -361,6 +367,7 @@ internal object AppContainer {
     fun updateCommunityMetadata(
         retentionDays: Int,
         pollSeconds: Int,
+        onError: ((String) -> Unit)? = null,
     ) {
         val graph = runtimeGraph() ?: return
         GlobalScope.launch {
@@ -380,8 +387,8 @@ internal object AppContainer {
                 // Update local cache immediately so the UI reflects the change.
                 UserSettings.communityMinPollSeconds = pollSeconds
                 UserSettings.communityRetentionWindowDays = retentionDays
-            } catch (_: Exception) {
-                // best-effort — the next poll cycle will re-read the current value from disk
+            } catch (e: Exception) {
+                onError?.invoke("Couldn't save settings: ${e.message}")
             }
         }
     }
