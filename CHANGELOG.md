@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.21.0] — 2026-06-17
+
+### Changed
+
+- **Unified chat list** — all chats (community General, group chats, DMs)
+  shown in one flat list. FAB menu replaces the old fat bottom buttons.
+  StartScreen kept for first-launch users.
+
+### Added
+
+- CreateChatDialog for group chats (name + community selector).
+
 ## [0.20.2] — 2026-06-17
 
 ### Fixed
