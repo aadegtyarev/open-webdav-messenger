@@ -33,8 +33,8 @@ android {
         applicationId = "org.openwebdav.messenger"
         minSdk = 26
         targetSdk = 35
-        versionCode = 49
-        versionName = "0.21.0"
+        versionCode = 50
+        versionName = "0.22.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -156,7 +156,8 @@ internal object AppContainer {
                 val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
                 service.publishChatEntry(
                     identity = graph.identity,
-                    chatId = hash, // raw hash bytes, not the hex string
+                    // raw hash bytes, not the hex string
+                    chatId = hash,
                     kind = ChatKind.GROUP,
                     access = ChatAccess.PUBLIC,
                     title = name,
