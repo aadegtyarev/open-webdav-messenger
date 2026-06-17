@@ -346,7 +346,8 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
     }
     if (selected < 900) {
         Text(
-            "Intervals under 15 min require a persistent notification (Android requirement). Use the refresh button in chat instead, or set 15+ min.",
+            "Intervals under 15 min require a persistent notification (Android requirement). " +
+                "Use the refresh button in chat instead, or set 15+ min.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

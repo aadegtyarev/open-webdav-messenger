@@ -439,7 +439,10 @@ internal class AndroidDeps(
             FastPollManager.enable(appContext, WorkManager.getInstance(appContext), rawEffective)
         } else {
             FastPollManager.disable(appContext, WorkManager.getInstance(appContext))
-            SyncScheduler.schedule(WorkManager.getInstance(appContext), SyncScheduler.effectiveIntervalSeconds(memberPref, communityMinPollSeconds))
+            SyncScheduler.schedule(
+                WorkManager.getInstance(appContext),
+                SyncScheduler.effectiveIntervalSeconds(memberPref, communityMinPollSeconds),
+            )
         }
     }
 

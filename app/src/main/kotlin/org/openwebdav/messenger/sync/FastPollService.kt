@@ -115,12 +115,13 @@ class FastPollService : Service() {
         val readable =
             org.openwebdav.messenger.ui.settings.UserSettings.formatPollInterval(intervalSeconds.toInt())
         val contentText = getString(R.string.fast_poll_notification_text, readable)
-        val openIntent = PendingIntent.getActivity(
-            this,
-            0,
-            packageManager.getLaunchIntentForPackage(packageName),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        val openIntent =
+            PendingIntent.getActivity(
+                this,
+                0,
+                packageManager.getLaunchIntentForPackage(packageName),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.fast_poll_notification_title))
             .setContentText(contentText)
