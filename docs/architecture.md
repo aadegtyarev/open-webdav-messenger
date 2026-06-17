@@ -33,7 +33,7 @@ Message path: typed → signed (Ed25519) → compressed (DEFLATE) → AEAD-encry
 | Key storage | Android Keystore (direct) | Hardware-backed wrap; `security-crypto` deprecated |
 | Local cache | SQLite via Room + SQLCipher at-rest encryption | Offline-first history, suspend/Flow, Keystore-wrapped AES-256 DB key |
 | Compression | `java.util.zip` DEFLATE | Zero-dependency, compress-then-encrypt |
-| Markdown | Hand-rolled `AnnotatedString` parser | 6-element subset, smallest surface |
+| Markdown | Hand-rolled `AnnotatedString` parser (planned) | 6-element subset, smallest surface; plain-text only for now |
 
 ## Behavioral contract (taxonomies & invariants)
 
