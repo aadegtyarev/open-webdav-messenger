@@ -75,6 +75,20 @@ internal object UpdateChecker {
                 val connection = URL(url).openConnection() as HttpURLConnection
                 connection.connectTimeout = 30_000
                 connection.readTimeout = 120_000
+                // Disable transparent gzip: HttpURLConnection adds Accept-Encoding: gzip by
+                // default on Android, which makes contentLengthLong return the compressed size
+                // while inputStream returns the decompressed stream — progress calculation is
+                // wrong and on some Android 11+ stacks the stream can stall.
+                connection.setRequestProperty("Accept-Encoding", "identity")
+                connection.instanceFollowRedirects = true
+                connection.connect()
+                val status = connection.responseCode
+                if (status != HttpURLConnection.HTTP_OK) {
+                    connection.disconnect()
+                    return@withContext Result.failure(
+                        RuntimeException("HTTP $status fetching $url"),
+                    )
+                }
                 val totalBytes = connection.contentLengthLong
                 val apkFile = File(context.cacheDir, "update.apk")
                 FileOutputStream(apkFile).use { out ->
