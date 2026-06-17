@@ -19,6 +19,8 @@ with a user-visible error — never silently ignored, never a crash.
 **Onboarding is linear, not skippable:** The app starts at `StartScreen`. No
 chat feed is reachable without a configured community. The flow cannot be
 back-navigated past `StartScreen` (the back stack is cleared on completion).
+After onboarding completes, the home screen is `UnifiedChatListScreen` — a flat
+list of all chats across all joined communities.
 
 ## Invite format
 

@@ -25,7 +25,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.app.AppContainer
-import org.openwebdav.messenger.keystore.CommunityRegistry
 
 /**
  * A dialog for creating a new group chat. The user picks a community and enters a name.
