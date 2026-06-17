@@ -3,7 +3,9 @@ package org.openwebdav.messenger.app
 import android.content.Context
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
@@ -58,6 +60,8 @@ internal object AppContainer {
     private val chatRegistry by lazy { ChatRegistry(requireContext()) }
     private val directoryFactory by lazy { DirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * Process-start readiness — `false` until [warmStart] has resolved the start graph. The UI collects
@@ -340,7 +344,7 @@ internal object AppContainer {
      * Best-effort, async — failures are silently ignored; member names appear on the next successful read.
      */
     private fun refreshMemberNames() {
-        GlobalScope.launch {
+        appScope.launch {
             try {
                 val names = loadMemberNames()
                 val graph = runtimeGraph()
@@ -370,7 +374,7 @@ internal object AppContainer {
         onError: ((String) -> Unit)? = null,
     ) {
         val graph = runtimeGraph() ?: return
-        GlobalScope.launch {
+        appScope.launch {
             try {
                 val transport = TransportFactory.create(graph.config)
                 val metadata =
@@ -550,7 +554,7 @@ internal object AppContainer {
                 UserSettings.isHost = isHost
                 EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity, communityId = chatId)
                 // Write on-disk metadata (async, best-effort).
-                kotlinx.coroutines.GlobalScope.launch {
+                appScope.launch {
                     try {
                         val transport = TransportFactory.create(config)
                         // Register ourselves in the disk roster.
