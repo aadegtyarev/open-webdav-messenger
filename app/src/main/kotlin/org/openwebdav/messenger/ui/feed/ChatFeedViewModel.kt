@@ -42,21 +42,20 @@ internal class ChatFeedViewModel(
                 android.util.Log.d("ChatFeedVM", "loadMemberNames returned ${names.size} names: $names")
                 if (names.isNotEmpty()) {
                     graph.memberNames = names
-                    android.util.Log.d("ChatFeedVM", "memberNames set to ${graph.memberNames.size} entries")
-                    _memberNamesError.value = null
+                    graph.setMemberNamesError(null)
                 } else {
                     android.util.Log.w("ChatFeedVM", "loadMemberNames returned empty — no sender names available")
-                    _memberNamesError.value = "Member names not available — showing key prefixes"
+                    graph.setMemberNamesError("Member names not available — showing key prefixes")
                 }
             } catch (e: Exception) {
                 android.util.Log.e("ChatFeedVM", "loadMemberNames failed", e)
-                _memberNamesError.value = "Couldn't load member names"
+                graph.setMemberNamesError("Couldn't load member names: ${e.message}")
             }
         }
     }
 
-    private val _memberNamesError = MutableStateFlow<String?>(null)
-    val memberNamesError: StateFlow<String?> = _memberNamesError
+    /** Error from the last member-name load — observed from the shared RuntimeGraph. */
+    val memberNamesError: StateFlow<String?> = graph.memberNamesError
 
     private val _isSyncing = MutableStateFlow(false)
 

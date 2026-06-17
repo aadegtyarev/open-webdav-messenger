@@ -67,6 +67,7 @@ internal fun SettingsScreen(
     isHost: Boolean = false,
     retentionWindowDays: Int = UserSettings.DEFAULT_RETENTION_WINDOW_DAYS,
     communityPollFloor: Int = UserSettings.DEFAULT_POLL_INTERVAL_SECONDS,
+    metadataError: String? = null,
     onRetentionChanged: (Int) -> Unit = {},
     onPollFloorChanged: (Int) -> Unit = {},
     onExportRestore: () -> Unit = {},
@@ -81,6 +82,11 @@ internal fun SettingsScreen(
             delay(800)
             snackbarHostState.showSnackbar("Name saved")
         }
+    }
+
+    // Show metadata write errors as a snackbar.
+    LaunchedEffect(metadataError) {
+        metadataError?.let { snackbarHostState.showSnackbar(it) }
     }
 
     Scaffold(
@@ -299,7 +305,11 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
         }
     // Clamp stored value into options
     val clamped = options.minByOrNull { kotlin.math.abs(it - selected) } ?: options.last()
-    if (selected != clamped) { selected = clamped; UserSettings.pollIntervalSeconds = clamped; AppContainer.reschedulePoll() }
+    if (selected != clamped) {
+        selected = clamped
+        UserSettings.pollIntervalSeconds = clamped
+        AppContainer.reschedulePoll()
+    }
     val scope = rememberCoroutineScope()
 
     Text("My poll interval", style = MaterialTheme.typography.titleMedium)
@@ -422,9 +432,10 @@ private fun UpdateSection() {
                     checking = true
                     status = "downloading"
                     scope.launch(Dispatchers.IO) {
-                        val result = UpdateChecker.downloadApk(context, updateUrl) { progress ->
-                            downloadProgress = progress
-                        }
+                        val result =
+                            UpdateChecker.downloadApk(context, updateUrl) { progress ->
+                                downloadProgress = progress
+                            }
                         withContext(Dispatchers.Main) {
                             result.fold(
                                 onSuccess = { file ->
