@@ -1,5 +1,7 @@
 package org.openwebdav.messenger.ui.feed
 
+import android.app.NotificationManager
+import android.content.Context
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,12 +45,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import org.openwebdav.messenger.data.MessageEntity
@@ -75,6 +79,7 @@ internal fun ChatFeedScreen(
     val memberNamesError by viewModel.memberNamesError.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     // Show member-names error as a one-shot snackbar, then clear.
     LaunchedEffect(memberNamesError) {
@@ -83,9 +88,14 @@ internal fun ChatFeedScreen(
         }
     }
 
-    // Trigger a sync when the screen first appears.
+    // Trigger a sync when the screen first appears, and dismiss any pending
+    // message notifications for this chat (notification tapped = auto-cancel,
+    // but the user might have opened the app from the launcher instead).
     LaunchedEffect(Unit) {
         viewModel.syncNow()
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancel(viewModel.communityName.hashCode())
+        nm.cancel(SYNC_NOTIFIER_ID)
     }
 
     // Derive the message list with a "New messages" divider inserted at the READ→SENT boundary.
@@ -94,7 +104,7 @@ internal fun ChatFeedScreen(
             buildList<Any> {
                 var dividerInserted = false
                 for (msg in messages) {
-                    if (!dividerInserted && msg.sendStatus == MessageEntity.STATUS_SENT) {
+                    if (!dividerInserted && !msg.isMine && msg.sendStatus == MessageEntity.STATUS_SENT) {
                         add(DividerMarker)
                         dividerInserted = true
                     }
@@ -114,12 +124,14 @@ internal fun ChatFeedScreen(
         }
     }
 
-    // Progressive markRead: mark the highest visible message as READ as the user scrolls.
-    // Only fires once per visible set — uses the visible item's orderToken as the key.
+    // Progressive markRead: mark the highest visible message as READ after the
+    // user has viewed it for ~2.5s. Uses collectLatest so a scroll resets the timer —
+    // only messages the user has actually looked at get marked read.
     LaunchedEffect(listState) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
             .filter { it != null }
             .collectLatest {
+                delay(MARK_READ_DELAY_MS)
                 val visibleRows =
                     listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
                         itemsWithDivider.getOrNull(info.index) as? ChatFeedViewModel.FeedRow
@@ -181,7 +193,6 @@ internal fun ChatFeedScreen(
                     Modifier
                         .fillMaxSize()
                         .padding(padding)
-                        .imePadding()
                         .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -241,6 +252,12 @@ private fun androidx.compose.foundation.lazy.LazyListState.isAtBottom(): Boolean
 }
 
 private const val NEAR_BOTTOM_SLACK = 2
+
+/** The notification id used by [org.openwebdav.messenger.sync.SyncNotifier] (id=100). */
+private const val SYNC_NOTIFIER_ID = 100
+
+/** How long the user must view messages before they are marked read (ms). */
+private const val MARK_READ_DELAY_MS = 2_500L
 
 @Composable
 private fun MessageRow(
