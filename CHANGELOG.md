@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.20.0] — 2026-06-17
+
+### Added
+
+- "New messages" divider in chat feed — a labeled horizontal rule between
+  read and unread messages. On first open, scrolls to the first unread.
+  Messages are progressively marked as READ as the user scrolls down.
+
+### Changed
+
+- Chat feed scroll behavior: opens at first unread message (was: bottom).
+
 ## [0.19.0] — 2026-06-17
 
 ### Added
