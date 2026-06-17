@@ -48,6 +48,14 @@
       "run": "test -d app/schemas && test \"$(find app/schemas -name '*.json' | wc -l)\" -gt 0",
       "beat": "build",
       "init": "exportSchema=true in app/build.gradle.kts (already configured)"
+    },
+    {
+      "id": "connected-android-test",
+      "checks": "Android instrumented tests on device/emulator — database migration, native crypto, identity, directory, chat-directory, keystore",
+      "config": null,
+      "run": "./gradlew connectedDebugAndroidTest",
+      "beat": "build",
+      "init": "requires a connected Android device or running emulator (adb devices)"
     }
   ]
 }
