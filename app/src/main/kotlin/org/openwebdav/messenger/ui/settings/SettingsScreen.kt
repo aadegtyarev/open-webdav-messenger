@@ -419,6 +419,7 @@ private fun UpdateSection() {
     var updateUrl by remember { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var downloadTotalKnown by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
 
     Text("Updates", style = MaterialTheme.typography.titleMedium)
@@ -434,8 +435,9 @@ private fun UpdateSection() {
                     status = "downloading"
                     scope.launch(Dispatchers.IO) {
                         val result =
-                            UpdateChecker.downloadApk(context, updateUrl) { progress ->
-                                downloadProgress = progress
+                            UpdateChecker.downloadApk(context, updateUrl) { fraction, _ ->
+                                downloadProgress = fraction
+                                downloadTotalKnown = fraction >= 0f
                             }
                         withContext(Dispatchers.Main) {
                             result.fold(
@@ -460,9 +462,14 @@ private fun UpdateSection() {
         }
 
         status == "downloading" -> {
-            val pct = (downloadProgress * 100).toInt()
-            Text("Downloading\u2026 $pct%", style = MaterialTheme.typography.bodySmall)
-            LinearProgressIndicator(progress = { downloadProgress }, modifier = Modifier.fillMaxWidth())
+            if (downloadTotalKnown) {
+                val pct = (downloadProgress * 100).toInt()
+                Text("Downloading\u2026 $pct%", style = MaterialTheme.typography.bodySmall)
+                LinearProgressIndicator(progress = { downloadProgress }, modifier = Modifier.fillMaxWidth())
+            } else {
+                Text("Downloading\u2026", style = MaterialTheme.typography.bodySmall)
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
         }
 
         status == "installing" -> {

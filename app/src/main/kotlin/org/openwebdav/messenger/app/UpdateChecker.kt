@@ -68,7 +68,7 @@ internal object UpdateChecker {
     suspend fun downloadApk(
         context: Context,
         url: String,
-        onProgress: suspend (Float) -> Unit = {},
+        onProgress: suspend (fraction: Float, totalBytes: Long) -> Unit = { _, _ -> },
     ): Result<File> =
         withContext(Dispatchers.IO) {
             try {
@@ -85,10 +85,13 @@ internal object UpdateChecker {
                         while (input.read(buffer).also { bytesRead = it } != -1) {
                             out.write(buffer, 0, bytesRead)
                             totalRead += bytesRead
-                            if (totalBytes > 0) {
-                                val progress = (totalRead.toFloat() / totalBytes).coerceIn(0f, 1f)
-                                withContext(Dispatchers.Main) { onProgress(progress) }
-                            }
+                            val fraction =
+                                if (totalBytes > 0) {
+                                    (totalRead.toFloat() / totalBytes).coerceIn(0f, 1f)
+                                } else {
+                                    -1f // unknown total — caller shows indeterminate
+                                }
+                            withContext(Dispatchers.Main) { onProgress(fraction, totalBytes) }
                         }
                     }
                 }
