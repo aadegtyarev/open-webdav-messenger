@@ -70,6 +70,9 @@ class MessageStore(
     /** One-shot ordered read (tests / non-observable callers). */
     suspend fun messagesForChat(chatId: String): List<MessageEntity> = messageDao.messagesForChat(chatId)
 
+    /** Observable count of unread messages (sendStatus = 'SENT') for a chat. */
+    fun observeUnreadCount(chatId: String): Flow<Int> = messageDao.observeUnreadCount(chatId)
+
     private fun toEntity(
         messageId: String,
         orderToken: String,

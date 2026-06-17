@@ -180,6 +180,15 @@ internal class ChatFeedViewModel(
         }
     }
 
+    /** Mark the latest message in the current chat as read (called when the feed opens and after sync). */
+    fun markLatestRead() {
+        viewModelScope.launch {
+            val allMessages = graph.store.messagesForChat(graph.chatId)
+            val lastToken = allMessages.lastOrNull()?.orderToken ?: return@launch
+            markRead(lastToken)
+        }
+    }
+
     private fun MessageEntity.toFeedRow(names: Map<String, String>): FeedRow =
         FeedRow(
             messageId = messageId,
