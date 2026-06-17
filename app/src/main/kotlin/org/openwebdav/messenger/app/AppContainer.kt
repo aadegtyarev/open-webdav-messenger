@@ -114,17 +114,20 @@ internal object AppContainer {
      * stores the key, registers the chat, and switches to it.
      * Returns the new chat-id on success, or `null` if the graph is absent.
      */
-    suspend fun createGroupChat(name: String): String? {
+    suspend fun createGroupChat(
+        name: String,
+        communityId: String = currentCommunityId,
+    ): String? {
         val graph = runtimeGraph() ?: return null
         val keySources = crypto.keySources()
         val chatKey = keySources.newRandomKey()
         // Domain-separate group chat ids: BLAKE2b("owdm/group-chat/v1" ‖ 0x1F ‖ randomBytes ‖ communityId)
         val context = "owdm/group-chat/v1".toByteArray(Charsets.UTF_8)
-        val input = context + byteArrayOf(0x1F) + chatKey.copyBytes() + currentCommunityId.toByteArray(Charsets.UTF_8)
+        val input = context + byteArrayOf(0x1F) + chatKey.copyBytes() + communityId.toByteArray(Charsets.UTF_8)
         val hash = crypto.nativeCrypto().genericHash(input, 16)
         val chatId = Hex.encode(hash)
         crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
-        chatRegistry.add(currentCommunityId, ChatRegistry.Entry(chatId, name, "group"))
+        chatRegistry.add(communityId, ChatRegistry.Entry(chatId, name, "group"))
         // Switch to the new chat — roster will be the community members.
         openGroupChat(chatId, name)
         return chatId
@@ -173,6 +176,30 @@ internal object AppContainer {
 
     /** All chats registered under [communityId]. */
     fun chatsForCommunity(communityId: String): List<ChatRegistry.Entry> = chatRegistry.all(communityId)
+
+    /** A unified view of all chats across all communities — for the unified chat list. */
+    data class UnifiedChat(
+        val chatId: String,
+        val name: String,
+        // "general", "group", "dm"
+        val kind: String,
+        val communityId: String,
+        val communityName: String,
+    )
+
+    /** All chats across all communities, flattened for the unified chat list. */
+    fun allChats(): List<UnifiedChat> {
+        val result = mutableListOf<UnifiedChat>()
+        for (community in communityRegistry.all()) {
+            result.add(UnifiedChat(community.chatId, "General", "general", community.id, community.name))
+            for (chat in chatRegistry.all(community.id)) {
+                if (chat.kind != "general") {
+                    result.add(UnifiedChat(chat.id, chat.name, chat.kind, community.id, community.name))
+                }
+            }
+        }
+        return result
+    }
 
     /** The first existing connection config from a community the user hosts, or `null`. Used by the
      *  create-community flow to offer server setting inheritance. */

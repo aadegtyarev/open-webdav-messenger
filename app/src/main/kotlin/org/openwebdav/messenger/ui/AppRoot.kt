@@ -21,7 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.openwebdav.messenger.app.AppContainer
-import org.openwebdav.messenger.ui.communities.CommunityListScreen
+import org.openwebdav.messenger.ui.chatlist.UnifiedChatListScreen
 import org.openwebdav.messenger.ui.feed.ChatFeedScreen
 import org.openwebdav.messenger.ui.invite.InviteScreen
 import org.openwebdav.messenger.ui.onboarding.CreateCommunityScreen
@@ -92,9 +92,9 @@ private fun AppNav() {
             )
 
         Screen.CommunityList ->
-            CommunityListScreen(
+            UnifiedChatListScreen(
                 onOpenFeed = { screen = Screen.Feed },
-                onCreate = { screen = Screen.CreateCommunity },
+                onCreateCommunity = { screen = Screen.CreateCommunity },
                 onJoin = { screen = Screen.Join },
                 onSettings = { screen = Screen.Settings },
             )

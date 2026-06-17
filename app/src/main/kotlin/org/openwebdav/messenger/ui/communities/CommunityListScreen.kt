@@ -22,7 +22,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Badge
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -47,7 +46,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -352,7 +350,6 @@ internal fun CommunityListScreen(
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.weight(1f),
                             )
-                            UnreadBadge(community.chatId)
                             IconButton(onClick = {
                                 AppContainer.switchToCommunity(community.id)
                                 selectedCommunityId =
@@ -522,13 +519,5 @@ private fun MemberRow(
                 Icon(Icons.Filled.RemoveCircleOutline, contentDescription = null, modifier = Modifier.size(20.dp))
             }
         }
-    }
-}
-
-@Composable
-private fun UnreadBadge(chatId: String) {
-    val count by AppContainer.observeUnreadCount(chatId).collectAsStateWithLifecycle(0)
-    if (count > 0) {
-        Badge { Text(count.toString()) }
     }
 }
