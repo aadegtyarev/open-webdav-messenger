@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.18.1] — 2026-06-17
+
+### Fixed
+
+- Sender names now show display names instead of hex-key prefixes. The
+  community directory was always empty because `publishEntry()` was never
+  called; now it publishes the member entry during each poll cycle.
+
 ## [0.18.0] — 2026-06-17
 
 ### Security
