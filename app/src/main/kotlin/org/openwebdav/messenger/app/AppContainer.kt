@@ -174,6 +174,29 @@ internal object AppContainer {
     /** All chats registered under [communityId]. */
     fun chatsForCommunity(communityId: String): List<ChatRegistry.Entry> = chatRegistry.all(communityId)
 
+    /** A unified view of all chats across all communities — for the unified chat list. */
+    data class UnifiedChat(
+        val chatId: String,
+        val name: String,
+        val kind: String, // "general", "group", "dm"
+        val communityId: String,
+        val communityName: String,
+    )
+
+    /** All chats across all communities, flattened for the unified chat list. */
+    fun allChats(): List<UnifiedChat> {
+        val result = mutableListOf<UnifiedChat>()
+        for (community in communityRegistry.all()) {
+            result.add(UnifiedChat(community.chatId, "General", "general", community.id, community.name))
+            for (chat in chatRegistry.all(community.id)) {
+                if (chat.kind != "general") {
+                    result.add(UnifiedChat(chat.id, chat.name, chat.kind, community.id, community.name))
+                }
+            }
+        }
+        return result
+    }
+
     /** The first existing connection config from a community the user hosts, or `null`. Used by the
      *  create-community flow to offer server setting inheritance. */
     fun existingConnectionConfig(): ConnectionConfig? {
