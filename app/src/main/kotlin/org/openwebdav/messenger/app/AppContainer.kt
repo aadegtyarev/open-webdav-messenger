@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.openwebdav.messenger.chatdirectory.ChatAccess
+import org.openwebdav.messenger.chatdirectory.ChatDirectoryFactory
+import org.openwebdav.messenger.chatdirectory.ChatKind
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
@@ -59,6 +62,7 @@ internal object AppContainer {
     private val communityRegistry by lazy { CommunityRegistry(requireContext()) }
     private val chatRegistry by lazy { ChatRegistry(requireContext()) }
     private val directoryFactory by lazy { DirectoryFactory() }
+    private val chatDirectoryFactory by lazy { ChatDirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -117,18 +121,51 @@ internal object AppContainer {
     suspend fun createGroupChat(
         name: String,
         communityId: String = currentCommunityId,
+        access: ChatAccess = ChatAccess.PUBLIC,
     ): String? {
         val graph = runtimeGraph() ?: return null
+        val stored = configStore.loadStored(communityId) ?: return null
         val keySources = crypto.keySources()
-        val chatKey = keySources.newRandomKey()
+        // Public chats use the community key; private chats get a fresh random key.
+        val chatKey =
+            if (access == ChatAccess.PUBLIC) {
+                crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
+            } else {
+                keySources.newRandomKey()
+            }
         // Domain-separate group chat ids: BLAKE2b("owdm/group-chat/v1" ‖ 0x1F ‖ randomBytes ‖ communityId)
-        val context = "owdm/group-chat/v1".toByteArray(Charsets.UTF_8)
-        val input = context + byteArrayOf(0x1F) + chatKey.copyBytes() + communityId.toByteArray(Charsets.UTF_8)
+        val ctx = "owdm/group-chat/v1".toByteArray(Charsets.UTF_8)
+        val input = ctx + byteArrayOf(0x1F) + chatKey.copyBytes() + communityId.toByteArray(Charsets.UTF_8)
         val hash = crypto.nativeCrypto().genericHash(input, 16)
         val chatId = Hex.encode(hash)
         crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
         chatRegistry.add(communityId, ChatRegistry.Entry(chatId, name, "group"))
-        // Switch to the new chat — roster will be the community members.
+
+        // Publish public chats to the on-disk chat-directory so other members discover them.
+        if (access == ChatAccess.PUBLIC) {
+            try {
+                val service =
+                    chatDirectoryFactory.chatDirectoryService(
+                        baseUrl = stored.config.baseUrl,
+                        username = stored.config.username,
+                        appPassword = stored.config.appPassword,
+                        communityRoot = stored.config.chatRoot,
+                    )
+                val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
+                service.publishChatEntry(
+                    identity = graph.identity,
+                    chatId = chatId.toByteArray(Charsets.UTF_8),
+                    kind = ChatKind.GROUP,
+                    access = ChatAccess.PUBLIC,
+                    title = name,
+                    versionCounter = 1,
+                    communityKey = communityKey,
+                )
+            } catch (_: Exception) {
+                // best-effort — the chat is already local; directory publish is optional
+            }
+        }
+
         openGroupChat(chatId, name)
         return chatId
     }
@@ -186,6 +223,42 @@ internal object AppContainer {
         val communityId: String,
         val communityName: String,
     )
+
+    /**
+     * Read the on-disk chat-directory for all communities and auto-add any newly discovered public
+     * group chats to the local [ChatRegistry]. Best-effort — directory read failures are silent;
+     * the next poll cycle retries.
+     */
+    suspend fun discoverPublicChats() {
+        for (community in communityRegistry.all()) {
+            val stored = configStore.loadStored(community.id) ?: continue
+            val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: continue
+            try {
+                val service =
+                    chatDirectoryFactory.chatDirectoryService(
+                        baseUrl = stored.config.baseUrl,
+                        username = stored.config.username,
+                        appPassword = stored.config.appPassword,
+                        communityRoot = stored.config.chatRoot,
+                    )
+                val result = service.readChatDirectory(communityKey)
+                for (entry in result.entries) {
+                    if (entry.access != ChatAccess.PUBLIC) continue
+                    val chatIdHex = Hex.encode(entry.chatId)
+                    // Only add if not already registered locally.
+                    val existing = chatRegistry.all(community.id)
+                    if (existing.none { it.id == chatIdHex }) {
+                        chatRegistry.add(
+                            community.id,
+                            ChatRegistry.Entry(chatIdHex, entry.title, "group"),
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                // best-effort — retry next cycle
+            }
+        }
+    }
 
     /** All chats across all communities, flattened for the unified chat list. */
     fun allChats(): List<UnifiedChat> {

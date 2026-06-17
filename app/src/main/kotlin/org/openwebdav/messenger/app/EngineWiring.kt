@@ -245,6 +245,13 @@ internal object EngineWiring {
                         // best-effort — directory publish failure is never a poll failure
                     }
 
+                    // Discover new public group chats from the on-disk chat-directory.
+                    try {
+                        org.openwebdav.messenger.app.AppContainer.discoverPublicChats()
+                    } catch (_: Exception) {
+                        // best-effort — retry next cycle
+                    }
+
                     val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions)
                     // Cache the community floor for the settings UI and reschedule.
                     if (outcome.communityMinPollSeconds != null) {
