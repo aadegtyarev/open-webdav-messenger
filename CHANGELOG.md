@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.22.3] — 2026-06-17
+
+### Fixed
+
+- "New messages" divider showed own messages — now only marks unread messages
+  from other members.
+- Keyboard pushed the chat area up on Android 11, hiding messages — message
+  list now resizes correctly above the keyboard.
+- OS notification persisted after opening the chat from the launcher — now
+  dismissed automatically when entering a conversation.
+- Messages were marked read instantly on scroll — now waits for a ~2.5s
+  viewing delay before marking read.
+
 ## [0.22.2] — 2026-06-17
 
 ### Fixed
