@@ -69,20 +69,13 @@ Every command in this block must be green before the Builder is done. No excepti
 ./gradlew lint
 ```
 
-**Validators** (populated by the Builder (stack-researcher fold) at bootstrap and extended on every feature that introduces a new validator — see `docs/stack-notes.md` "Validators wired into pipeline" table):
+**Additional checks:**
 ```
-./gradlew lint                  # Android Lint — manifest, API levels, resource issues
-./gradlew connectedAndroidTest  # instrumented tests — gates native crypto .so ABI load, Keystore, Room migrations (requires emulator/device)
-gitleaks detect --source . --redact --exit-code 1   # secret scan — enforces SC21 (no secret material in source/git history); runs in CI, not locally required
+test -d app/schemas && test "$(find app/schemas -name '*.json' | wc -l)" -gt 0
+gitleaks detect --source . --config .gitleaks.toml --verbose
 ```
 
-A green tests + lint with a failing validator is still a failed pipeline. The Reviewer blocks if a validator listed in `stack-notes.md` is not present here, or if it is present here but not actually run by the Builder.
-
-The `review-gates` job in CI (`.github/workflows/pr-checks.yml`) runs the review-beat quality suite (`node .ai-dev/quality/run.mjs review`) — currently **secret-scan** (gitleaks over full git history, enforces SC21). The three JVM gates (`test` + `ktlintCheck` + `lint`) run locally before pushing (`node .ai-dev/quality/run.mjs build`); `connectedAndroidTest` is the manual on-device gate (no CI emulator — decision 6, descoped).
-
----
-
-@.ai-dev/PROTOCOL.md
+`./gradlew connectedDebugAndroidTest` remains a manual on-device check and requires a connected device or emulator. CI runs the gitleaks scan over full git history; run the Gradle and schema checks locally before pushing.
 
 ---
 
@@ -104,8 +97,3 @@ Custom UI — the project builds its own chat surface in Jetpack Compose. Conven
 | `docs/features/` | Past feature plans |
 | `docs/ui-guide.md` | UI conventions (custom Compose chat UI) |
 | `docs/threat-model.md` | Security model (untrusted WebDAV transport, E2E encryption) |
-
-<!-- ai-dev:breadcrumb -->
-This project runs the **ai-dev protocol**; its active platform is **opencode** — this Claude Code session has no protocol wiring yet.
-Run `node .ai-dev/tooling/src/adapter/install.mjs . --platform claude` to wire Claude Code, then offer the Operator the platform switch (`.ai-dev/tooling/src/agents/orchestrator.md` `## Setup`, "Platform switch").
-<!-- /ai-dev:breadcrumb -->

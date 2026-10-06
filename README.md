@@ -48,13 +48,11 @@ Requires JDK 17+ and Android SDK. The Gradle wrapper handles the rest.
 ## Development
 
 ```bash
-# Run the full build-beat quality suite
-node .ai-dev/quality/run.mjs build
-
-# Individual gates
 ./gradlew test          # JVM unit tests
 ./gradlew ktlintCheck   # Kotlin style
 ./gradlew lint          # Android lint
+# Room schema export sanity check
+test -d app/schemas && test "$(find app/schemas -name '*.json' | wc -l)" -gt 0
 ```
 
 See `AGENTS.md` for AI-assisted development workflow. Protocol spec: [`docs/protocol/webdav-layout.md`](docs/protocol/webdav-layout.md).
