@@ -1,2 +1,0 @@
-description: Plans and builds one change — code, docs, tests (folds coder, architect, stack-researcher, codebase-reader). Plans before building; hands the working tree back without committing.
-tools: Read, Edit, Write, Bash, Grep, Glob, Skill, WebFetch, WebSearch
