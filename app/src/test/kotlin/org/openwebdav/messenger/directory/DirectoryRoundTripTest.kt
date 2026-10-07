@@ -14,8 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * §10 directory publish/read round-trip + supersede + multi-member tests
- * (`docs/features/directory_plan.md` Test plan). Real libsodium-backed crypto + a MockWebServer-backed
+ * §10 directory publish/read round-trip + supersede + multi-member tests. Real libsodium-backed crypto + a MockWebServer-backed
  * transport over [DirectoryFakeDisk] — the full publish → read → verify path off-device.
  */
 @RunWith(RobolectricTestRunner::class)

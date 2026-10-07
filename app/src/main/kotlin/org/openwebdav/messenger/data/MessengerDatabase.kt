@@ -13,7 +13,7 @@ import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
 
 /**
  * The app-private Room database holding local message history and per-chat sync cursors
- * (`docs/features/sync_plan.md` → Local history; `docs/protocol/webdav-layout.md` §9.3).
+ * (`docs/protocol/webdav-layout.md` §9.3).
  *
  * `exportSchema = true` and the generated JSON is checked into `app/schemas/` so migrations are
  * reviewable in VCS and the `connectedAndroidTest` `MigrationTestHelper` can validate them

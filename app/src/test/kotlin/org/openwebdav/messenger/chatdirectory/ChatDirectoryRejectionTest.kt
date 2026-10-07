@@ -13,7 +13,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * §11.6 chat-directory rejection tests (`docs/features/chat-directory_plan.md` Test plan): every failure
+ * §11.6 chat-directory rejection tests: every failure
  * mode is a typed rejection — the entry is dropped (or refused at publish), never surfaced, never a
  * crash — and the remaining valid entries still read. Covers the DM privacy gate (publish + read), the
  * invalid kind/access reject, wrong/absent community key, tampered ciphertext/payload, wrong signature,

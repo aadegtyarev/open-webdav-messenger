@@ -24,7 +24,7 @@ import org.robolectric.annotation.Config
 
 /**
  * Stack-spec tests — each asserts against a CITED stack-notes rule (source URL in the comment), not a
- * self-consistent round-trip (`docs/features/sync_plan.md` → Test plan / Stack expectations touched).
+ * self-consistent round-trip.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE)

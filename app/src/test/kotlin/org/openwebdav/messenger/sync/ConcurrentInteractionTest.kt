@@ -18,9 +18,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * The two **concurrent-state** interaction-scenario tests the plan names against the generation-2
- * shared `log/` (`docs/features/sync_plan.md` → Interaction scenarios / Test plan line 84;
- * "Concurrent writers / torn reads"; `docs/protocol/webdav-layout.md` §3):
+ * The two **concurrent-state** interaction-scenario tests against the generation-2
+ * shared `log/` ("Concurrent writers / torn reads"; `docs/protocol/webdav-layout.md` §3):
  *
  *  - [`concurrent_send_during_poll_no_torn_read`][concurrent send during poll sees a whole file or
  *    none and the next cycle catches up] — a send is in flight (its two write steps, §9.1: the `log/`

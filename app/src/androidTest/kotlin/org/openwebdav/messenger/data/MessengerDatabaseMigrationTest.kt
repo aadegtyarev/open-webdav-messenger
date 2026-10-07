@@ -14,7 +14,7 @@ import org.junit.runner.RunWith
 import org.openwebdav.messenger.keystore.HistoryKeyStore
 
 /**
- * room_migration_tested (`docs/features/sync_plan.md` Test plan; stack-notes Room migrations) — the
+ * room_migration_tested (stack-notes Room migrations) — the
  * checked-in schema (`app/schemas/`, `exportSchema = true`) opens on-device via [MigrationTestHelper].
  *
  * At schema **v1** there is no prior version to migrate FROM, so this test exercises the helper's

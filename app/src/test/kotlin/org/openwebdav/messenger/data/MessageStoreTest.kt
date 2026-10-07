@@ -20,7 +20,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Room local-history tests (`docs/features/sync_plan.md` → Local history / Test plan):
+ * Room local-history tests:
  * room_history_is_observable_and_offline, dedup idempotency, cursor advance, and the stack-spec
  * `room_dao_rejects_main_thread_access` (DAOs are suspend/Flow; the DB is built WITHOUT
  * `allowMainThreadQueries()`). Source (Room async): <https://developer.android.com/training/data-storage/room/async-queries>

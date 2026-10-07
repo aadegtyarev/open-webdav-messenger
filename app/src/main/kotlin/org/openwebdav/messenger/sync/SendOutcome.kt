@@ -1,8 +1,7 @@
 package org.openwebdav.messenger.sync
 
 /**
- * The typed outcome of a [SyncEngine.send] (`docs/features/sync_plan.md` → Send: "tolerant of partial
- * failure (retry-safe)"). Send never throws; a partial failure is reported, not raised, and re-running
+ * The typed outcome of a [SyncEngine.send], including partial failures. Send never throws; a partial failure is reported, not raised, and re-running
  * the same send is idempotent on the §2 message-id (re-`PUT`s the same `log/` file + change entries as
  * no-ops, §9.1).
  *

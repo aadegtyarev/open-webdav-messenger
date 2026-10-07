@@ -5,7 +5,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * A locally-persisted message row (`docs/features/sync_plan.md` → Local history; scenario 6).
+ * A locally-persisted message row associated with one chat's message history.
  *
  * The primary key is the §2 **message-id** (`order-token "~" content-hash`,
  * `docs/protocol/webdav-layout.md` §2): a content-addressed name is globally unambiguous and is the

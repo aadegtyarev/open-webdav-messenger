@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Interaction-scenario tests (`docs/features/sync_plan.md` → Interaction scenarios / Test plan): the
+ * Interaction-scenario tests: the
  * cycle is robust to tampered/incomplete files, transport back-off, and Doze deferral, and loads the
  * chat key once per cycle. Real envelopes + [FakeDisk] + in-memory Room.
  */

@@ -21,7 +21,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * §9.3 poll-cycle tests (`docs/features/sync_plan.md` Test plan): read the change index → fetch only
+ * §9.3 poll-cycle tests: read the change index → fetch only
  * new `log/` entries → validate/dedup/persist → advance the cursor only past persisted entries. The
  * sender side seals real envelopes; the receiver runs a real engine over a [FakeDisk] + in-memory Room.
  */

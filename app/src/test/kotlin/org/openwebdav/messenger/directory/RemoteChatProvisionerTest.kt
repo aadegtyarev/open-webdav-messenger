@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * JVM unit + interaction tests for the remote-private-chat key provisioning seam
- * ([RemoteChatProvisioner]) — `docs/features/x25519-identity_plan.md` Test plan. Run against real
+ * ([RemoteChatProvisioner]). Run against real
  * lazysodium-java (system libsodium); the device-bound `ChatKeyStore` is stood in by an in-memory
  * [InMemoryChatKeyStore] (the store seam [ChatKeyStorePort]), since the real Keystore-backed store is
  * exercised under `connectedAndroidTest` only. All NEW tests; no existing test is touched.

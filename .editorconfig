@@ -2,6 +2,6 @@
 # Added with the first Compose UI: @Composable functions are PascalCase by Compose convention, which
 # collides with ktlint's standard function-naming rule. Scope the exemption to @Composable / @Preview
 # only — every non-composable function still follows the camelCase rule. This is project-wide ktlint
-# config (the supported mechanism), NOT a file-level lint suppression (CLAUDE.md forbids those).
+# config (the supported mechanism), NOT a file-level lint suppression (see AGENTS.md).
 [*.{kt,kts}]
 ktlint_function_naming_ignore_when_annotated_with = Composable,Preview

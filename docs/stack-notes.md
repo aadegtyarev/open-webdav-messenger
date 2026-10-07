@@ -1,7 +1,7 @@
 # Stack notes
 
-Living document. Initialised at bootstrap, extended on every feature that touches a new external system.
-Maintained by the Builder (stack-researcher fold). Read by the Builder (plan/architect/coder folds) and the Reviewer.
+Living document. Initialized at bootstrap and extended when a change touches a new external system.
+Maintained as project reference documentation and read when designing, implementing, or reviewing related integrations.
 
 **Last full review:** 2026-06-03
 
@@ -9,12 +9,12 @@ Maintained by the Builder (stack-researcher fold). Read by the Builder (plan/arc
 
 ## How this document is used
 
-- **Builder (plan fold)** reads it before drafting a plan that touches any listed component. If the feature touches a component that is missing here, the Builder spawns a research pass to extend this document **before** continuing.
-- **Builder (architect fold)** reads it when proposing variants — stack constraints are part of the trade-off space.
-- **Builder (coder fold)** reads it before writing a mapping, handler, schema, or any integration code for a listed component. On contradiction between task and stack-notes, the coder stops and escalates — no fallback to WebSearch.
-- **Reviewer** checks every diff against the relevant entries. Code that contradicts an idiom or constraint listed here is **blocking** with a citation back to this file.
+- Consult relevant entries before planning or implementing work that touches a listed component. If a needed component is missing, research and document its constraints before proceeding.
+- Use the stack constraints when evaluating implementation options.
+- If a requested change conflicts with a documented constraint, pause and resolve the conflict before proceeding; do not silently work around it.
+- Review changes to integrations against the relevant entries and cite this document when identifying a conflict.
 
-If this document is missing or empty for a component the feature touches — that is a protocol-level defect, not a content gap. The protocol's bootstrap or planning step should have caught it.
+If this document is missing or empty for a component a change touches, document the gap and its relevant constraints before proceeding.
 
 ---
 
@@ -394,7 +394,7 @@ For each external system the project integrates with — what local artifact car
 
 >
 > The **public identity directory** introduced by the X25519 identity feature is part of this same WebDAV envelope contract: each directory entry carries a member's **public** Ed25519 (and/or X25519) identity key and is **Ed25519-signed** (verify with `crypto_sign_verify_detached`, reject on -1). Only public keys and signatures cross to the disk — identity **secret** keys stay Keystore-wrapped device-local (see *Android Keystore* component). Sealed-box rotation payloads (one `crypto_box_seal` per remaining member's public key) also live on the disk and must be specified in `docs/protocol/webdav-layout.md`. See the *Crypto — Public-key primitives* sub-section.
-> The WebDAV on-disk protocol layout document is the load-bearing contract for interoperability. The Reviewer should block any transport feature whose plan lacks a reference to this artifact.
+> The WebDAV on-disk protocol layout document is the load-bearing contract for interoperability. Transport changes should reference this artifact.
 >
 > The **compression codec is part of this envelope contract**, not a separate external system: the on-disk envelope must record which codec compressed the plaintext (or "none") so the reader can inflate before the recipient cannot. Compress-then-encrypt ordering and the codec identifier belong in `docs/protocol/webdav-layout.md`. See the *Traffic compression* component for the ordering invariant and the CRIME/BREACH and untrusted-decompression gotchas. Markdown rendering adds **no** integration contract — it is local UI over already-received message text.
 > **QR generation / scanning and the CAMERA permission add NO new integration contract.** The invite token is an opaque string carried **out-of-band** (shown/copied/scanned device-to-device, decision 9 follow-on (c)); it is **never** written to the WebDAV disk and there is no server (Architectural constraints). QR is a local UI/codec transport for that string, the scanner is a local camera input, and CAMERA is a device-permission gate — none deliver an artifact to an external system. The invite payload **format** (the `owdm1:` token grammar + what disk-access/key material it carries) is owned by the future invite/onboarding feature, not by these components. See the *QR code generation*, *QR code scanning*, and *Runtime CAMERA permission* components.
@@ -403,6 +403,6 @@ For each external system the project integrates with — what local artifact car
 
 ## How to extend this document
 
-Only the Builder (stack-researcher fold) edits this file. Other roles read it. If the Builder (coder fold) or the Reviewer notices a missing rule or stale entry, they surface it to the Orchestrator — the Orchestrator spawns a research pass to update.
+Update this file when integration research or verification finds a missing or stale constraint. Keep each rule supported by a source URL; unsourced claims do not belong here.
 
 Each rule must cite a source URL. Unsourced claims do not belong here — they are guesses dressed as docs.

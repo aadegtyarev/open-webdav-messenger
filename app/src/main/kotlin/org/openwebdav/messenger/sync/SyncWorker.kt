@@ -8,7 +8,7 @@ import org.openwebdav.messenger.app.AppContainer
 /**
  * The WorkManager wrapper around one poll cycle (arch note Variant A: "a thin wrapper that calls
  * `pollCycle()` and maps the result to `Result.success/retry`"). One run == one poll cycle
- * (`docs/features/sync_plan.md` → Decisions / Background loop).
+ * (background polling via WorkManager).
  *
  * It is a [CoroutineWorker] so the cycle's `suspend` I/O runs off the main thread. It holds NO sync
  * logic itself — it delegates to the installed [SyncRunner] and maps the typed [CycleOutcome]:

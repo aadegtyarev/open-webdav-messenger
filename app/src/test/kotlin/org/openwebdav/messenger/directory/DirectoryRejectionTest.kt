@@ -12,7 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * §10.6 directory rejection tests (`docs/features/directory_plan.md` Test plan): every failure mode is a
+ * §10.6 directory rejection tests: every failure mode is a
  * typed rejection — the entry is dropped, never surfaced, never a crash — and the remaining valid
  * entries still read. Covers wrong/absent community key, tampered ciphertext/payload, wrong signature,
  * malformed/truncated/wrong-magic, foreign name.
