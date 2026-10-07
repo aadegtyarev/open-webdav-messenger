@@ -27,6 +27,7 @@ import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.message.TextMessage
+import org.openwebdav.messenger.protocol.ChatPaths
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.CycleOutcome
 import org.openwebdav.messenger.sync.FakeDisk
@@ -186,7 +187,7 @@ class EngineWiringTest {
                     joinedCommunities = listOf("community-a"),
                 )
             deps.onSchedule = {
-                runBlocking { assertNotNull(store.claimOutgoing("startup-retry", "community-a")) }
+                runBlocking { assertNotNull(store.claimOutgoing("startup-retry", "community-a", "startup-claim")) }
             }
 
             EngineWiring.initialize(deps)
@@ -208,13 +209,21 @@ class EngineWiringTest {
                     rotatedConfig, identity.copyBoxPublic(), AppTestSupport.identityCrypto(), host,
                 )
             EngineWiring.initialize(deps)
-            EngineWiring.switchToChat("opened-group", "Project group", chatKey, listOf(Hex.encode(identity.copySignPublic())))
+            val peerId = "0123456789abcdef"
+            val selfId = Hex.encode(identity.copySignPublic())
+            EngineWiring.switchToChat("opened-group", "Project group", chatKey, listOf(selfId, peerId), mapOf(peerId to "Project peer"))
 
             SyncRunner.current().runOnce()
 
-            assertEquals("opened-group", EngineWiring.current()?.chatId)
+            val rotatedGraph = EngineWiring.current()!!
+            assertEquals("opened-group", rotatedGraph.chatId)
+            assertEquals(listOf(selfId, peerId), rotatedGraph.roster)
+            assertEquals(mapOf(peerId to "Project peer"), rotatedGraph.memberNames)
             assertEquals(chatId, deps.savedRotatedConnection?.chatId)
             assertEquals("Community anchor", deps.savedRotatedConnection?.communityName)
+            MessageSendService(rotatedGraph, ioDispatcher = kotlinx.coroutines.Dispatchers.Unconfined).send("peer delivery")
+            val disk = server.dispatcher as FakeDisk
+            assertTrue(disk.fileNames(ChatPaths.changeIndex(peerId, "opened-group")).isNotEmpty())
             EngineWiring.initialize(deps)
             assertEquals(chatId, EngineWiring.current()?.chatId)
             assertEquals("Community anchor", EngineWiring.current()?.communityName)

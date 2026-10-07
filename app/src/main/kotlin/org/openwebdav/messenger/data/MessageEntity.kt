@@ -52,6 +52,7 @@ data class MessageEntity(
     val outboxEnvelope: ByteArray? = null,
     val outboxRecipients: String? = null,
     val outboxCommunityId: String? = null,
+    val outboxClaimToken: String? = null,
 ) {
     companion object {
         /** §8.2 kind 0x01 — a text message. */

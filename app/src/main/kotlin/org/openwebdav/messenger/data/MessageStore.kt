@@ -67,10 +67,27 @@ class MessageStore(
     suspend fun claimOutgoing(
         messageId: String,
         communityId: String,
+        claimToken: String,
     ): MessageEntity? {
         if (communityId != this.communityId) return null
-        if (messageDao.claimOutgoing(messageId, communityId) != 1) return null
-        return messageDao.claimedOutgoing(messageId, communityId)
+        if (messageDao.claimOutgoing(messageId, communityId, claimToken) != 1) return null
+        return messageDao.claimedOutgoing(messageId, communityId, claimToken)
+    }
+
+    suspend fun finishOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ) {
+        if (communityId == this.communityId) messageDao.finishOutgoingClaim(messageId, communityId, claimToken)
+    }
+
+    suspend fun failOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ) {
+        if (communityId == this.communityId) messageDao.failOutgoingClaim(messageId, communityId, claimToken)
     }
 
     suspend fun pendingOutgoing(communityId: String): List<MessageEntity> =

@@ -45,12 +45,13 @@ class MessengerDatabaseMigrationTest {
         helper.createDatabase(TEST_DB, 1).close()
         helper.runMigrationsAndValidate(
             TEST_DB,
-            5,
+            6,
             true,
             MessengerDatabase.MIGRATION_1_2,
             MessengerDatabase.MIGRATION_2_3,
             MessengerDatabase.MIGRATION_3_4,
             MessengerDatabase.MIGRATION_4_5,
+            MessengerDatabase.MIGRATION_5_6,
         ).close()
     }
 
@@ -67,11 +68,12 @@ class MessengerDatabaseMigrationTest {
         }
         helper.runMigrationsAndValidate(
             TEST_DB,
-            5,
+            6,
             true,
             MessengerDatabase.MIGRATION_2_3,
             MessengerDatabase.MIGRATION_3_4,
             MessengerDatabase.MIGRATION_4_5,
+            MessengerDatabase.MIGRATION_5_6,
         ).use { migrated ->
             migrated.query("SELECT communityId, body FROM messages WHERE messageId = 'legacy-v2'").use { row ->
                 assertEquals(true, row.moveToFirst())
@@ -101,10 +103,11 @@ class MessengerDatabaseMigrationTest {
         }
         helper.runMigrationsAndValidate(
             TEST_DB,
-            5,
+            6,
             true,
             MessengerDatabase.MIGRATION_3_4,
             MessengerDatabase.MIGRATION_4_5,
+            MessengerDatabase.MIGRATION_5_6,
         ).use { migrated ->
             migrated.query(
                 "SELECT communityId, sendStatus, outboxEnvelope, outboxCommunityId FROM messages WHERE messageId = 'legacy-v3'",
@@ -138,7 +141,13 @@ class MessengerDatabaseMigrationTest {
             )
             close()
         }
-        helper.runMigrationsAndValidate(TEST_DB, 5, true, MessengerDatabase.MIGRATION_4_5).use { migrated ->
+        helper.runMigrationsAndValidate(
+            TEST_DB,
+            6,
+            true,
+            MessengerDatabase.MIGRATION_4_5,
+            MessengerDatabase.MIGRATION_5_6,
+        ).use { migrated ->
             migrated.query(
                 "SELECT communityId, outboxCommunityId, outboxEnvelope FROM messages WHERE messageId = 'owned-v4'",
             ).use { row ->
@@ -146,6 +155,28 @@ class MessengerDatabaseMigrationTest {
                 assertEquals("community-a", row.getString(0))
                 assertEquals("community-a", row.getString(1))
                 assertEquals(payload.toList(), row.getBlob(2).toList())
+            }
+        }
+    }
+
+    @Test
+    fun populatedVersion5OutboxReceivesEmptyClaimTokenColumn() {
+        helper.createDatabase(TEST_DB, 5).apply {
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, kind, body, " +
+                    "replyTo, targetId, reactionIndex, sendTimestampMillis, receivedAtMillis, sendStatus, " +
+                    "outboxEnvelope, outboxRecipients, outboxCommunityId) VALUES " +
+                    "('community-a', 'owned-v5', 'same-dm', '0005', 'sender', 1, 'retry', NULL, NULL, NULL, 5, 6, " +
+                    "'FAILED', X'0708', 'peer', 'community-a')",
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 6, true, MessengerDatabase.MIGRATION_5_6).use { migrated ->
+            migrated.query("SELECT sendStatus, outboxClaimToken, outboxEnvelope FROM messages WHERE messageId = 'owned-v5'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals("FAILED", row.getString(0))
+                assertEquals(true, row.isNull(1))
+                assertEquals(listOf(7, 8), row.getBlob(2).toList())
             }
         }
     }

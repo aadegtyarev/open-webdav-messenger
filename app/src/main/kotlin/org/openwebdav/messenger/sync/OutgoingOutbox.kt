@@ -5,6 +5,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.data.MessageStore
+import java.util.UUID
 
 /** Retries persisted outgoing envelopes without minting a new message identity. */
 internal class OutgoingOutbox(
@@ -31,9 +32,10 @@ internal class OutgoingOutbox(
         messageId: String,
         communityId: String,
         senderIdentifier: String,
-    ): SendOutcome? =
-        try {
-            val message = store.claimOutgoing(messageId, communityId) ?: return null
+    ): SendOutcome? {
+        val claimToken = UUID.randomUUID().toString()
+        return try {
+            val message = store.claimOutgoing(messageId, communityId, claimToken) ?: return null
             val envelope = message.outboxEnvelope ?: return null
             val recipients = message.outboxRecipients?.split('\n')?.filter(String::isNotBlank).orEmpty()
             val outcome =
@@ -45,13 +47,14 @@ internal class OutgoingOutbox(
                     SendOutcome(false, 0, recipients.size)
                 }
             if (outcome.complete) {
-                store.markSent(message.messageId, communityId)
+                store.finishOutgoingClaim(message.messageId, communityId, claimToken)
             } else {
-                store.markFailed(message.messageId, communityId)
+                store.failOutgoingClaim(message.messageId, communityId, claimToken)
             }
             outcome
         } catch (cancelled: CancellationException) {
-            withContext(NonCancellable) { store.markFailed(messageId, communityId) }
+            withContext(NonCancellable) { store.failOutgoingClaim(messageId, communityId, claimToken) }
             throw cancelled
         }
+    }
 }

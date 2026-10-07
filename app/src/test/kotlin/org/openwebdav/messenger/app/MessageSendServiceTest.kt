@@ -168,8 +168,8 @@ class MessageSendServiceTest {
             val sent = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L }).send("claim me")
             val pending = store.messagesForChat(chatId).single()
 
-            assertNotNull(store.claimOutgoing(sent.messageId, "community-a"))
-            assertNull("a second worker/manual attempt must not own this ID", store.claimOutgoing(sent.messageId, "community-a"))
+            assertNotNull(store.claimOutgoing(sent.messageId, "community-a", "claim-a"))
+            assertNull("a second worker/manual attempt must not own this ID", store.claimOutgoing(sent.messageId, "community-a", "claim-b"))
             store.markSent(sent.messageId, "community-a")
             store.markMessagesReadUpTo(chatId, pending.orderToken)
             store.markFailed(sent.messageId, "community-a")
@@ -177,6 +177,40 @@ class MessageSendServiceTest {
             val row = store.messagesForChat(chatId).single()
             assertEquals(MessageEntity.STATUS_READ, row.sendStatus)
             assertNull(row.outboxEnvelope)
+        }
+
+    @Test
+    fun contender_cleanup_and_late_owner_cleanup_cannot_release_another_claim() =
+        runTest {
+            val store = store("community-a")
+            store.persist(
+                messageId = "owned-claim",
+                orderToken = "0005",
+                message = SyncTestSupport.text(identity, "retry"),
+                receivedAtMillis = 1L,
+                sendStatus = MessageEntity.STATUS_FAILED,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "community-a",
+            )
+
+            assertNotNull(store.claimOutgoing("owned-claim", "community-a", "attempt-a"))
+            assertNull(
+                "B cannot acquire A's active claim",
+                store.claimOutgoing("owned-claim", "community-a", "attempt-b"),
+            )
+            store.failOutgoingClaim("owned-claim", "community-a", "attempt-b") // cancelled during acquisition
+            assertNull(
+                "C remains blocked while A owns the row",
+                store.claimOutgoing("owned-claim", "community-a", "attempt-c"),
+            )
+
+            store.failOutgoingClaim("owned-claim", "community-a", "attempt-a")
+            assertNotNull(store.claimOutgoing("owned-claim", "community-a", "attempt-c"))
+            store.failOutgoingClaim("owned-claim", "community-a", "attempt-a") // late cleanup from A
+            assertEquals(MessageEntity.STATUS_SENDING, store.messagesForChat(chatId).single().sendStatus)
+            store.failOutgoingClaim("owned-claim", "community-a", "attempt-c")
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
         }
 
     @Test

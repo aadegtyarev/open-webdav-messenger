@@ -125,6 +125,8 @@ internal object EngineWiring {
         chatKey: ChatKey,
         identity: Identity,
         communityId: String = "default",
+        roster: List<String>? = null,
+        memberNames: Map<String, String> = emptyMap(),
     ) {
         // Onboarding can only run after the UI is shown, which waits on [ready] (i.e. after [initialize]
         // assigned [deps]); this guard makes the narrow process-start window explicit rather than letting
@@ -134,7 +136,26 @@ internal object EngineWiring {
             val selectedCommunityId = communityId
             this.communityId = selectedCommunityId
             val allChats = deps.communityChatIds(selectedCommunityId)
-            val g = deps.buildGraph(config, chatId, communityName, chatKey, identity, selectedCommunityId)
+            val built = deps.buildGraph(config, chatId, communityName, chatKey, identity, selectedCommunityId)
+            val g =
+                if (roster == null) {
+                    built
+                } else {
+                    RuntimeGraph(
+                        engine = built.engine,
+                        store = built.store,
+                        envelope = built.envelope,
+                        config = built.config,
+                        chatId = built.chatId,
+                        communityName = built.communityName,
+                        chatKey = built.chatKey,
+                        identity = built.identity,
+                        senderIdentifier = built.senderIdentifier,
+                        roster = roster,
+                        communityId = built.communityId,
+                        communityRuntimeKey = built.communityRuntimeKey,
+                    ).also { it.memberNames = memberNames }
+                }
             graph = g
             activeChatIds = allChats
             installAndSchedule(g, selectedCommunityId)
@@ -159,6 +180,8 @@ internal object EngineWiring {
                 chatKey = activeGraph.chatKey,
                 identity = activeGraph.identity,
                 communityId = communityId,
+                roster = activeGraph.roster,
+                memberNames = activeGraph.memberNames,
             )
             true
         }

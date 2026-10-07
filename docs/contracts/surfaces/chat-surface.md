@@ -92,7 +92,9 @@ different WebDAV roots cannot merge feed state or advance one another's cursor.
 Wire chat IDs and crypto are unchanged. History whose prior community owner was
 not persisted is retained under an unscoped legacy namespace and is not exposed
 in a joined feed rather than guessed into a community. Changing scope must not
-display or send with stale state from the previous runtime. Group creation uses
+display or send with stale state from the previous runtime. Credential-only
+runtime rotation preserves the active graph's roster and member names so peer
+recipients and change-index notifications remain intact. Group creation uses
 the selected community's stored connection and runtime graph and opens the
 created group in that community. A delayed open atomically installs only against
 the graph and selection revision it captured. Credential rotation changes the
