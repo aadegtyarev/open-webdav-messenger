@@ -14,7 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * §9.1 send tests (`docs/features/sync_plan.md` Test plan): one shared-log write + a tiny change entry
+ * §9.1 send tests: one shared-log write + a tiny change entry
  * per OTHER member; idempotent on the §2 message-id; partial-failure tolerant. Robolectric supplies a
  * Context (none needed for send, but the runner is shared with the Room-backed tests).
  */

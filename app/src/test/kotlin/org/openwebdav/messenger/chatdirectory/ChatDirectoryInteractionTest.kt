@@ -15,8 +15,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * §11 chat-directory interaction-scenario tests — one per Interaction scenario in
- * `docs/features/chat-directory_plan.md`. The chat directory shares the disk + the one shared credential
+ * §11 chat-directory interaction-scenario tests. The chat directory shares the disk + the one shared credential
  * with the §10 user `directory/` and the `sync` per-chat folders (flat trust), so these assert the
  * cross-feature, concurrency, and DM-drop behaviors.
  */

@@ -14,8 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * §10 directory interaction-scenario tests — one per Interaction scenario in
- * `docs/features/directory_plan.md`. The directory shares the disk + the one shared credential with the
+ * §10 directory interaction-scenario tests. The directory shares the disk + the one shared credential with the
  * `sync` per-chat folders (flat trust), so these assert the cross-feature and concurrency behaviors.
  */
 @RunWith(RobolectricTestRunner::class)

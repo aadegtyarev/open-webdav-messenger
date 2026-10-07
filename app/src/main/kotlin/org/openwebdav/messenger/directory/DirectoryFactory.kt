@@ -31,7 +31,7 @@ class DirectoryFactory {
     }
 
     /**
-     * The remote-private-chat key provisioning seam (`docs/features/x25519-identity_plan.md`): derive a
+     * The remote-private-chat key provisioning seam: derive a
      * chat-id-bound DH key from the local identity + a directory-discovered peer + a chat-id and store it
      * under that chat-id, so the existing send/receive path drives a remote private chat **with no secret
      * exchanged over any channel**. Composes this factory's [IdentityCrypto] (the bundled native binding)

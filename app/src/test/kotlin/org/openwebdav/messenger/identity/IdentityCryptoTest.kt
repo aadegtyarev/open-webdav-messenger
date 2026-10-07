@@ -11,7 +11,7 @@ import org.openwebdav.messenger.crypto.OpenResult
 /**
  * JVM unit + interaction tests for the identity substrate, run against real lazysodium-java
  * (system libsodium) in `./gradlew test`. These cover keygen, key agreement, sealed box, signing,
- * and the fingerprint — the behaviors in `docs/features/identity_plan.md` test plan.
+ * and the fingerprint.
  */
 class IdentityCryptoTest {
     private val identity = IdentityTestSupport.identityCrypto()

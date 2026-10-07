@@ -6,7 +6,7 @@
 
 ## UI (Compose chat surface)
 
-- [chat-surface](contracts/chat-surface.md) — onboarding flow, invite format, chat feed (v0.14.0)
+- [chat-surface](contracts/surfaces/chat-surface.md) — onboarding flow, invite format, chat feed (v0.14.0)
 
 ## Transport (WebDAV over OkHttp)
 

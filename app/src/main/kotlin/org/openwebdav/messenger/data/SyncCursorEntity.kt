@@ -4,8 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * The per-chat sync cursor (`docs/protocol/webdav-layout.md` §9.3; `docs/features/sync_plan.md`
- * scenario 8). [orderToken] is the coordinate up to which this device has **successfully
+ * The per-chat sync cursor (`docs/protocol/webdav-layout.md` §9.3). [orderToken] is the coordinate up to which this device has **successfully
  * fetched-and-persisted** `log/` entries for [chatId] — the resume point.
  *
  * It is stored **locally only** (Room, never on the WebDAV disk, §9.3). The cursor advances ONLY

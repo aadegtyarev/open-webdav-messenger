@@ -9,8 +9,8 @@ import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.transport.WebDavTransport
 
 /**
- * The §11 community-chat-directory orchestration seam (`docs/features/chat-directory_plan.md` →
- * Contracts; `docs/protocol/webdav-layout.md` §11). A thin §11-named face over the shared
+ * The §11 community-chat-directory orchestration seam (`docs/protocol/webdav-layout.md` §11).
+ * A thin §11-named face over the shared
  * [CommunityDirectoryEngine] (the publish + read pipelines it shares with the §10 user directory) plus
  * [ChatDirectoryCrypto] (seal/open + sign/verify). The direct sibling of the §10 `DirectoryService`,
  * with a chat descriptor instead of a member identity, grouped by chat-id (§11.5), and a `dm`-drop

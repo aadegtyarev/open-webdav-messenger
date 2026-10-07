@@ -9,8 +9,7 @@ import org.openwebdav.messenger.transport.WebDavTransport
 import kotlin.time.Duration.Companion.days
 
 /**
- * The sync orchestration seam (`docs/features/sync_plan.md` → Contracts; arch note Variant A
- * `sync/` orchestrates over `transport/` + `protocol/` + `crypto/`/`message/` + `data/`).
+ * The sync orchestration seam: `sync/` orchestrates over `transport/` + `protocol/` + `crypto/`/`message/` + `data/`.
  *
  * Two operations, both pure orchestration (no HTTP, no SQL, no crypto in this class — it composes the
  * lower layers, so it stays inside the file/function-size limits):

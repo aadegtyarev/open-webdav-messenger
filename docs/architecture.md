@@ -76,7 +76,7 @@ Stable `SCn` IDs — the threat model references these by ID. Full prose in git 
 
 ## Decisions
 
-One line per decision. Detail in git history. OPEN items flagged (Operator to decide).
+One line per decision. Detail in git history. OPEN items are flagged for resolution.
 
 1. **Crypto library:** libsodium-only (Argon2id + XChaCha20-Poly1305); Tink lacks password-KDF.
 2. **Disk topology:** Topology A — one shared WebDAV credential per chat (all members = one disk identity).

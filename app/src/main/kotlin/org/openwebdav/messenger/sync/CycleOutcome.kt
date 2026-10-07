@@ -1,8 +1,7 @@
 package org.openwebdav.messenger.sync
 
 /**
- * The typed outcome of one poll cycle (`docs/features/sync_plan.md` → Poll cycle: "returns a typed
- * result … never throws"). A cycle NEVER throws into the caller — every failure is folded into one of
+ * The typed outcome of one poll cycle; failures are represented as values, never thrown into the caller. A cycle NEVER throws into the caller — every failure is folded into one of
  * these shapes so the WorkManager wrapper can map it to `Result.success`/`Result.retry`.
  *
  * @property newCount messages newly persisted to Room this cycle (excludes dedup'd duplicates).

@@ -6,7 +6,7 @@ import org.openwebdav.messenger.keystore.ChatKeyStore
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
 
 /**
- * The **remote-private-chat key provisioning seam** (`docs/features/x25519-identity_plan.md`, choice 2).
+ * The **remote-private-chat key provisioning seam**.
  * A thin coordinator that establishes a private
  * chat with a directory-discovered peer **using public keys alone — no secret exchanged over any channel**:
  *

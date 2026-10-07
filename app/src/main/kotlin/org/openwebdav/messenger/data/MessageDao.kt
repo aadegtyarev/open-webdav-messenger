@@ -8,7 +8,7 @@ import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
 /**
- * DAO for the local message history (`docs/features/sync_plan.md` → Local history).
+ * DAO for the local message history (`docs/protocol/webdav-layout.md` §9.3).
  *
  * All access is `suspend` (writes) or `Flow`/`PagingSource` (observable reads) — **never** a blocking
  * main-thread query, and the database is built without `allowMainThreadQueries()` (stack-notes Room:

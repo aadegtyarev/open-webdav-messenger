@@ -6,8 +6,7 @@ import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.transport.WebDavTransport
 
 /**
- * The §10 community-user-directory orchestration seam (`docs/features/directory_plan.md` → Contracts;
- * `docs/protocol/webdav-layout.md` §10). A thin §10-named face over the shared
+ * The §10 community-user-directory orchestration seam (`docs/protocol/webdav-layout.md` §10). A thin §10-named face over the shared
  * [CommunityDirectoryEngine] (the publish + read pipelines it shares with the §11 chat directory) plus
  * [DirectoryCrypto] (seal/open + sign/verify). No HTTP, no SQL, no crypto in this class. Two operations,
  * both typed and never-throwing:

@@ -7,7 +7,7 @@ import org.openwebdav.messenger.protocol.Envelope
 import org.openwebdav.messenger.protocol.MessageId
 
 /**
- * WebDAV transport capability (`docs/features/webdav-transport_plan.md` → Contracts) implementing
+ * WebDAV transport capability implementing
  * the access rules in `docs/protocol/webdav-layout.md` §6.
  *
  * Exposes list-inbox / read-file / write-file / delete-file / create-collection, each returning a

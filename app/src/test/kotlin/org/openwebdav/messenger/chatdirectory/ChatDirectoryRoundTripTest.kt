@@ -14,8 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * §11 chat-directory publish/read round-trip + supersede + multi-chat tests
- * (`docs/features/chat-directory_plan.md` Test plan). Real libsodium-backed crypto + a
+ * §11 chat-directory publish/read round-trip + supersede + multi-chat tests. Real libsodium-backed crypto + a
  * MockWebServer-backed transport over [ChatDirectoryFakeDisk] — the full publish → read → verify path
  * off-device. Mirrors `directory/DirectoryRoundTripTest`.
  */

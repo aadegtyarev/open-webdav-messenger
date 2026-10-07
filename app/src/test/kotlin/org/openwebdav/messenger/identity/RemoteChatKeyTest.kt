@@ -12,7 +12,7 @@ import org.openwebdav.messenger.crypto.OpenResult
 
 /**
  * JVM unit tests for [IdentityCrypto.deriveRemoteChatKey] — the chat-id-bound DH derivation that fixes
- * blocker D10 (`docs/features/x25519-identity_plan.md` Test plan). Run against real lazysodium-java
+ * remote-chat key derivation behavior. Run against real lazysodium-java
  * (system libsodium) in `./gradlew test`, the same code the app runs on lazysodium-android behind
  * `NativeCrypto`. These are all NEW tests; the existing `agreeChatKey` suite is untouched.
  */

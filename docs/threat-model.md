@@ -1,6 +1,6 @@
 # Threat model
 
-> The one home for **who attacks this product and what they can take** — kept current; a security-relevant feature plan cites the named actor / boundary / asset it touches.
+> The one home for **who attacks this product and what they can take** — kept current; security-relevant changes should identify the named actor / boundary / asset they touch.
 
 **Last reviewed:** 2026-06-14
 

@@ -6,8 +6,7 @@ import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 
 /**
- * Schedules the background poll as a [PeriodicWorkRequest] (`docs/features/sync_plan.md` → Decisions:
- * background polling via WorkManager). The repeat interval is clamped to the platform floor
+ * Schedules the background poll as a [PeriodicWorkRequest] for background polling via WorkManager. The repeat interval is clamped to the platform floor
  * `PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS` (900000 ms = 15 min): requesting a shorter
  * interval does not give a shorter one — WorkManager clamps it (stack-notes WorkManager:
  * <https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work#schedule_periodic_work>).
