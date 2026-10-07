@@ -89,14 +89,7 @@ private fun AppNav() {
     BackHandler(
         enabled = screen != Screen.Start && screen != Screen.CommunityList,
     ) {
-        screen =
-            when (screen) {
-                Screen.Feed -> Screen.CommunityList
-                Screen.Invite -> Screen.Feed
-                Screen.CreateCommunity, Screen.Join -> if (hasCommunities) Screen.CommunityList else Screen.Start
-                Screen.Settings -> Screen.CommunityList
-                Screen.CommunityList, Screen.Start -> screen
-            }
+        screen = screen.systemBackDestination(hasCommunities)
     }
 
     when (screen) {
@@ -172,23 +165,13 @@ private fun AppNav() {
 }
 
 /** The thin nav graph for this slice: the first-launch fork, the two onboarding screens, the feed + invite. */
-private val ScreenSaver =
+internal val ScreenSaver =
     Saver<Screen, String>(
-        save = { it::class.simpleName ?: "Start" },
-        restore = { name ->
-            when (name) {
-                "CommunityList" -> Screen.CommunityList
-                "CreateCommunity" -> Screen.CreateCommunity
-                "Join" -> Screen.Join
-                "Feed" -> Screen.Feed
-                "Invite" -> Screen.Invite
-                "Settings" -> Screen.Settings
-                else -> Screen.Start
-            }
-        },
+        save = { it.persistedRoute() },
+        restore = ::screenForSavedRoute,
     )
 
-private sealed interface Screen {
+internal sealed interface Screen {
     data object Start : Screen
 
     data object CommunityList : Screen
@@ -203,3 +186,34 @@ private sealed interface Screen {
 
     data object Settings : Screen
 }
+
+internal fun Screen.persistedRoute(): String =
+    when (this) {
+        Screen.Start -> "start"
+        Screen.CommunityList -> "chats"
+        Screen.CreateCommunity -> "create-community"
+        Screen.Join -> "join"
+        Screen.Feed -> "feed"
+        Screen.Invite -> "invite"
+        Screen.Settings -> "settings"
+    }
+
+internal fun screenForSavedRoute(route: String): Screen =
+    when (route) {
+        "chats" -> Screen.CommunityList
+        "create-community" -> Screen.CreateCommunity
+        "join" -> Screen.Join
+        "feed" -> Screen.Feed
+        "invite" -> Screen.Invite
+        "settings" -> Screen.Settings
+        else -> Screen.Start
+    }
+
+internal fun Screen.systemBackDestination(hasCommunities: Boolean): Screen =
+    when (this) {
+        Screen.Feed -> Screen.CommunityList
+        Screen.Invite -> Screen.Feed
+        Screen.CreateCommunity, Screen.Join -> if (hasCommunities) Screen.CommunityList else Screen.Start
+        Screen.Settings -> Screen.CommunityList
+        Screen.CommunityList, Screen.Start -> this
+    }

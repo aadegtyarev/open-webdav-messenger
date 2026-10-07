@@ -107,6 +107,36 @@ class EngineWiringTest {
             assertEquals(0, outcome.newCount)
         }
 
+    @Test
+    fun cold_start_loads_the_persisted_active_community() =
+        runTest {
+            val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Selected")
+            val deps = JvmDeps(stored = stored, activeCommunity = "community-b")
+
+            EngineWiring.initialize(deps)
+
+            assertEquals("community-b", deps.loadedCommunity)
+            assertEquals(chatId, EngineWiring.current()?.chatId)
+        }
+
+    @Test
+    fun background_runner_enumerates_all_joined_communities() =
+        runTest {
+            val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
+            val deps =
+                JvmDeps(
+                    stored = stored,
+                    activeCommunity = "community-a",
+                    joinedCommunities = listOf("community-a", "community-b"),
+                )
+            EngineWiring.initialize(deps)
+
+            SyncRunner.current().runOnce()
+
+            assertTrue("background cycle must enumerate non-active community chats", "community-b" in deps.enumeratedCommunities)
+            assertTrue("new registrations must be included after discovery", deps.newChatSeenAfterDiscovery)
+        }
+
     /** reconfigure builds a graph + installs the real runner after a first persist (owner create / join). */
     @Test
     fun reconfigure_builds_graph_and_installs_real_runner() =
@@ -127,10 +157,25 @@ class EngineWiringTest {
     /** A JVM [EngineWiring.Deps] backed by real libsodium + MockWebServer + in-memory Room. */
     private inner class JvmDeps(
         private val stored: StoredConnection?,
+        private val activeCommunity: String = "default",
+        private val joinedCommunities: List<String> = emptyList(),
     ) : EngineWiring.Deps {
         var scheduled = false
+        var loadedCommunity: String? = null
+        var discoveryComplete = false
+        var newChatSeenAfterDiscovery = false
+        val enumeratedCommunities = mutableListOf<String>()
 
         override fun loadStoredConnection(): StoredConnection? = stored
+
+        override fun activeCommunityId(): String = activeCommunity
+
+        override fun joinedCommunityIds(): List<String> = joinedCommunities
+
+        override fun loadStoredConnection(communityId: String): StoredConnection? {
+            loadedCommunity = communityId
+            return stored
+        }
 
         override fun loadChatKey(chatId: String): ChatKey = chatKey
 
@@ -169,7 +214,15 @@ class EngineWiringTest {
             scheduled = true
         }
 
-        override fun communityChatIds(communityId: String): List<String> = listOf(chatId)
+        override fun communityChatIds(communityId: String): List<String> {
+            enumeratedCommunities.add(communityId)
+            if (discoveryComplete) newChatSeenAfterDiscovery = true
+            return if (discoveryComplete) listOf(chatId, "newly-registered-chat") else listOf(chatId)
+        }
+
+        override suspend fun discoverPublicChats() {
+            discoveryComplete = true
+        }
 
         override fun identityCrypto(): IdentityCrypto = AppTestSupport.identityCrypto()
 

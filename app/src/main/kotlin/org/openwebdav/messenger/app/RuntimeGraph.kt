@@ -9,6 +9,7 @@ import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.sync.ChatSubscription
 import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.transport.ConnectionConfig
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -38,6 +39,7 @@ internal class RuntimeGraph(
     val chatKey: ChatKey,
     val identity: Identity,
     val senderIdentifier: String,
+    val scopeKey: String = UUID.randomUUID().toString(),
     /** All member identifiers in this chat (for change-entry fan-out). */
     val roster: List<String> = listOf(senderIdentifier),
 ) {

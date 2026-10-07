@@ -43,7 +43,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.ui.runtimeScopeKey
 
 /**
  * Share screen — two tabs: "Download app" (QR → GitHub Releases) and "Invite" (QR → join token).
@@ -55,7 +55,7 @@ internal fun InviteScreen(
     onBack: () -> Unit,
     viewModel: InviteViewModel =
         viewModel(
-            key = "invite:${AppContainer.activeCommunityId}:${AppContainer.runtimeGraph()?.chatId}",
+            key = runtimeScopeKey("invite"),
         ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()

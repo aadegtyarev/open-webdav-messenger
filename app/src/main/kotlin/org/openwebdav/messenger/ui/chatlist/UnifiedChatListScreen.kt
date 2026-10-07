@@ -143,11 +143,14 @@ internal fun UnifiedChatListScreen(
                         chat = chat,
                         onClick = {
                             scope.launch(Dispatchers.IO) {
-                                AppContainer.switchToCommunity(chat.communityId)
-                                if (chat.kind != "general") {
-                                    AppContainer.openGroupChat(chat.chatId, chat.name)
-                                }
-                                withContext(Dispatchers.Main) { onOpenFeed() }
+                                val communityReady = AppContainer.switchToCommunity(chat.communityId)
+                                val chatReady =
+                                    communityReady &&
+                                        (
+                                            chat.kind == "general" ||
+                                                AppContainer.openGroupChat(chat.chatId, chat.name, chat.communityId)
+                                        )
+                                if (chatReady) withContext(Dispatchers.Main) { onOpenFeed() }
                             }
                         },
                     )

@@ -1,7 +1,9 @@
 package org.openwebdav.messenger.sync
 
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.Configuration
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -12,6 +14,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
@@ -39,6 +42,7 @@ class FastPollManagerTest {
 
         // Start clean: disable fast polling before each test
         FastPollManager.disable(context, workManager)
+        shadowOf(Looper.getMainLooper()).idle()
     }
 
     @Test
@@ -52,6 +56,15 @@ class FastPollManagerTest {
 
         assertTrue(FastPollManager.isEnabled(context))
         assertEquals(420L, FastPollManager.intervalSeconds(context))
+    }
+
+    @Test
+    fun `enable retains periodic work as fallback`() {
+        FastPollManager.enable(context, workManager, intervalSeconds = 420)
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val work = workManager.getWorkInfosForUniqueWork(SyncScheduler.WORK_NAME).get()
+        assertTrue("Periodic fallback was not retained: $work", work.any { it.state != WorkInfo.State.CANCELLED })
     }
 
     @Test

@@ -17,7 +17,9 @@ import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.identity.IdentityLoadResult
+import org.openwebdav.messenger.keystore.ActiveCommunityStore
 import org.openwebdav.messenger.keystore.ChatRegistry
+import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
@@ -168,13 +170,33 @@ internal object EngineWiring {
         installAndSchedule(g)
     }
 
-    private fun installAndSchedule(g: RuntimeGraph) {
-        val subscriptions =
-            if (activeChatIds.isNotEmpty()) {
-                activeChatIds.map { ChatSubscription(it) }
-            } else {
-                listOf(ChatSubscription(g.chatId))
+    private suspend fun pollOtherCommunities(
+        activeCommunityId: String,
+        activeGraph: RuntimeGraph,
+    ): CycleOutcome {
+        var combined = CycleOutcome(0, 0, backedOff = false)
+        for (joinedId in deps.joinedCommunityIds().filter { it != activeCommunityId }) {
+            try {
+                val stored = deps.loadStoredConnection(joinedId) ?: continue
+                val key = deps.loadChatKey(stored.chatId) ?: continue
+                val graph = deps.buildGraph(stored.config, stored.chatId, stored.communityName, key, activeGraph.identity)
+                val subscriptions =
+                    (deps.communityChatIds(joinedId) + stored.chatId).distinct().map(::ChatSubscription)
+                val outcome = graph.engine.pollCycle(activeGraph.senderIdentifier, subscriptions)
+                combined =
+                    combined.copy(
+                        newCount = combined.newCount + outcome.newCount,
+                        skippedCount = combined.skippedCount + outcome.skippedCount,
+                        backedOff = combined.backedOff || outcome.backedOff,
+                    )
+            } catch (_: Exception) {
+                combined = combined.copy(backedOff = true)
             }
+        }
+        return combined
+    }
+
+    private fun installAndSchedule(g: RuntimeGraph) {
         SyncRunner.install(
             object : SyncRunner {
                 override suspend fun runOnce(): CycleOutcome {
@@ -248,12 +270,21 @@ internal object EngineWiring {
 
                     // Discover new public group chats from the on-disk chat-directory.
                     try {
-                        org.openwebdav.messenger.app.AppContainer.discoverPublicChats()
+                        deps.discoverPublicChats()
                     } catch (_: Exception) {
                         // best-effort — retry next cycle
                     }
 
+                    val subscriptions =
+                        (deps.communityChatIds(communityId) + g.chatId).distinct().map(::ChatSubscription)
                     val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions)
+                    val otherCommunities = pollOtherCommunities(communityId, g)
+                    val combinedOutcome =
+                        outcome.copy(
+                            newCount = outcome.newCount + otherCommunities.newCount,
+                            skippedCount = outcome.skippedCount + otherCommunities.skippedCount,
+                            backedOff = outcome.backedOff || otherCommunities.backedOff,
+                        )
                     // Cache the community floor for the settings UI and reschedule.
                     if (outcome.communityMinPollSeconds != null) {
                         org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds =
@@ -265,7 +296,7 @@ internal object EngineWiring {
                         org.openwebdav.messenger.ui.settings.UserSettings.communityRetentionWindowDays =
                             outcome.retentionWindowDays
                     }
-                    return outcome
+                    return combinedOutcome
                 }
             },
         )
@@ -277,6 +308,8 @@ internal object EngineWiring {
         fun loadStoredConnection(): StoredConnection?
 
         fun activeCommunityId(): String = "default"
+
+        fun joinedCommunityIds(): List<String> = emptyList()
 
         fun loadStoredConnection(communityId: String): StoredConnection? = loadStoredConnection()
 
@@ -313,6 +346,10 @@ internal object EngineWiring {
         /** All chat-ids in the active community (for multi-chat poll subscriptions). */
         fun communityChatIds(communityId: String): List<String>
 
+        suspend fun discoverPublicChats() {
+            AppContainer.discoverPublicChats()
+        }
+
         fun schedulePoll(communityMinPollSeconds: Int? = null)
 
         /**
@@ -340,9 +377,6 @@ internal object EngineWiring {
  * The [crypto] / [identityFactory] / [configStore] are passed in so this reuses [AppContainer]'s single
  * process-scoped instances rather than re-constructing its own (AppContainer is the single holder).
  */
-private const val ACTIVE_COMMUNITY_PREFS = "owdm.active-community"
-private const val ACTIVE_COMMUNITY_KEY = "community_id"
-
 internal class AndroidDeps(
     private val appContext: Context,
     private val crypto: CryptoFactory,
@@ -356,8 +390,9 @@ internal class AndroidDeps(
     override fun loadStoredConnection(): StoredConnection? = configStore.loadStored()
 
     override fun activeCommunityId(): String =
-        appContext.getSharedPreferences(ACTIVE_COMMUNITY_PREFS, Context.MODE_PRIVATE)
-            .getString(ACTIVE_COMMUNITY_KEY, "default") ?: "default"
+        ActiveCommunityStore(appContext).load(CommunityRegistry(appContext).all().firstOrNull()?.id ?: "default")
+
+    override fun joinedCommunityIds(): List<String> = CommunityRegistry(appContext).all().map { it.id }
 
     override fun loadStoredConnection(communityId: String): StoredConnection? = configStore.loadStored(communityId)
 
