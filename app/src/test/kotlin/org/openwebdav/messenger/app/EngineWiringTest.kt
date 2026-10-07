@@ -193,7 +193,7 @@ class EngineWiringTest {
             EngineWiring.initialize(deps)
 
             assertEquals(MessageEntity.STATUS_SENDING, store.messagesForChat(chatId).single().sendStatus)
-            store.markSent("startup-retry", "community-a")
+            store.finishOutgoingClaim("startup-retry", "community-a", "startup-claim")
             assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
         }
 

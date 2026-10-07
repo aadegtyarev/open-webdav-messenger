@@ -58,7 +58,7 @@ interface MessageDao {
     @Query(
         "UPDATE messages SET sendStatus = 'SENT', outboxEnvelope = NULL, outboxRecipients = NULL, outboxClaimToken = NULL " +
             "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
-            "AND sendStatus = 'SENDING' AND outboxEnvelope IS NOT NULL",
+            "AND sendStatus = 'SENDING' AND outboxClaimToken IS NULL AND outboxEnvelope IS NOT NULL",
     )
     suspend fun finishOutgoing(
         messageId: String,
@@ -68,7 +68,7 @@ interface MessageDao {
     @Query(
         "UPDATE messages SET sendStatus = 'FAILED', outboxClaimToken = NULL " +
             "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
-            "AND sendStatus = 'SENDING' AND outboxEnvelope IS NOT NULL",
+            "AND sendStatus = 'SENDING' AND outboxClaimToken IS NULL AND outboxEnvelope IS NOT NULL",
     )
     suspend fun failOutgoing(
         messageId: String,

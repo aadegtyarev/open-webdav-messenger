@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import net.sqlcipher.database.SupportFactory
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Rule
@@ -176,7 +177,7 @@ class MessengerDatabaseMigrationTest {
                 assertEquals(true, row.moveToFirst())
                 assertEquals("FAILED", row.getString(0))
                 assertEquals(true, row.isNull(1))
-                assertEquals(listOf(7, 8), row.getBlob(2).toList())
+                assertArrayEquals(byteArrayOf(7, 8), row.getBlob(2))
             }
         }
     }

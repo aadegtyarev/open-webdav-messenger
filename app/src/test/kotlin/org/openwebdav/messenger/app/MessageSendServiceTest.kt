@@ -170,7 +170,7 @@ class MessageSendServiceTest {
 
             assertNotNull(store.claimOutgoing(sent.messageId, "community-a", "claim-a"))
             assertNull("a second worker/manual attempt must not own this ID", store.claimOutgoing(sent.messageId, "community-a", "claim-b"))
-            store.markSent(sent.messageId, "community-a")
+            store.finishOutgoingClaim(sent.messageId, "community-a", "claim-a")
             store.markMessagesReadUpTo(chatId, pending.orderToken)
             store.markFailed(sent.messageId, "community-a")
 
@@ -211,6 +211,46 @@ class MessageSendServiceTest {
             assertEquals(MessageEntity.STATUS_SENDING, store.messagesForChat(chatId).single().sendStatus)
             store.failOutgoingClaim("owned-claim", "community-a", "attempt-c")
             assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+        }
+
+    @Test
+    fun late_initial_failure_cannot_release_newer_retry_claim_or_start_parallel_delivery() =
+        runTest {
+            val store = store("community-a")
+            store.persist(
+                messageId = "late-initial-failure",
+                orderToken = "0005",
+                message = SyncTestSupport.text(identity, "retry"),
+                receivedAtMillis = 1L,
+                sendStatus = MessageEntity.STATUS_SENDING,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "community-a",
+            )
+            store.markFailed("late-initial-failure", "community-a")
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+
+            var deliveryAttempts = 0
+            val deliveryStarted = CompletableDeferred<Unit>()
+            val finishDelivery = CompletableDeferred<Unit>()
+            val outbox =
+                OutgoingOutbox(store) { _, _ ->
+                    deliveryAttempts++
+                    deliveryStarted.complete(Unit)
+                    finishDelivery.await()
+                    SendOutcome(true, 1, 0)
+                }
+            val activeRetry = async { outbox.retry("late-initial-failure", "community-a", "self") }
+            deliveryStarted.await()
+
+            store.markFailed("late-initial-failure", "community-a")
+            assertFalse(outbox.retry("late-initial-failure", "community-a", "self"))
+            assertEquals(1, deliveryAttempts)
+            assertEquals(MessageEntity.STATUS_SENDING, store.messagesForChat(chatId).single().sendStatus)
+
+            finishDelivery.complete(Unit)
+            assertTrue(activeRetry.await())
+            assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
         }
 
     @Test
