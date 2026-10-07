@@ -30,6 +30,7 @@ import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
+import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.FastPollManager
@@ -125,58 +126,83 @@ internal object AppContainer {
         name: String,
         communityId: String = currentCommunityId,
         access: ChatAccess = ChatAccess.PUBLIC,
+    ): String? =
+        createGroupInSelectedCommunity(
+            communityId = communityId,
+            activeCommunityId = currentCommunityId,
+            activateCommunity = ::switchToCommunity,
+            resolveContext = { selectedId ->
+                val stored = configStore.loadStored(selectedId)
+                val graph = runtimeGraph()
+                if (currentCommunityId == selectedId && stored != null && graph?.config == stored.config) {
+                    SelectedCommunityGroupContext(selectedId, stored, graph)
+                } else {
+                    null
+                }
+            },
+            create = { context -> createGroupChatForContext(name, access, context) },
+            open = { context, chatId -> openGroupChat(chatId, name, context.communityId) },
+        )
+
+    private suspend fun createGroupChatForContext(
+        name: String,
+        access: ChatAccess,
+        context: SelectedCommunityGroupContext,
     ): String? {
-        val stored = configStore.loadStored(communityId) ?: return null
-        if (currentCommunityId != communityId) {
-            if (!switchToCommunity(communityId)) return null
-        }
-        val graph = runtimeGraph() ?: return null
+        val communityId = context.communityId
+        val stored = context.stored
+        val graph = context.graph
         val keySources = crypto.keySources()
-        // Public chats use the community key; private chats get a fresh random key.
         val chatKey =
             if (access == ChatAccess.PUBLIC) {
                 crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
             } else {
                 keySources.newRandomKey()
             }
-        // Domain-separate group chat ids — mix communityId + chat name + random nonce for uniqueness.
-        // Public chats share the community key, so a per-chat uniqueness source is needed.
+        // Public chats share a key, so mix a nonce and community identity into the group ID.
         val nonce = keySources.newRandomKey().copyBytes().take(8).toByteArray()
-        val ctx = "owdm/group-chat/v1".toByteArray(Charsets.UTF_8)
-        val input = ctx + byteArrayOf(0x1F) + nonce + communityId.toByteArray(Charsets.UTF_8) + name.toByteArray(Charsets.UTF_8)
-        val hash = crypto.nativeCrypto().genericHash(input, 16)
+        val hash =
+            crypto.nativeCrypto().genericHash(
+                "owdm/group-chat/v1".toByteArray(Charsets.UTF_8) +
+                    byteArrayOf(0x1F) + nonce + communityId.toByteArray(Charsets.UTF_8) + name.toByteArray(Charsets.UTF_8),
+                16,
+            )
         val chatId = Hex.encode(hash)
         crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
         chatRegistry.add(communityId, ChatRegistry.Entry(chatId, name, "group"))
-
-        // Publish public chats to the on-disk chat-directory so other members discover them.
-        if (access == ChatAccess.PUBLIC) {
-            try {
-                val service =
-                    chatDirectoryFactory.chatDirectoryService(
-                        baseUrl = stored.config.baseUrl,
-                        username = stored.config.username,
-                        appPassword = stored.config.appPassword,
-                        communityRoot = stored.config.chatRoot,
-                    )
-                val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
-                service.publishChatEntry(
-                    identity = graph.identity,
-                    // raw hash bytes, not the hex string
-                    chatId = hash,
-                    kind = ChatKind.GROUP,
-                    access = ChatAccess.PUBLIC,
-                    title = name,
-                    versionCounter = 1,
-                    communityKey = communityKey,
-                )
-            } catch (_: Exception) {
-                // best-effort — the chat is already local; directory publish is optional
-            }
-        }
-
-        if (!openGroupChat(chatId, name, communityId)) return null
+        if (access == ChatAccess.PUBLIC && !publishPublicGroup(stored, graph, hash, name)) return null
         return chatId
+    }
+
+    private suspend fun publishPublicGroup(
+        stored: StoredConnection,
+        graph: RuntimeGraph,
+        rawChatId: ByteArray,
+        title: String,
+    ): Boolean {
+        try {
+            val service =
+                chatDirectoryFactory.chatDirectoryService(
+                    baseUrl = stored.config.baseUrl,
+                    username = stored.config.username,
+                    appPassword = stored.config.appPassword,
+                    communityRoot = stored.config.chatRoot,
+                )
+            val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return false
+            service.publishChatEntry(
+                identity = graph.identity,
+                chatId = rawChatId,
+                kind = ChatKind.GROUP,
+                access = ChatAccess.PUBLIC,
+                title = title,
+                versionCounter = 1,
+                communityKey = communityKey,
+            )
+            return true
+        } catch (_: Exception) {
+            // Directory publish is best-effort; the locally registered chat remains available.
+            return true
+        }
     }
 
     /**
