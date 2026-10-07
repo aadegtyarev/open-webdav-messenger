@@ -2,11 +2,13 @@ package org.openwebdav.messenger.app
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -15,12 +17,16 @@ import org.junit.runner.RunWith
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
+import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
+import org.openwebdav.messenger.directory.CredentialRotation
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
+import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
+import org.openwebdav.messenger.message.TextMessage
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.CycleOutcome
 import org.openwebdav.messenger.sync.FakeDisk
@@ -31,6 +37,9 @@ import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * JVM tests for [EngineWiring] (`ui-chat-surface` plan Test plan): the no-op runner survives before any
@@ -157,6 +166,110 @@ class EngineWiringTest {
         }
 
     @Test
+    fun startup_recovers_old_claim_before_a_published_runner_can_claim_delivery() =
+        runTest {
+            val store = MessageStore(db.messageDao(), db.syncCursorDao(), "community-a")
+            store.persist(
+                "startup-retry",
+                "0005",
+                TextMessage(chatId, identity.publicIdentity(), null, "startup", 1L),
+                1L,
+                sendStatus = MessageEntity.STATUS_FAILED,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = emptyList(),
+                outboxCommunityId = "community-a",
+            )
+            val deps =
+                JvmDeps(
+                    StoredConnection(SyncTestSupport.config(server), chatId, "Community"),
+                    activeCommunity = "community-a",
+                    joinedCommunities = listOf("community-a"),
+                )
+            deps.onSchedule = {
+                runBlocking { assertNotNull(store.claimOutgoing("startup-retry", "community-a")) }
+            }
+
+            EngineWiring.initialize(deps)
+
+            assertEquals(MessageEntity.STATUS_SENDING, store.messagesForChat(chatId).single().sendStatus)
+            store.markSent("startup-retry", "community-a")
+            assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+        }
+
+    @Test
+    fun credential_rotation_while_group_is_open_persists_anchor_for_cold_start() =
+        runTest {
+            val anchor = StoredConnection(SyncTestSupport.config(server), chatId, "Community anchor")
+            val deps = JvmDeps(anchor, activeCommunity = "community-a")
+            val host = AppTestSupport.newIdentity()
+            val rotatedConfig = anchor.config.copy(username = "rotated-user", appPassword = "rotated-pass")
+            deps.credentialBlob =
+                CredentialRotation.sealForMember(
+                    rotatedConfig, identity.copyBoxPublic(), AppTestSupport.identityCrypto(), host,
+                )
+            EngineWiring.initialize(deps)
+            EngineWiring.switchToChat("opened-group", "Project group", chatKey, listOf(Hex.encode(identity.copySignPublic())))
+
+            SyncRunner.current().runOnce()
+
+            assertEquals(chatId, deps.savedRotatedConnection?.chatId)
+            assertEquals("Community anchor", deps.savedRotatedConnection?.communityName)
+            EngineWiring.initialize(deps)
+            assertEquals(chatId, EngineWiring.current()?.chatId)
+            assertEquals("Community anchor", EngineWiring.current()?.communityName)
+        }
+
+    @Test
+    fun production_conditional_chat_install_serializes_selection_between_check_and_write() {
+        val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community A")
+        val deps = JvmDeps(stored = stored, activeCommunity = "community-a")
+        EngineWiring.initialize(deps)
+        val expectedGraph = EngineWiring.current()!!
+        val guard = RuntimeSelectionGuard()
+        val expectedRevision = guard.current()
+        val checked = CountDownLatch(1)
+        val selectionStarted = CountDownLatch(1)
+        val releaseInstall = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val open =
+                executor.submit<Boolean> {
+                    EngineWiring.switchToChatIfCurrent(
+                        guard, expectedRevision, expectedGraph, "group-a", "Group A", chatKey,
+                        listOf(expectedGraph.senderIdentifier), emptyMap(), { true },
+                    ) {
+                        checked.countDown()
+                        check(releaseInstall.await(5, TimeUnit.SECONDS))
+                    }
+                }
+            assertTrue(checked.await(5, TimeUnit.SECONDS))
+            val selectB =
+                executor.submit {
+                    selectionStarted.countDown()
+                    guard.begin()
+                    EngineWiring.reconfigure(
+                        SyncTestSupport.config(server),
+                        chatId,
+                        "Community B",
+                        chatKey,
+                        identity,
+                        communityId = "community-b",
+                    )
+                }
+            assertTrue(selectionStarted.await(5, TimeUnit.SECONDS))
+            assertFalse("selection cannot cross the production install critical section", selectB.isDone)
+            releaseInstall.countDown()
+            assertTrue(open.get(5, TimeUnit.SECONDS))
+            selectB.get(5, TimeUnit.SECONDS)
+            assertEquals("community-b", EngineWiring.current()?.communityId)
+            assertEquals(chatId, EngineWiring.current()?.chatId)
+        } finally {
+            releaseInstall.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun background_runner_polls_each_joined_community_on_its_own_webdav_root() =
         runTest {
             val serverB =
@@ -212,6 +325,9 @@ class EngineWiringTest {
         private val storedByCommunity: Map<String, StoredConnection> = emptyMap(),
     ) : EngineWiring.Deps {
         var scheduled = false
+        var onSchedule: (() -> Unit)? = null
+        var credentialBlob: ByteArray? = null
+        var savedRotatedConnection: StoredConnection? = null
         var loadedCommunity: String? = null
         var discoveryComplete = false
         var newChatSeenAfterDiscovery = false
@@ -219,7 +335,7 @@ class EngineWiringTest {
         var releaseDiscovery: CompletableDeferred<Unit>? = null
         val enumeratedCommunities = mutableListOf<String>()
 
-        override fun loadStoredConnection(): StoredConnection? = stored
+        override fun loadStoredConnection(): StoredConnection? = savedRotatedConnection ?: stored
 
         override fun activeCommunityId(): String = activeCommunity
 
@@ -227,7 +343,7 @@ class EngineWiringTest {
 
         override fun loadStoredConnection(communityId: String): StoredConnection? {
             loadedCommunity = communityId
-            return storedByCommunity[communityId] ?: stored
+            return savedRotatedConnection?.takeIf { communityId == activeCommunity } ?: storedByCommunity[communityId] ?: stored
         }
 
         override fun loadChatKey(chatId: String): ChatKey = chatKey
@@ -242,7 +358,7 @@ class EngineWiringTest {
             identity: Identity,
             communityId: String,
         ): RuntimeGraph {
-            val store = MessageStore(db.messageDao(), db.syncCursorDao())
+            val store = MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
             val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
             val engine =
                 SyncEngine(
@@ -267,6 +383,7 @@ class EngineWiringTest {
 
         override fun schedulePoll(communityMinPollSeconds: Int?) {
             scheduled = true
+            onSchedule?.invoke()
         }
 
         override fun communityChatIds(communityId: String): List<String> {
@@ -286,13 +403,15 @@ class EngineWiringTest {
         override suspend fun readRawFile(
             config: ConnectionConfig,
             path: String,
-        ): ByteArray? = null // no credential rotation in these tests
+        ): ByteArray? = credentialBlob // null unless a test exercises credential rotation
 
         override fun saveRotatedConfig(
             newConfig: ConnectionConfig,
-            chatId: String,
-            communityName: String,
             communityId: String,
-        ): Boolean = false // no credential rotation in these tests
+        ): Boolean {
+            val anchor = loadStoredConnection(communityId) ?: return false
+            savedRotatedConnection = ConnectionConfigStore.rotatedConnection(anchor, newConfig)
+            return true
+        }
     }
 }

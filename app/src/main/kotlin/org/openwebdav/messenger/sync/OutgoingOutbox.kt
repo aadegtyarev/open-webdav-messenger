@@ -1,5 +1,8 @@
 package org.openwebdav.messenger.sync
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.data.MessageStore
 
@@ -28,21 +31,27 @@ internal class OutgoingOutbox(
         messageId: String,
         communityId: String,
         senderIdentifier: String,
-    ): SendOutcome? {
-        val message = store.claimOutgoing(messageId, communityId) ?: return null
-        val envelope = message.outboxEnvelope ?: return null
-        val recipients = message.outboxRecipients?.split('\n')?.filter(String::isNotBlank).orEmpty()
-        val outcome =
-            try {
-                sendStored(message.copy(outboxEnvelope = envelope, outboxRecipients = recipients.joinToString("\n")), senderIdentifier)
-            } catch (_: Exception) {
-                SendOutcome(false, 0, recipients.size)
+    ): SendOutcome? =
+        try {
+            val message = store.claimOutgoing(messageId, communityId) ?: return null
+            val envelope = message.outboxEnvelope ?: return null
+            val recipients = message.outboxRecipients?.split('\n')?.filter(String::isNotBlank).orEmpty()
+            val outcome =
+                try {
+                    sendStored(message.copy(outboxEnvelope = envelope, outboxRecipients = recipients.joinToString("\n")), senderIdentifier)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    SendOutcome(false, 0, recipients.size)
+                }
+            if (outcome.complete) {
+                store.markSent(message.messageId, communityId)
+            } else {
+                store.markFailed(message.messageId, communityId)
             }
-        if (outcome.complete) {
-            store.markSent(message.messageId, communityId)
-        } else {
-            store.markFailed(message.messageId, communityId)
+            outcome
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) { store.markFailed(messageId, communityId) }
+            throw cancelled
         }
-        return outcome
-    }
 }

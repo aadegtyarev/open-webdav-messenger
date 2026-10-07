@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.keystore
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.openwebdav.messenger.transport.ConnectionConfig
@@ -35,6 +36,21 @@ class ConnectionConfigStoreTest {
         assertEquals(config.chatRoot, restored.config.chatRoot)
         assertEquals(chatId, restored.chatId)
         assertEquals(communityName, restored.communityName)
+    }
+
+    @Test
+    fun credential_rotation_keeps_community_anchor_while_group_is_open() {
+        val originalConfig = ConnectionConfig("https://old.example.test", "user", "old-pass", "root")
+        val rotatedConfig = ConnectionConfig("https://new.example.test", "user", "new-pass", "root")
+        val stored = StoredConnection(originalConfig, "community-anchor-chat", "Community anchor")
+        val openedGroupId = "opened-group-chat"
+
+        val rotated = ConnectionConfigStore.rotatedConnection(stored, rotatedConfig)
+
+        assertEquals(rotatedConfig, rotated.config)
+        assertEquals("community-anchor-chat", rotated.chatId)
+        assertEquals("Community anchor", rotated.communityName)
+        assertNotEquals(openedGroupId, rotated.chatId)
     }
 
     /** A corrupt / wrong-version blob deserializes to null (reject-don't-guess), never a partial config. */

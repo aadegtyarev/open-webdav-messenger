@@ -139,7 +139,7 @@ class InviteViewModelTest {
             identity: Identity,
             communityId: String,
         ): RuntimeGraph {
-            val store = MessageStore(db.messageDao(), db.syncCursorDao())
+            val store = MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
             val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
             val engine =
                 SyncEngine(
@@ -175,8 +175,6 @@ class InviteViewModelTest {
 
         override fun saveRotatedConfig(
             newConfig: org.openwebdav.messenger.transport.ConnectionConfig,
-            chatId: String,
-            communityName: String,
             communityId: String,
         ): Boolean = false
     }

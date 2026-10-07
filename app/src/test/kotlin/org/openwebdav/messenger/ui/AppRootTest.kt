@@ -118,7 +118,7 @@ class AppRootTest {
             identity: Identity,
             communityId: String,
         ): RuntimeGraph {
-            val store = MessageStore(db.messageDao(), db.syncCursorDao())
+            val store = MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
             val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
             val engine =
                 SyncEngine(
@@ -154,8 +154,6 @@ class AppRootTest {
 
         override fun saveRotatedConfig(
             newConfig: ConnectionConfig,
-            chatId: String,
-            communityName: String,
             communityId: String,
         ): Boolean = false
     }

@@ -55,7 +55,10 @@ internal object SyncTestSupport {
             MessengerDatabase::class.java,
         ).build()
 
-    fun store(db: MessengerDatabase): MessageStore = MessageStore(db.messageDao(), db.syncCursorDao())
+    fun store(
+        db: MessengerDatabase,
+        communityId: String = "default",
+    ): MessageStore = MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
 
     /** A short-timeout OkHttp client so timeout-retry tests fail fast (mirrors the transport tests). */
     fun client(): OkHttpClient =

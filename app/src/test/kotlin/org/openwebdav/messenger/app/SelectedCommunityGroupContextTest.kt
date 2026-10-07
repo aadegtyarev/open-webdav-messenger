@@ -69,7 +69,7 @@ class SelectedCommunityGroupContextTest {
         communityId: String,
         config: ConnectionConfig,
     ): RuntimeGraph {
-        val store = MessageStore(db.messageDao(), db.syncCursorDao())
+        val store = MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
         val engine =
             SyncEngine(

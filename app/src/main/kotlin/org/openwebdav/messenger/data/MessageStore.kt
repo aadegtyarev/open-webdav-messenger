@@ -11,13 +11,14 @@ import org.openwebdav.messenger.protocol.Hex
  * The persistence seam the `sync/` orchestrator calls — it owns ALL Room access so `sync/` holds no
  * SQL (arch note Variant A: `data/` owns persistence, `sync/` calls it). Maps a typed [Message] plus
  * its §2 coordinates (message-id, order-token) to a [MessageEntity] and persists with idempotent
- * dedup; reads/advances the per-chat cursor (`docs/protocol/webdav-layout.md` §9.3).
+ * dedup; reads/advances the per-community/chat cursor (`docs/protocol/webdav-layout.md` §9.3).
  *
  * All methods are `suspend` (off the main thread, stack-notes Room).
  */
 class MessageStore(
     private val messageDao: MessageDao,
     private val cursorDao: SyncCursorDao,
+    private val communityId: String,
 ) {
     /**
      * Persist a received/sent [message] under its §2 [messageId] and §4 [orderToken], with
@@ -43,6 +44,7 @@ class MessageStore(
                 outboxEnvelope,
                 outboxRecipients,
                 outboxCommunityId,
+                communityId,
             ),
         ) != DEDUP_NO_ROW
 
@@ -51,7 +53,7 @@ class MessageStore(
         messageId: String,
         communityId: String,
     ) {
-        messageDao.finishOutgoing(messageId, communityId)
+        if (communityId == this.communityId) messageDao.finishOutgoing(messageId, communityId)
     }
 
     /** Mark a locally-sent message for later retry without discarding its original operation. */
@@ -59,18 +61,20 @@ class MessageStore(
         messageId: String,
         communityId: String,
     ) {
-        messageDao.failOutgoing(messageId, communityId)
+        if (communityId == this.communityId) messageDao.failOutgoing(messageId, communityId)
     }
 
     suspend fun claimOutgoing(
         messageId: String,
         communityId: String,
     ): MessageEntity? {
+        if (communityId != this.communityId) return null
         if (messageDao.claimOutgoing(messageId, communityId) != 1) return null
         return messageDao.claimedOutgoing(messageId, communityId)
     }
 
-    suspend fun pendingOutgoing(communityId: String): List<MessageEntity> = messageDao.pendingOutgoing(communityId)
+    suspend fun pendingOutgoing(communityId: String): List<MessageEntity> =
+        if (communityId == this.communityId) messageDao.pendingOutgoing(communityId) else emptyList()
 
     suspend fun recoverInterruptedOutgoing(communityId: String) {
         messageDao.recoverInterruptedOutgoing(communityId)
@@ -80,10 +84,10 @@ class MessageStore(
     suspend fun markMessagesReadUpTo(
         chatId: String,
         orderToken: String,
-    ) = messageDao.markReadUpTo(chatId, orderToken)
+    ) = messageDao.markReadUpTo(communityId, chatId, orderToken)
 
     /** The stored cursor order-token for [chatId], or `""` (start of window) if none recorded yet (§9.3). */
-    suspend fun cursorFor(chatId: String): String = cursorDao.cursorFor(chatId)?.orderToken ?: ""
+    suspend fun cursorFor(chatId: String): String = cursorDao.cursorFor(communityId, chatId)?.orderToken ?: ""
 
     /**
      * Advance the stored cursor for [chatId] to [orderToken] — called ONLY after the entries up to
@@ -96,21 +100,21 @@ class MessageStore(
     ) {
         val current = cursorFor(chatId)
         if (orderToken > current) {
-            cursorDao.upsert(SyncCursorEntity(chatId, orderToken))
+            cursorDao.upsert(SyncCursorEntity(communityId, chatId, orderToken))
         }
     }
 
     /** Observable, ordered history for a chat (offline, off-main-thread, §6). */
-    fun observeChat(chatId: String): Flow<List<MessageEntity>> = messageDao.observeChat(chatId)
+    fun observeChat(chatId: String): Flow<List<MessageEntity>> = messageDao.observeChat(communityId, chatId)
 
     /** Paged history for the future UI (Paging 3, ordered by order-token). */
-    fun pagedChat(chatId: String): PagingSource<Int, MessageEntity> = messageDao.pagedChat(chatId)
+    fun pagedChat(chatId: String): PagingSource<Int, MessageEntity> = messageDao.pagedChat(communityId, chatId)
 
     /** One-shot ordered read (tests / non-observable callers). */
-    suspend fun messagesForChat(chatId: String): List<MessageEntity> = messageDao.messagesForChat(chatId)
+    suspend fun messagesForChat(chatId: String): List<MessageEntity> = messageDao.messagesForChat(communityId, chatId)
 
     /** Observable count of unread messages (sendStatus = 'SENT') for a chat. */
-    fun observeUnreadCount(chatId: String): Flow<Int> = messageDao.observeUnreadCount(chatId)
+    fun observeUnreadCount(chatId: String): Flow<Int> = messageDao.observeUnreadCount(communityId, chatId)
 
     private fun toEntity(
         messageId: String,
@@ -121,11 +125,13 @@ class MessageStore(
         outboxEnvelope: ByteArray?,
         outboxRecipients: List<String>,
         outboxCommunityId: String?,
+        communityId: String,
     ): MessageEntity {
         val senderHex = Hex.encode(message.sender.copySignPub())
         return when (message) {
             is TextMessage ->
                 MessageEntity(
+                    communityId = communityId,
                     messageId = messageId,
                     chatId = message.chatId,
                     orderToken = orderToken,
@@ -144,6 +150,7 @@ class MessageStore(
                 )
             is ReactionMessage ->
                 MessageEntity(
+                    communityId = communityId,
                     messageId = messageId,
                     chatId = message.chatId,
                     orderToken = orderToken,

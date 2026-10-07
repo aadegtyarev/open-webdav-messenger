@@ -95,9 +95,11 @@ internal object EngineWiring {
      * background coroutine (Keystore/IO must not run on the main thread).
      */
     fun initialize(injected: Deps) {
+        SyncRunner.install(SyncRunner { CycleOutcome(0, 0, backedOff = false) })
         deps = injected
         communityId = deps.activeCommunityId()
         graph = null
+        activeChatIds = emptyList()
         rebuildFromStore()
         graph?.let { active ->
             runBlocking {
@@ -105,6 +107,7 @@ internal object EngineWiring {
                     active.store.recoverInterruptedOutgoing(joinedId)
                 }
             }
+            installAndSchedule(active, active.communityId)
         }
         _ready.value = true
     }
@@ -159,6 +162,27 @@ internal object EngineWiring {
      * The poll subscriptions (all community chats) stay unchanged; only the active [RuntimeGraph] is
      * replaced so the send path uses the correct [chatId], [chatKey], display name, and roster.
      */
+    fun switchToChatIfCurrent(
+        guard: RuntimeSelectionGuard,
+        expectedSelectionRevision: Long,
+        expectedGraph: RuntimeGraph,
+        chatId: String,
+        chatName: String,
+        chatKey: ChatKey,
+        roster: List<String>,
+        memberNames: Map<String, String>,
+        isCommunitySelected: () -> Boolean,
+        beforeInstall: () -> Unit = {},
+    ): Boolean =
+        guard.runIfCurrent(expectedSelectionRevision) {
+            synchronized(runtimeInstallLock) {
+                if (graph !== expectedGraph || !isCommunitySelected()) return@synchronized false
+                beforeInstall()
+                installChatLocked(expectedGraph, chatId, chatName, chatKey, roster, memberNames)
+                true
+            }
+        }
+
     fun switchToChat(
         chatId: String,
         chatName: String,
@@ -168,27 +192,38 @@ internal object EngineWiring {
     ) {
         synchronized(runtimeInstallLock) {
             val base = graph ?: return
-            graph =
-                RuntimeGraph(
-                    engine = base.engine,
-                    store = base.store,
-                    envelope = base.envelope,
-                    config = base.config,
-                    chatId = chatId,
-                    communityName = chatName,
-                    chatKey = chatKey,
-                    identity = base.identity,
-                    senderIdentifier = base.senderIdentifier,
-                    roster = roster,
-                    communityId = base.communityId,
-                    communityRuntimeKey = base.communityRuntimeKey,
-                )
-            graph!!.memberNames = memberNames
-            // If this chat is not yet in the poll subscription list, add it and reinstall.
-            if (chatId !in activeChatIds) {
-                activeChatIds = activeChatIds + chatId
-                installAndSchedule(graph!!, base.communityId)
-            }
+            installChatLocked(base, chatId, chatName, chatKey, roster, memberNames)
+        }
+    }
+
+    private fun installChatLocked(
+        base: RuntimeGraph,
+        chatId: String,
+        chatName: String,
+        chatKey: ChatKey,
+        roster: List<String>,
+        memberNames: Map<String, String>,
+    ) {
+        val switched =
+            RuntimeGraph(
+                engine = base.engine,
+                store = base.store,
+                envelope = base.envelope,
+                config = base.config,
+                chatId = chatId,
+                communityName = chatName,
+                chatKey = chatKey,
+                identity = base.identity,
+                senderIdentifier = base.senderIdentifier,
+                roster = roster,
+                communityId = base.communityId,
+                communityRuntimeKey = base.communityRuntimeKey,
+            )
+        switched.memberNames = memberNames
+        graph = switched
+        if (chatId !in activeChatIds) {
+            activeChatIds = activeChatIds + chatId
+            installAndSchedule(switched, base.communityId)
         }
     }
 
@@ -201,7 +236,6 @@ internal object EngineWiring {
         val g = deps.buildGraph(stored.config, stored.chatId, stored.communityName, chatKey, identity, selectedCommunityId)
         graph = g
         activeChatIds = allChats
-        installAndSchedule(g, selectedCommunityId)
     }
 
     private suspend fun pollOtherCommunities(
@@ -273,7 +307,7 @@ internal object EngineWiring {
                             if (newConfig != null) {
                                 // Apply the new credential: persist it and rebuild the engine so
                                 // the poll cycle below (and all future cycles) use the new URL.
-                                if (deps.saveRotatedConfig(newConfig, g.chatId, g.communityName, selectedCommunityId)) {
+                                if (deps.saveRotatedConfig(newConfig, selectedCommunityId)) {
                                     // Delete the credential blob from disk (best-effort — if it
                                     // stays, the next cycle re-opens and no-ops idempotently).
                                     try {
@@ -374,14 +408,9 @@ internal object EngineWiring {
             path: String,
         ): ByteArray?
 
-        /**
-         * Save [newConfig] to the config store with the existing [chatId] and [communityName].
-         * Returns `true` on success.
-         */
+        /** Save new connection credentials while retaining the stored community anchor. */
         fun saveRotatedConfig(
             newConfig: ConnectionConfig,
-            chatId: String,
-            communityName: String,
             communityId: String,
         ): Boolean
 
@@ -470,14 +499,8 @@ internal class AndroidDeps(
 
     override fun saveRotatedConfig(
         newConfig: ConnectionConfig,
-        chatId: String,
-        communityName: String,
         communityId: String,
-    ): Boolean {
-        val stored = configStore.loadStored(communityId) ?: return false
-        configStore.save(newConfig, chatId, communityName, communityId)
-        return true
-    }
+    ): Boolean = configStore.saveRotatedConfig(newConfig, communityId)
 
     override fun communityChatIds(communityId: String): List<String> = chatRegistry.all(communityId).map { it.id }
 
@@ -490,7 +513,7 @@ internal class AndroidDeps(
         communityId: String,
     ): RuntimeGraph {
         val db = MessengerDatabase.get(appContext)
-        val store = MessageStore(db.messageDao(), db.syncCursorDao())
+        val store = MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
         val envelope = MessageEnvelope.create(crypto.messageCrypto(), identityFactory.identityCrypto())
         val transport = TransportFactory.create(config)
         val idCrypto = identityFactory.identityCrypto()

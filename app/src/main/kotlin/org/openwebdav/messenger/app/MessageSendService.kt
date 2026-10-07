@@ -1,7 +1,9 @@
 package org.openwebdav.messenger.app
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.message.TextMessage
@@ -41,62 +43,76 @@ internal class MessageSendService(
         text: String,
         onRecoverablyPersisted: suspend () -> Unit,
     ): SendResult {
-        val prepared =
-            withContext(ioDispatcher) {
-                val now = clock()
-                val message =
-                    TextMessage(
-                        chatId = graph.chatId,
-                        sender = graph.identity.publicIdentity(),
-                        replyTo = null,
-                        body = text,
-                        sendTimestampMillis = now,
-                    )
-                val signSecret = graph.identity.copySignSecret()
-                val envelopeBytes =
-                    try {
-                        graph.envelope.seal(message, graph.chatKey, signSecret)
-                    } finally {
-                        signSecret.fill(0) // identity secret never lingers past use
+        var persistedMessageId: String? = null
+        try {
+            val prepared =
+                withContext(ioDispatcher) {
+                    val now = clock()
+                    val message =
+                        TextMessage(
+                            chatId = graph.chatId,
+                            sender = graph.identity.publicIdentity(),
+                            replyTo = null,
+                            body = text,
+                            sendTimestampMillis = now,
+                        )
+                    val signSecret = graph.identity.copySignSecret()
+                    val envelopeBytes =
+                        try {
+                            graph.envelope.seal(message, graph.chatKey, signSecret)
+                        } finally {
+                            signSecret.fill(0)
+                        }
+                    val orderToken = OrderToken.build(now, graph.senderIdentifier, graph.nextSeq())
+                    val messageId = MessageId.messageId(orderToken, envelopeBytes)
+                    var inserted = false
+                    withContext(NonCancellable) {
+                        inserted =
+                            graph.store.persist(
+                                messageId = messageId,
+                                orderToken = orderToken,
+                                message = message,
+                                receivedAtMillis = now,
+                                sendStatus = MessageEntity.STATUS_SENDING,
+                                outboxEnvelope = envelopeBytes,
+                                outboxRecipients = graph.roster.filter { it != graph.senderIdentifier },
+                                outboxCommunityId = graph.communityId,
+                            )
+                        if (inserted) persistedMessageId = messageId
                     }
-                val orderToken = OrderToken.build(now, graph.senderIdentifier, graph.nextSeq())
-                val messageId = MessageId.messageId(orderToken, envelopeBytes)
-
-                // Local echo FIRST — the message appears in chat instantly with SENDING status.
-                graph.store.persist(
-                    messageId = messageId,
-                    orderToken = orderToken,
-                    message = message,
-                    receivedAtMillis = now,
-                    sendStatus = MessageEntity.STATUS_SENDING,
-                    outboxEnvelope = envelopeBytes,
-                    outboxRecipients = graph.roster.filter { it != graph.senderIdentifier },
-                    outboxCommunityId = graph.communityId,
-                )
-                PreparedSend(orderToken, messageId, envelopeBytes)
-            }
-        onRecoverablyPersisted()
-
-        return withContext(ioDispatcher) {
-            val outcome =
-                try {
-                    graph.engine.send(
-                        graph.chatId,
-                        prepared.orderToken,
-                        prepared.envelopeBytes,
-                        allMembers = graph.roster,
-                        graph.senderIdentifier,
-                    )
-                } catch (_: Exception) {
-                    org.openwebdav.messenger.sync.SendOutcome(false, 0, graph.roster.size)
+                    check(inserted) { "New outgoing message ID already exists" }
+                    PreparedSend(orderToken, messageId, envelopeBytes)
                 }
-
-            if (outcome.complete) {
-                graph.store.markSent(prepared.messageId, graph.communityId)
-            } else {
-                graph.store.markFailed(prepared.messageId, graph.communityId)
+            onRecoverablyPersisted()
+            return withContext(ioDispatcher) {
+                val outcome =
+                    try {
+                        graph.engine.send(
+                            graph.chatId,
+                            prepared.orderToken,
+                            prepared.envelopeBytes,
+                            allMembers = graph.roster,
+                            graph.senderIdentifier,
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        org.openwebdav.messenger.sync.SendOutcome(false, 0, graph.roster.size)
+                    }
+                if (outcome.complete) {
+                    graph.store.markSent(prepared.messageId, graph.communityId)
+                } else {
+                    graph.store.markFailed(prepared.messageId, graph.communityId)
+                }
+                SendResult(messageId = prepared.messageId, logWritten = outcome.logWritten, complete = outcome.complete)
             }
-            SendResult(messageId = prepared.messageId, logWritten = outcome.logWritten, complete = outcome.complete)
+        } catch (cancelled: CancellationException) {
+            persistedMessageId?.let { messageId ->
+                withContext(NonCancellable + ioDispatcher) {
+                    graph.store.markFailed(messageId, graph.communityId)
+                }
+            }
+            throw cancelled
         }
     }
 

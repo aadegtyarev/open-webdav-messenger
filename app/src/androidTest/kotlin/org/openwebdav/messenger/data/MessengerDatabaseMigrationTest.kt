@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import net.sqlcipher.database.SupportFactory
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Rule
 import org.junit.Test
@@ -17,10 +18,9 @@ import org.openwebdav.messenger.keystore.HistoryKeyStore
  * room_migration_tested (stack-notes Room migrations) — the
  * checked-in schema (`app/schemas/`, `exportSchema = true`) opens on-device via [MigrationTestHelper].
  *
- * At schema **v1** there is no prior version to migrate FROM, so this test exercises the helper's
- * create-and-open path (the harness that future v1→v2 migrations plug into) and a real-DB open + write
- * round-trip on the device's SQLite. A future schema bump adds a `Migration` and a v(N-1)→vN assertion
- * here. Runs under `./gradlew connectedAndroidTest` (needs an emulator/device — the native SQLite +
+ * Populated v2/v3 rows are migrated through the latest schema to verify retained local data and the
+ * fail-closed ownerless outbox policy. Tests run under `./gradlew connectedAndroidTest` (needs an
+ * emulator/device — the native SQLite +
  * the exported schema assets are device-backed).
  */
 @RunWith(AndroidJUnit4::class)
@@ -41,16 +41,113 @@ class MessengerDatabaseMigrationTest {
     }
 
     @Test
-    fun migratesVersion1ThroughCommunityOwnedOutboxSchema() {
+    fun migratesVersion1ThroughCommunityScopedHistorySchema() {
         helper.createDatabase(TEST_DB, 1).close()
         helper.runMigrationsAndValidate(
             TEST_DB,
-            4,
+            5,
             true,
             MessengerDatabase.MIGRATION_1_2,
             MessengerDatabase.MIGRATION_2_3,
             MessengerDatabase.MIGRATION_3_4,
+            MessengerDatabase.MIGRATION_4_5,
         ).close()
+    }
+
+    @Test
+    fun populatedVersion2HistoryAndCursorSurviveUnscopedMigration() {
+        helper.createDatabase(TEST_DB, 2).apply {
+            execSQL(
+                "INSERT INTO messages (messageId, chatId, orderToken, senderSignPub, kind, body, " +
+                    "replyTo, targetId, reactionIndex, sendTimestampMillis, receivedAtMillis, sendStatus) " +
+                    "VALUES ('legacy-v2', 'same-dm', '0002', 'sender', 1, 'history', NULL, NULL, NULL, 2, 3, 'SENT')",
+            )
+            execSQL("INSERT INTO sync_cursors (chatId, orderToken) VALUES ('same-dm', '0002')")
+            close()
+        }
+        helper.runMigrationsAndValidate(
+            TEST_DB,
+            5,
+            true,
+            MessengerDatabase.MIGRATION_2_3,
+            MessengerDatabase.MIGRATION_3_4,
+            MessengerDatabase.MIGRATION_4_5,
+        ).use { migrated ->
+            migrated.query("SELECT communityId, body FROM messages WHERE messageId = 'legacy-v2'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(MessengerDatabase.LEGACY_UNSCOPED_COMMUNITY_ID, row.getString(0))
+                assertEquals("history", row.getString(1))
+            }
+            migrated.query("SELECT communityId, orderToken FROM sync_cursors WHERE chatId = 'same-dm'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(MessengerDatabase.LEGACY_UNSCOPED_COMMUNITY_ID, row.getString(0))
+                assertEquals("0002", row.getString(1))
+            }
+        }
+    }
+
+    @Test
+    fun populatedVersion3OwnerlessOutboxPayloadIsPreservedButFailClosed() {
+        val payload = byteArrayOf(7, 8, 9)
+        helper.createDatabase(TEST_DB, 3).apply {
+            execSQL(
+                "INSERT INTO messages (messageId, chatId, orderToken, senderSignPub, kind, body, " +
+                    "replyTo, targetId, reactionIndex, sendTimestampMillis, receivedAtMillis, sendStatus, " +
+                    "outboxEnvelope, outboxRecipients) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)",
+                arrayOf<Any>("legacy-v3", "same-dm", "0003", "sender", 1, "old send", 3L, 4L, "SENDING", payload, "peer"),
+            )
+            execSQL("INSERT INTO sync_cursors (chatId, orderToken) VALUES ('same-dm', '0003')")
+            close()
+        }
+        helper.runMigrationsAndValidate(
+            TEST_DB,
+            5,
+            true,
+            MessengerDatabase.MIGRATION_3_4,
+            MessengerDatabase.MIGRATION_4_5,
+        ).use { migrated ->
+            migrated.query(
+                "SELECT communityId, sendStatus, outboxEnvelope, outboxCommunityId FROM messages WHERE messageId = 'legacy-v3'",
+            ).use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(MessengerDatabase.LEGACY_UNSCOPED_COMMUNITY_ID, row.getString(0))
+                assertEquals("FAILED", row.getString(1))
+                assertEquals(payload.toList(), row.getBlob(2).toList())
+                assertEquals(true, row.isNull(3))
+            }
+            migrated.query(
+                "SELECT COUNT(*) FROM messages WHERE communityId = 'community-a' AND outboxEnvelope IS NOT NULL",
+            ).use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(0, row.getInt(0))
+            }
+        }
+    }
+
+    @Test
+    fun populatedVersion4OwnedOutboxRetainsItsCommunityNamespace() {
+        val payload = byteArrayOf(4, 5, 6)
+        helper.createDatabase(TEST_DB, 4).apply {
+            execSQL(
+                "INSERT INTO messages (messageId, chatId, orderToken, senderSignPub, kind, body, " +
+                    "replyTo, targetId, reactionIndex, sendTimestampMillis, receivedAtMillis, sendStatus, " +
+                    "outboxEnvelope, outboxRecipients, outboxCommunityId) " +
+                    "VALUES ('owned-v4', 'same-dm', '0004', 'sender', 1, 'retry', NULL, NULL, NULL, 4, 5, " +
+                    "'FAILED', ?, 'peer', 'community-a')",
+                arrayOf(payload),
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 5, true, MessengerDatabase.MIGRATION_4_5).use { migrated ->
+            migrated.query(
+                "SELECT communityId, outboxCommunityId, outboxEnvelope FROM messages WHERE messageId = 'owned-v4'",
+            ).use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals("community-a", row.getString(0))
+                assertEquals("community-a", row.getString(1))
+                assertEquals(payload.toList(), row.getBlob(2).toList())
+            }
+        }
     }
 
     /** Open the real Room database (SQLCipher-encrypted) and round-trip a write/read on-device. */

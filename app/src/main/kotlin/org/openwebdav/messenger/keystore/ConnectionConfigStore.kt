@@ -42,6 +42,17 @@ internal class ConnectionConfigStore(
         }
     }
 
+    /** Replace only the connection credentials, retaining the persisted community anchor. */
+    fun saveRotatedConfig(
+        config: ConnectionConfig,
+        communityId: String,
+    ): Boolean {
+        val stored = loadStored(communityId) ?: return false
+        val rotated = rotatedConnection(stored, config)
+        save(rotated.config, rotated.chatId, rotated.communityName, communityId)
+        return true
+    }
+
     /** Load the stored config for [communityId], or `null`. */
     fun loadStored(communityId: String): StoredConnection? =
         when (val result = wrapper(communityId).unwrap()) {
@@ -90,6 +101,11 @@ internal class ConnectionConfigStore(
         private const val WRAP_KEY_ALIAS = "owdm.connconfig.wrap.v1"
         private const val CONFIG_DIR = "connconfig"
         private const val CONFIG_FILE = "config.bin"
+
+        internal fun rotatedConnection(
+            stored: StoredConnection,
+            config: ConnectionConfig,
+        ): StoredConnection = stored.copy(config = config)
 
         /** A version byte at the head of the blob so a future field change is reject-don't-guess. */
         private const val BLOB_VERSION = 1

@@ -17,6 +17,8 @@ import org.openwebdav.messenger.chatdirectory.ChatKind
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
+import org.openwebdav.messenger.data.MessageStore
+import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.CredentialRotation
 import org.openwebdav.messenger.directory.DirectoryEntry
 import org.openwebdav.messenger.directory.DirectoryFactory
@@ -251,14 +253,17 @@ internal object AppContainer {
                 // best-effort roster — start with just self
             }
         }
-        if (!runtimeSelectionGuard.isCurrent(selectionRevision) ||
-            currentCommunityId != communityId ||
-            EngineWiring.current()?.scopeKey != graph.scopeKey
-        ) {
-            return false
-        }
-        EngineWiring.switchToChat(chatId, chatName, chatKey, roster, memberNames)
-        return true
+        return EngineWiring.switchToChatIfCurrent(
+            guard = runtimeSelectionGuard,
+            expectedSelectionRevision = selectionRevision,
+            expectedGraph = graph,
+            chatId = chatId,
+            chatName = chatName,
+            chatKey = chatKey,
+            roster = roster,
+            memberNames = memberNames,
+            isCommunitySelected = { currentCommunityId == communityId },
+        )
     }
 
     /** All chats registered under [communityId]. */
@@ -339,8 +344,22 @@ internal object AppContainer {
     /** All joined communities from the registry. */
     fun communities(): List<CommunityRegistry.Entry> = communityRegistry.all()
 
-    /** Observable count of unread messages for a chat. Falls back to 0 if no engine is active. */
-    fun observeUnreadCount(chatId: String): Flow<Int> = runtimeGraph()?.store?.observeUnreadCount(chatId) ?: flowOf(0)
+    /** Observable unread count for a community/chat pair, including chats outside the active graph. */
+    fun observeUnreadCount(
+        communityId: String,
+        chatId: String,
+    ): Flow<Int> {
+        val graph = runtimeGraph()
+        val store =
+            if (graph?.communityId == communityId) {
+                graph.store
+            } else {
+                val context = appContext ?: return flowOf(0)
+                val db = MessengerDatabase.get(context)
+                MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
+            }
+        return store.observeUnreadCount(chatId)
+    }
 
     /** Switch the active community to [communityId] — rebuilds the engine for that community. */
     fun switchToCommunity(communityId: String): Boolean {
@@ -387,14 +406,14 @@ internal object AppContainer {
         }
 
         // Register the DM chat in the registry for this community.
-        chatRegistry.add(currentCommunityId, ChatRegistry.Entry(chatId, peer.displayName, "dm"))
+        chatRegistry.add(graph.communityId, ChatRegistry.Entry(chatId, peer.displayName, "dm"))
 
         // DM roster: just the two participants (self + peer). The peer's on-disk identifier
         // is the hex of their Ed25519 signing public key.
         val peerId = Hex.encode(peer.copySigningPublicKey())
 
         // Switch the active send path to the DM chat.
-        switchToChat(chatId, peer.displayName, peerId)
+        if (!switchToChat(graph, chatId, peer.displayName, peerId)) return null
 
         return chatId
     }
@@ -404,16 +423,26 @@ internal object AppContainer {
      * Keystore and builds a new [RuntimeGraph] with the DM roster = [self, peerId].
      */
     private fun switchToChat(
+        expectedGraph: RuntimeGraph,
         chatId: String,
         chatName: String,
         peerId: String,
-    ) {
-        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return
-        val graph = runtimeGraph() ?: return
-        val roster = listOf(graph.senderIdentifier, peerId)
+    ): Boolean {
+        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return false
+        val roster = listOf(expectedGraph.senderIdentifier, peerId)
         val memberNames = mapOf(peerId to chatName)
-        runtimeSelectionGuard.begin()
-        EngineWiring.switchToChat(chatId, chatName, chatKey, roster, memberNames)
+        val revision = runtimeSelectionGuard.begin()
+        return EngineWiring.switchToChatIfCurrent(
+            runtimeSelectionGuard,
+            revision,
+            expectedGraph,
+            chatId,
+            chatName,
+            chatKey,
+            roster,
+            memberNames,
+            isCommunitySelected = { currentCommunityId == expectedGraph.communityId },
+        )
     }
 
     /**
@@ -690,6 +719,7 @@ internal object AppContainer {
             ) {
                 // Use chatId as communityId for this namespace and select it across process restarts.
                 configStore.save(config, chatId, communityName, communityId = chatId)
+                runtimeSelectionGuard.begin()
                 currentCommunityId = chatId
                 activeCommunityStore.select(chatId)
                 communityRegistry.add(CommunityRegistry.Entry(chatId, communityName, chatId))

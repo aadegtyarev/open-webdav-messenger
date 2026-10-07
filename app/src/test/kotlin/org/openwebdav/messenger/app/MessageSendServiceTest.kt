@@ -1,7 +1,11 @@
 package org.openwebdav.messenger.app
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.Dispatcher
@@ -31,6 +35,8 @@ import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.protocol.MessageId
 import org.openwebdav.messenger.sync.ChatSubscription
 import org.openwebdav.messenger.sync.FakeDisk
+import org.openwebdav.messenger.sync.OutgoingOutbox
+import org.openwebdav.messenger.sync.SendOutcome
 import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.transport.WebDavTransport
@@ -73,7 +79,7 @@ class MessageSendServiceTest {
 
     private fun transport(): WebDavTransport = SyncTestSupport.transport(server)
 
-    private fun store(): MessageStore = SyncTestSupport.store(db)
+    private fun store(communityId: String = "default"): MessageStore = SyncTestSupport.store(db, communityId)
 
     private fun graph(
         store: MessageStore,
@@ -156,7 +162,7 @@ class MessageSendServiceTest {
     @Test
     fun outgoing_claim_is_exclusive_and_late_failure_cannot_downgrade_read_success() =
         runTest {
-            val store = store()
+            val store = store("community-a")
             val graph = graph(store, communityId = "community-a")
             disk.failPutUnderPrefix[ChatPaths.LOG] = 503
             val sent = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L }).send("claim me")
@@ -176,7 +182,7 @@ class MessageSendServiceTest {
     @Test
     fun manual_retry_and_worker_cycle_cannot_deliver_one_message_concurrently() =
         runTest {
-            val store = store()
+            val store = store("community-a")
             val graph = graph(store, communityId = "community-a")
             val service = MessageSendService(graph, ioDispatcher = Dispatchers.IO, clock = { 1_717_000_000_000L })
             disk.failPutUnderPrefix[ChatPaths.LOG] = 503
@@ -223,27 +229,83 @@ class MessageSendServiceTest {
                     start()
                 }
             try {
-                val store = store()
-                val graphA = graph(store, server, "community-a")
-                val graphB = graph(store, serverB, "community-b")
+                val storeA = store("community-a")
+                val storeB = store("community-b")
+                val graphA = graph(storeA, server, "community-a")
+                val graphB = graph(storeB, serverB, "community-b")
                 val serviceA = MessageSendService(graphA, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
                 val serviceB = MessageSendService(graphB, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
                 disk.failPutUnderPrefix[ChatPaths.LOG] = 503
 
                 val send = serviceA.send("private to A")
-                val original = store.messagesForChat(chatId).single()
+                val original = storeA.messagesForChat(chatId).single()
                 assertEquals("community-a", original.outboxCommunityId)
                 assertFalse(serviceB.retry(send.messageId))
                 graphB.engine.pollCycle(graphB.senderIdentifier, listOf(ChatSubscription(chatId)), "community-b")
 
-                assertTrue(diskB.fileNames(ChatPaths.LOG).isEmpty())
-                assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+                assertTrue(diskB.fileNames(ChatPaths.logDir(chatId)).isEmpty())
+                assertEquals(MessageEntity.STATUS_FAILED, storeA.messagesForChat(chatId).single().sendStatus)
                 disk.failPutUnderPrefix.clear()
                 assertTrue(serviceA.retry(send.messageId))
-                assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+                assertEquals(MessageEntity.STATUS_SENT, storeA.messagesForChat(chatId).single().sendStatus)
             } finally {
                 serverB.shutdown()
             }
+        }
+
+    @Test
+    fun cancelling_initial_send_after_durable_insert_releases_it_for_same_process_retry() =
+        runTest {
+            val store = store("community-a")
+            val graph = graph(store, communityId = "community-a")
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined)
+            val persisted = CompletableDeferred<Unit>()
+            val sending =
+                launch {
+                    service.send("cancel after insert") {
+                        persisted.complete(Unit)
+                        awaitCancellation()
+                    }
+                }
+            persisted.await()
+            val messageId = store.messagesForChat(chatId).single().messageId
+
+            sending.cancelAndJoin()
+
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+            assertTrue(service.retry(messageId))
+            assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+        }
+
+    @Test
+    fun cancelling_claimed_outbox_attempt_releases_it_for_retry_without_reinitializing() =
+        runTest {
+            val store = store("community-a")
+            val message = SyncTestSupport.text(identity, "stored retry")
+            store.persist(
+                "cancel-retry-id",
+                "0005",
+                message,
+                1L,
+                sendStatus = MessageEntity.STATUS_FAILED,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "community-a",
+            )
+            val started = CompletableDeferred<Unit>()
+            val cancelledAttempt =
+                OutgoingOutbox(store) { _, _ ->
+                    started.complete(Unit)
+                    awaitCancellation()
+                }
+            val retry = launch { cancelledAttempt.retry("cancel-retry-id", "community-a", "self") }
+            started.await()
+            retry.cancelAndJoin()
+
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+            val sameProcessRetry = OutgoingOutbox(store) { _, _ -> SendOutcome(true, 1, 0) }
+            assertTrue(sameProcessRetry.retry("cancel-retry-id", "community-a", "self"))
+            assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
         }
 
     @Test
