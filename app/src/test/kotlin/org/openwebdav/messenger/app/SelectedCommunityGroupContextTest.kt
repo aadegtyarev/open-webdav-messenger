@@ -5,15 +5,12 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.data.MessageStore
-import org.openwebdav.messenger.data.MessengerDatabase
-import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.Hex
@@ -28,21 +25,14 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE)
 class SelectedCommunityGroupContextTest {
-    private lateinit var server: MockWebServer
-    private lateinit var db: MessengerDatabase
-    private lateinit var identity: Identity
+    private val server =
+        MockWebServer().apply {
+            dispatcher = FakeDisk()
+            start()
+        }
+    private val db = SyncTestSupport.inMemoryDb()
+    private val identity = AppTestSupport.newIdentity()
     private val chatKey: ChatKey = SyncTestSupport.fixedChatKey()
-
-    @Before
-    fun setUp() {
-        server =
-            MockWebServer().apply {
-                dispatcher = FakeDisk()
-                start()
-            }
-        db = SyncTestSupport.inMemoryDb()
-        identity = AppTestSupport.newIdentity()
-    }
 
     @After
     fun tearDown() {
