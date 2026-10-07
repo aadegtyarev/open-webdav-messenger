@@ -143,11 +143,14 @@ internal fun UnifiedChatListScreen(
                         chat = chat,
                         onClick = {
                             scope.launch(Dispatchers.IO) {
-                                AppContainer.switchToCommunity(chat.communityId)
-                                if (chat.kind != "general") {
-                                    AppContainer.openGroupChat(chat.chatId, chat.name)
-                                }
-                                withContext(Dispatchers.Main) { onOpenFeed() }
+                                val communityReady = AppContainer.switchToCommunity(chat.communityId)
+                                val chatReady =
+                                    communityReady &&
+                                        (
+                                            chat.kind == "general" ||
+                                                AppContainer.openGroupChat(chat.chatId, chat.name, chat.communityId)
+                                        )
+                                if (chatReady) withContext(Dispatchers.Main) { onOpenFeed() }
                             }
                         },
                     )
@@ -192,7 +195,7 @@ private fun ChatRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        UnreadBadge(chat.chatId)
+        UnreadBadge(chat.communityId, chat.chatId)
     }
 }
 
@@ -201,8 +204,11 @@ private fun ChatRow(
  * Lives here to keep the badge co-located with the list that uses it.
  */
 @Composable
-internal fun UnreadBadge(chatId: String) {
-    val count by AppContainer.observeUnreadCount(chatId).collectAsStateWithLifecycle(0)
+internal fun UnreadBadge(
+    communityId: String,
+    chatId: String,
+) {
+    val count by AppContainer.observeUnreadCount(communityId, chatId).collectAsStateWithLifecycle(0)
     if (count > 0) {
         Badge { Text(count.toString()) }
     }

@@ -42,6 +42,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +59,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.ui.FeedViewModelFactory
+import org.openwebdav.messenger.ui.runtimeScopeKey
 
 /**
  * The chat feed + composer (`ui-chat-surface` Scenarios 5–6; ui-guide: feed is a vertical, conversation-
@@ -69,7 +72,11 @@ import org.openwebdav.messenger.ui.FeedViewModelFactory
 internal fun ChatFeedScreen(
     onShowInvite: () -> Unit,
     onBack: () -> Unit = {},
-    viewModel: ChatFeedViewModel = viewModel(factory = FeedViewModelFactory),
+    viewModel: ChatFeedViewModel =
+        viewModel(
+            key = runtimeScopeKey("feed"),
+            factory = FeedViewModelFactory,
+        ),
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
@@ -124,19 +131,37 @@ internal fun ChatFeedScreen(
         }
     }
 
+    // Keep the last observed viewport state separate from the changing dataset. After an append,
+    // layoutInfo may already describe the new list, so reading isAtBottom() in that effect is too late.
+    val latestItemCount by rememberUpdatedState(itemsWithDivider.size)
+    LaunchedEffect(listState) {
+        val policy = FeedAppendPolicy(latestItemCount)
+        var hasViewportSample = false
+        snapshotFlow { latestItemCount to listState.isAtBottom() }
+            .collect { (itemCount, isNearBottom) ->
+                if (hasViewportSample && itemCount != policy.itemCount) {
+                    if (didInitialScroll.value && policy.onDatasetChanged(itemCount)) {
+                        listState.animateScrollToItem(itemCount - 1)
+                    } else if (!didInitialScroll.value) {
+                        policy.onDatasetChanged(itemCount)
+                    }
+                }
+                policy.onViewportChanged(isNearBottom)
+                hasViewportSample = true
+            }
+    }
+
     // Progressive markRead: mark the highest visible message as READ after the
     // user has viewed it for ~2.5s. Uses collectLatest so a scroll resets the timer —
     // only messages the user has actually looked at get marked read.
+    val latestItemsWithDivider by rememberUpdatedState(itemsWithDivider)
     LaunchedEffect(listState) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
             .filter { it != null }
             .collectLatest {
                 delay(MARK_READ_DELAY_MS)
-                val visibleRows =
-                    listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
-                        itemsWithDivider.getOrNull(info.index) as? ChatFeedViewModel.FeedRow
-                    }
-                val maxOrderToken = visibleRows.maxByOrNull { it.orderToken }?.orderToken ?: return@collectLatest
+                val visibleIndices = listState.layoutInfo.visibleItemsInfo.map { it.index }
+                val maxOrderToken = latestVisibleOrderToken(latestItemsWithDivider, visibleIndices) ?: return@collectLatest
                 viewModel.markRead(maxOrderToken)
             }
     }
@@ -206,7 +231,7 @@ internal fun ChatFeedScreen(
                     when (item) {
                         is DividerMarker -> NewMessagesDivider()
                         is ChatFeedViewModel.FeedRow ->
-                            MessageRow(item, onRetry = { viewModel.retryFailed(item.messageId, item.body) })
+                            MessageRow(item, onRetry = { viewModel.retryFailed(item.messageId) })
                     }
                 }
             }

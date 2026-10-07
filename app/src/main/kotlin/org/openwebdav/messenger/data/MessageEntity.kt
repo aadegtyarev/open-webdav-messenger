@@ -2,14 +2,13 @@ package org.openwebdav.messenger.data
 
 import androidx.room.Entity
 import androidx.room.Index
-import androidx.room.PrimaryKey
 
 /**
  * A locally-persisted message row associated with one chat's message history.
  *
- * The primary key is the §2 **message-id** (`order-token "~" content-hash`,
- * `docs/protocol/webdav-layout.md` §2): a content-addressed name is globally unambiguous and is the
- * dedup key, so re-inserting the same message-id is an idempotent no-op (scenario 4 / §9.3 step 3).
+ * The primary key is the local [communityId] plus §2 **message-id** (`order-token "~" content-hash`,
+ * `docs/protocol/webdav-layout.md` §2): wire IDs remain unchanged, while equal IDs from separate local
+ * communities have independent history and dedup (scenario 4 / §9.3 step 3).
  * Ordering is by [orderToken] — the lexicographically-sortable §4 prefix of the id, NOT by
  * [sendTimestampMillis] (which is best-effort display-only, §4).
  *
@@ -17,7 +16,8 @@ import androidx.room.PrimaryKey
  * plaintext history lives at rest in the app-private Room DB (never on the WebDAV disk) — the same
  * device-local persistence tier as the Keystore-wrapped keys (stack-notes Platform filesystem layout).
  *
- * @property messageId §2 file name = this message's only id (§8.6). Primary key / dedup key.
+ * @property communityId local joined-community namespace; never serialized to WebDAV.
+ * @property messageId §2 file name = this message's only wire id (§8.6), deduped within [communityId].
  * @property chatId the chat this message belongs to (§8.4/§8.5 tag 0x01).
  * @property orderToken §4 order-token — the sort key and the cursor coordinate (§9.3).
  * @property senderSignPub the §8.2 sender Ed25519 public key (32 bytes), hex-encoded for storage.
@@ -32,10 +32,12 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "messages",
-    indices = [Index(value = ["chatId", "orderToken"])],
+    primaryKeys = ["communityId", "messageId"],
+    indices = [Index(value = ["communityId", "chatId", "orderToken"])],
 )
 data class MessageEntity(
-    @PrimaryKey val messageId: String,
+    val communityId: String,
+    val messageId: String,
     val chatId: String,
     val orderToken: String,
     val senderSignPub: String,
@@ -47,6 +49,10 @@ data class MessageEntity(
     val sendTimestampMillis: Long?,
     val receivedAtMillis: Long,
     val sendStatus: String = STATUS_SENT,
+    val outboxEnvelope: ByteArray? = null,
+    val outboxRecipients: String? = null,
+    val outboxCommunityId: String? = null,
+    val outboxClaimToken: String? = null,
 ) {
     companion object {
         /** §8.2 kind 0x01 — a text message. */

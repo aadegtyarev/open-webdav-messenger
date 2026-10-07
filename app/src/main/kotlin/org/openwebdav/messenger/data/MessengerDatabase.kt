@@ -12,7 +12,7 @@ import java.io.File
 import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
 
 /**
- * The app-private Room database holding local message history and per-chat sync cursors
+ * The app-private Room database holding community-scoped local message history and community/chat sync cursors
  * (`docs/protocol/webdav-layout.md` §9.3).
  *
  * `exportSchema = true` and the generated JSON is checked into `app/schemas/` so migrations are
@@ -30,7 +30,7 @@ import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
  */
 @Database(
     entities = [MessageEntity::class, SyncCursorEntity::class],
-    version = 2,
+    version = 6,
     exportSchema = true,
 )
 abstract class MessengerDatabase : RoomDatabase() {
@@ -50,6 +50,68 @@ abstract class MessengerDatabase : RoomDatabase() {
                     )
                 }
             }
+
+        val MIGRATION_2_3 =
+            object : Migration(2, 3) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE messages ADD COLUMN outboxEnvelope BLOB")
+                    db.execSQL("ALTER TABLE messages ADD COLUMN outboxRecipients TEXT")
+                }
+            }
+
+        val MIGRATION_3_4 =
+            object : Migration(3, 4) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE messages ADD COLUMN outboxCommunityId TEXT")
+                }
+            }
+
+        /** Existing rows are retained in a hidden, unscoped namespace; ownership is never guessed. */
+        val MIGRATION_4_5 =
+            object : Migration(4, 5) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "CREATE TABLE messages_v5 (communityId TEXT NOT NULL, messageId TEXT NOT NULL, " +
+                            "chatId TEXT NOT NULL, orderToken TEXT NOT NULL, senderSignPub TEXT NOT NULL, " +
+                            "kind INTEGER NOT NULL, body TEXT, replyTo TEXT, targetId TEXT, reactionIndex INTEGER, " +
+                            "sendTimestampMillis INTEGER, receivedAtMillis INTEGER NOT NULL, sendStatus TEXT NOT NULL, " +
+                            "outboxEnvelope BLOB, outboxRecipients TEXT, outboxCommunityId TEXT, " +
+                            "PRIMARY KEY(communityId, messageId))",
+                    )
+                    db.execSQL(
+                        "INSERT INTO messages_v5 SELECT CASE WHEN outboxCommunityId IS NULL THEN " +
+                            "'$LEGACY_UNSCOPED_COMMUNITY_ID' ELSE outboxCommunityId END, messageId, chatId, " +
+                            "orderToken, senderSignPub, kind, body, replyTo, targetId, reactionIndex, " +
+                            "sendTimestampMillis, receivedAtMillis, " +
+                            "CASE WHEN outboxEnvelope IS NOT NULL AND outboxCommunityId IS NULL THEN 'FAILED' ELSE sendStatus END, " +
+                            "outboxEnvelope, outboxRecipients, outboxCommunityId FROM messages",
+                    )
+                    db.execSQL("DROP TABLE messages")
+                    db.execSQL("ALTER TABLE messages_v5 RENAME TO messages")
+                    db.execSQL(
+                        "CREATE INDEX index_messages_communityId_chatId_orderToken " +
+                            "ON messages(communityId, chatId, orderToken)",
+                    )
+                    db.execSQL(
+                        "CREATE TABLE sync_cursors_v5 (communityId TEXT NOT NULL, chatId TEXT NOT NULL, " +
+                            "orderToken TEXT NOT NULL, PRIMARY KEY(communityId, chatId))",
+                    )
+                    db.execSQL(
+                        "INSERT INTO sync_cursors_v5 SELECT '$LEGACY_UNSCOPED_COMMUNITY_ID', chatId, orderToken FROM sync_cursors",
+                    )
+                    db.execSQL("DROP TABLE sync_cursors")
+                    db.execSQL("ALTER TABLE sync_cursors_v5 RENAME TO sync_cursors")
+                }
+            }
+
+        val MIGRATION_5_6 =
+            object : Migration(5, 6) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE messages ADD COLUMN outboxClaimToken TEXT")
+                }
+            }
+
+        const val LEGACY_UNSCOPED_COMMUNITY_ID = "__legacy_unscoped__"
 
         @Volatile
         private var instance: MessengerDatabase? = null
@@ -73,7 +135,7 @@ abstract class MessengerDatabase : RoomDatabase() {
                 val factory = SupportFactory(key)
                 return Room.databaseBuilder(context, MessengerDatabase::class.java, DB_NAME)
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     // No allowMainThreadQueries() — DAOs are suspend/Flow (stack-notes Room).
                     // No fallbackToDestructiveMigration() — a schema bump must ship a Migration so local
                     // history is never silently dropped (stack-notes Room migrations).

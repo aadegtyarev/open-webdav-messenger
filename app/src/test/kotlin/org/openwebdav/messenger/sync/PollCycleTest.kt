@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.sync
 
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -169,7 +170,61 @@ class PollCycleTest {
             val outcome = engine().pollCycle(me, sub)
             assertEquals(0, outcome.newCount)
             assertEquals("", store.cursorFor(SyncTestSupport.CHAT_ID))
-            assertNull(db.syncCursorDao().cursorFor(SyncTestSupport.CHAT_ID))
+            assertNull(db.syncCursorDao().cursorFor("default", SyncTestSupport.CHAT_ID))
+        }
+
+    @Test
+    fun same_dm_id_on_two_roots_has_isolated_incoming_feed_read_state_and_cursor() =
+        runTest {
+            val diskB = FakeDisk()
+            val serverB =
+                MockWebServer().apply {
+                    dispatcher = diskB
+                    start()
+                }
+            val storeA = SyncTestSupport.store(db, "community-a")
+            val storeB = SyncTestSupport.store(db, "community-b")
+            try {
+                val entryA =
+                    SyncTestSupport.sealedLogEntry(
+                        SyncTestSupport.text(sender, "only A"),
+                        key,
+                        sender,
+                        "alice",
+                        ts = 1_717_000_000_000L,
+                        seq = 1,
+                    )
+                val senderB = SyncTestSupport.newIdentity()
+                val entryB =
+                    SyncTestSupport.sealedLogEntry(
+                        SyncTestSupport.text(senderB, "only B"),
+                        key,
+                        senderB,
+                        "alice",
+                        ts = 1_717_000_000_000L,
+                        seq = 2,
+                    )
+                listOf(disk to entryA, diskB to entryB).forEach { (root, entry) ->
+                    root.putFile(ChatPaths.message(chatId, entry.orderToken, entry.bytes), entry.bytes)
+                    val index = ChatPaths.changeIndex(me, chatId)
+                    root.putFile("$index/${SyncTestSupport.changeEntryName(chatId, entry.orderToken)}", byteArrayOf(0))
+                }
+                val engineA = SyncEngine(SyncTestSupport.transport(server), envelope, storeA, { key }, clock = { 42L })
+                val engineB = SyncEngine(SyncTestSupport.transport(serverB), envelope, storeB, { key }, clock = { 42L })
+
+                engineA.pollCycle(me, sub, "community-a")
+                engineB.pollCycle(me, sub, "community-b")
+
+                assertEquals(listOf("only A"), storeA.observeChat(chatId).first().map { it.body })
+                assertEquals(listOf("only B"), storeB.observeChat(chatId).first().map { it.body })
+                storeA.markMessagesReadUpTo(chatId, entryA.orderToken)
+                assertEquals(MessageEntity.STATUS_READ, storeA.messagesForChat(chatId).single().sendStatus)
+                assertEquals(MessageEntity.STATUS_SENT, storeB.messagesForChat(chatId).single().sendStatus)
+                assertEquals(entryA.orderToken, storeA.cursorFor(chatId))
+                assertEquals(entryB.orderToken, storeB.cursorFor(chatId))
+            } finally {
+                serverB.shutdown()
+            }
         }
 
     /** Sanity: a stored cursor row is readable (observable-history smoke). */
@@ -178,6 +233,6 @@ class PollCycleTest {
         runTest {
             publish("x", seq = 1)
             engine().pollCycle(me, sub)
-            assertNotNull(db.syncCursorDao().cursorFor(SyncTestSupport.CHAT_ID))
+            assertNotNull(db.syncCursorDao().cursorFor("default", SyncTestSupport.CHAT_ID))
         }
 }

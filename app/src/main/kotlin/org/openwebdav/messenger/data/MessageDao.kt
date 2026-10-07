@@ -15,9 +15,8 @@ import kotlinx.coroutines.flow.Flow
  * "Room does not allow database access on the main thread"). Unbounded history is exposed as a Paging 3
  * [PagingSource] rather than a whole-chat load (stack-notes Room: page an unbounded message query).
  *
- * Insert dedup is by the §2 message-id primary key: [insertIgnore] uses `OnConflictStrategy.IGNORE`,
- * so re-inserting the same message-id across two poll cycles is an idempotent no-op — exactly one row
- * (`docs/protocol/webdav-layout.md` §9.3 step 3 / plan scenario 4).
+ * Insert dedup is by (local community, §2 message-id): [insertIgnore] uses `OnConflictStrategy.IGNORE`,
+ * so re-inserting an ID within one community is an idempotent no-op without merging other roots.
  */
 @Dao
 interface MessageDao {
@@ -29,40 +28,124 @@ interface MessageDao {
     suspend fun insertIgnore(message: MessageEntity): Long
 
     /** Observable, ordered-by-order-token history for a chat (offline-readable, §6). */
-    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY orderToken ASC")
-    fun observeChat(chatId: String): Flow<List<MessageEntity>>
+    @Query("SELECT * FROM messages WHERE communityId = :communityId AND chatId = :chatId ORDER BY orderToken ASC")
+    fun observeChat(
+        communityId: String,
+        chatId: String,
+    ): Flow<List<MessageEntity>>
 
     /** Paged history for the future UI (Paging 3) — ordered by the §4 order-token, ascending. */
-    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY orderToken ASC")
-    fun pagedChat(chatId: String): PagingSource<Int, MessageEntity>
+    @Query("SELECT * FROM messages WHERE communityId = :communityId AND chatId = :chatId ORDER BY orderToken ASC")
+    fun pagedChat(
+        communityId: String,
+        chatId: String,
+    ): PagingSource<Int, MessageEntity>
 
     /** Whether a row with [messageId] already exists (dedup probe / tests). */
-    @Query("SELECT COUNT(*) FROM messages WHERE messageId = :messageId")
-    suspend fun count(messageId: String): Int
+    @Query("SELECT COUNT(*) FROM messages WHERE communityId = :communityId AND messageId = :messageId")
+    suspend fun count(
+        communityId: String,
+        messageId: String,
+    ): Int
 
     /** All rows for a chat, ordered — for one-shot reads and tests (not the observable path). */
-    @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY orderToken ASC")
-    suspend fun messagesForChat(chatId: String): List<MessageEntity>
+    @Query("SELECT * FROM messages WHERE communityId = :communityId AND chatId = :chatId ORDER BY orderToken ASC")
+    suspend fun messagesForChat(
+        communityId: String,
+        chatId: String,
+    ): List<MessageEntity>
 
-    /** Update the sendStatus of a single message (e.g. SENDING → SENT or FAILED). */
-    @Query("UPDATE messages SET sendStatus = :status WHERE messageId = :messageId")
-    suspend fun updateSendStatus(
-        messageId: String,
-        status: String,
+    @Query(
+        "UPDATE messages SET sendStatus = 'SENT', outboxEnvelope = NULL, outboxRecipients = NULL, outboxClaimToken = NULL " +
+            "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'SENDING' AND outboxClaimToken IS NULL AND outboxEnvelope IS NOT NULL",
     )
+    suspend fun finishOutgoing(
+        messageId: String,
+        communityId: String,
+    ): Int
+
+    @Query(
+        "UPDATE messages SET sendStatus = 'FAILED', outboxClaimToken = NULL " +
+            "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'SENDING' AND outboxClaimToken IS NULL AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun failOutgoing(
+        messageId: String,
+        communityId: String,
+    ): Int
+
+    @Query(
+        "UPDATE messages SET sendStatus = 'SENDING', outboxClaimToken = :claimToken " +
+            "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'FAILED' AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun claimOutgoing(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ): Int
+
+    @Query(
+        "SELECT * FROM messages WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'SENDING' AND outboxClaimToken = :claimToken AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun claimedOutgoing(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ): MessageEntity?
+
+    @Query(
+        "UPDATE messages SET sendStatus = 'SENT', outboxEnvelope = NULL, outboxRecipients = NULL, outboxClaimToken = NULL " +
+            "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'SENDING' AND outboxClaimToken = :claimToken AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun finishOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ): Int
+
+    @Query(
+        "UPDATE messages SET sendStatus = 'FAILED', outboxClaimToken = NULL " +
+            "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'SENDING' AND outboxClaimToken = :claimToken AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun failOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ): Int
+
+    @Query(
+        "UPDATE messages SET sendStatus = 'FAILED', outboxClaimToken = NULL WHERE sendStatus = 'SENDING' " +
+            "AND communityId = :communityId AND outboxEnvelope IS NOT NULL AND outboxCommunityId = :communityId",
+    )
+    suspend fun recoverInterruptedOutgoing(communityId: String): Int
+
+    @Query(
+        "SELECT * FROM messages WHERE sendStatus = 'FAILED' AND communityId = :communityId AND outboxEnvelope IS NOT NULL " +
+            "AND outboxCommunityId = :communityId",
+    )
+    suspend fun pendingOutgoing(communityId: String): List<MessageEntity>
 
     /** Mark all non-SENDING messages up to [orderToken] as READ. */
     @Query(
         "UPDATE messages SET sendStatus = 'READ' " +
-            "WHERE chatId = :chatId AND orderToken <= :orderToken " +
+            "WHERE communityId = :communityId AND chatId = :chatId AND orderToken <= :orderToken " +
             "AND sendStatus = 'SENT'",
     )
     suspend fun markReadUpTo(
+        communityId: String,
         chatId: String,
         orderToken: String,
     )
 
     /** Count unread (SENT status) messages in a chat. Observable. */
-    @Query("SELECT COUNT(*) FROM messages WHERE chatId = :chatId AND sendStatus = 'SENT'")
-    fun observeUnreadCount(chatId: String): Flow<Int>
+    @Query("SELECT COUNT(*) FROM messages WHERE communityId = :communityId AND chatId = :chatId AND sendStatus = 'SENT'")
+    fun observeUnreadCount(
+        communityId: String,
+        chatId: String,
+    ): Flow<Int>
 }

@@ -17,6 +17,8 @@ import org.openwebdav.messenger.chatdirectory.ChatKind
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
+import org.openwebdav.messenger.data.MessageStore
+import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.CredentialRotation
 import org.openwebdav.messenger.directory.DirectoryEntry
 import org.openwebdav.messenger.directory.DirectoryFactory
@@ -25,10 +27,12 @@ import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
+import org.openwebdav.messenger.keystore.ActiveCommunityStore
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
+import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.FastPollManager
@@ -59,11 +63,13 @@ internal object AppContainer {
     private val crypto by lazy { CryptoFactory() }
     private val identityFactory by lazy { IdentityFactory() }
     private val configStore by lazy { ConnectionConfigStore(requireContext()) }
+    private val activeCommunityStore by lazy { ActiveCommunityStore(requireContext()) }
     private val communityRegistry by lazy { CommunityRegistry(requireContext()) }
     private val chatRegistry by lazy { ChatRegistry(requireContext()) }
     private val directoryFactory by lazy { DirectoryFactory() }
     private val chatDirectoryFactory by lazy { ChatDirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
+    private val runtimeSelectionGuard = RuntimeSelectionGuard()
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -92,6 +98,7 @@ internal object AppContainer {
      */
     fun warmStart() {
         if (warmStarted.compareAndSet(false, true)) {
+            currentCommunityId = activeCommunityStore.load(communityRegistry.all().firstOrNull()?.id ?: "default")
             EngineWiring.initialize(
                 AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory),
             )
@@ -122,55 +129,85 @@ internal object AppContainer {
         name: String,
         communityId: String = currentCommunityId,
         access: ChatAccess = ChatAccess.PUBLIC,
+    ): String? =
+        createGroupInSelectedCommunity(
+            communityId = communityId,
+            activeCommunityId = currentCommunityId,
+            activateCommunity = ::switchToCommunity,
+            resolveContext = { selectedId ->
+                selectedCommunityGroupContext(
+                    communityId = selectedId,
+                    activeCommunityId = currentCommunityId,
+                    stored = configStore.loadStored(selectedId),
+                    graph = runtimeGraph(),
+                    selectionRevision = runtimeSelectionGuard.current(),
+                )
+            },
+            create = { context -> createGroupChatForContext(name, access, context) },
+            open = { context, chatId ->
+                openGroupChat(chatId, name, context.communityId, context.selectionRevision)
+            },
+        )
+
+    private suspend fun createGroupChatForContext(
+        name: String,
+        access: ChatAccess,
+        context: SelectedCommunityGroupContext,
     ): String? {
-        val graph = runtimeGraph() ?: return null
-        val stored = configStore.loadStored(communityId) ?: return null
+        val communityId = context.communityId
+        val stored = context.stored
+        val graph = context.graph
         val keySources = crypto.keySources()
-        // Public chats use the community key; private chats get a fresh random key.
         val chatKey =
             if (access == ChatAccess.PUBLIC) {
                 crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
             } else {
                 keySources.newRandomKey()
             }
-        // Domain-separate group chat ids — mix communityId + chat name + random nonce for uniqueness.
-        // Public chats share the community key, so a per-chat uniqueness source is needed.
+        // Public chats share a key, so mix a nonce and community identity into the group ID.
         val nonce = keySources.newRandomKey().copyBytes().take(8).toByteArray()
-        val ctx = "owdm/group-chat/v1".toByteArray(Charsets.UTF_8)
-        val input = ctx + byteArrayOf(0x1F) + nonce + communityId.toByteArray(Charsets.UTF_8) + name.toByteArray(Charsets.UTF_8)
-        val hash = crypto.nativeCrypto().genericHash(input, 16)
+        val hash =
+            crypto.nativeCrypto().genericHash(
+                "owdm/group-chat/v1".toByteArray(Charsets.UTF_8) +
+                    byteArrayOf(0x1F) + nonce + communityId.toByteArray(Charsets.UTF_8) + name.toByteArray(Charsets.UTF_8),
+                16,
+            )
         val chatId = Hex.encode(hash)
         crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
         chatRegistry.add(communityId, ChatRegistry.Entry(chatId, name, "group"))
-
-        // Publish public chats to the on-disk chat-directory so other members discover them.
-        if (access == ChatAccess.PUBLIC) {
-            try {
-                val service =
-                    chatDirectoryFactory.chatDirectoryService(
-                        baseUrl = stored.config.baseUrl,
-                        username = stored.config.username,
-                        appPassword = stored.config.appPassword,
-                        communityRoot = stored.config.chatRoot,
-                    )
-                val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
-                service.publishChatEntry(
-                    identity = graph.identity,
-                    // raw hash bytes, not the hex string
-                    chatId = hash,
-                    kind = ChatKind.GROUP,
-                    access = ChatAccess.PUBLIC,
-                    title = name,
-                    versionCounter = 1,
-                    communityKey = communityKey,
-                )
-            } catch (_: Exception) {
-                // best-effort — the chat is already local; directory publish is optional
-            }
-        }
-
-        openGroupChat(chatId, name)
+        if (access == ChatAccess.PUBLIC && !publishPublicGroup(stored, graph, hash, name)) return null
         return chatId
+    }
+
+    private suspend fun publishPublicGroup(
+        stored: StoredConnection,
+        graph: RuntimeGraph,
+        rawChatId: ByteArray,
+        title: String,
+    ): Boolean {
+        try {
+            val service =
+                chatDirectoryFactory.chatDirectoryService(
+                    baseUrl = stored.config.baseUrl,
+                    username = stored.config.username,
+                    appPassword = stored.config.appPassword,
+                    communityRoot = stored.config.chatRoot,
+                )
+            val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return false
+            service.publishChatEntry(
+                identity = graph.identity,
+                chatId = rawChatId,
+                kind = ChatKind.GROUP,
+                access = ChatAccess.PUBLIC,
+                title = title,
+                versionCounter = 1,
+                communityKey = communityKey,
+            )
+            return true
+        } catch (_: Exception) {
+            // Directory publish is best-effort; the locally registered chat remains available.
+            return true
+        }
     }
 
     /**
@@ -180,13 +217,18 @@ internal object AppContainer {
     suspend fun openGroupChat(
         chatId: String,
         chatName: String,
-    ) {
-        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return
-        val graph = runtimeGraph() ?: return
+        communityId: String = currentCommunityId,
+        expectedSelectionRevision: Long? = null,
+    ): Boolean {
+        if (expectedSelectionRevision != null && !runtimeSelectionGuard.isCurrent(expectedSelectionRevision)) return false
+        if (currentCommunityId != communityId && !switchToCommunity(communityId)) return false
+        val selectionRevision = runtimeSelectionGuard.begin()
+        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return false
+        val graph = runtimeGraph()?.takeIf { it.communityId == communityId } ?: return false
         // Roster: self + all community members from the directory.
         val roster = mutableListOf(graph.senderIdentifier)
         val memberNames = mutableMapOf<String, String>()
-        val stored = configStore.loadStored(currentCommunityId)
+        val stored = configStore.loadStored(communityId)
         if (stored != null) {
             try {
                 val chatKeyForDir = crypto.chatKeyStore(requireContext()).load(stored.chatId)
@@ -211,7 +253,17 @@ internal object AppContainer {
                 // best-effort roster — start with just self
             }
         }
-        EngineWiring.switchToChat(chatId, chatName, chatKey, roster, memberNames)
+        return EngineWiring.switchToChatIfCurrent(
+            guard = runtimeSelectionGuard,
+            expectedSelectionRevision = selectionRevision,
+            expectedGraph = graph,
+            chatId = chatId,
+            chatName = chatName,
+            chatKey = chatKey,
+            roster = roster,
+            memberNames = memberNames,
+            isCommunitySelected = { currentCommunityId == communityId },
+        )
     }
 
     /** All chats registered under [communityId]. */
@@ -292,16 +344,32 @@ internal object AppContainer {
     /** All joined communities from the registry. */
     fun communities(): List<CommunityRegistry.Entry> = communityRegistry.all()
 
-    /** Observable count of unread messages for a chat. Falls back to 0 if no engine is active. */
-    fun observeUnreadCount(chatId: String): Flow<Int> = runtimeGraph()?.store?.observeUnreadCount(chatId) ?: flowOf(0)
+    /** Observable unread count for a community/chat pair, including chats outside the active graph. */
+    fun observeUnreadCount(
+        communityId: String,
+        chatId: String,
+    ): Flow<Int> {
+        val graph = runtimeGraph()
+        val store =
+            if (graph?.communityId == communityId) {
+                graph.store
+            } else {
+                val context = appContext ?: return flowOf(0)
+                val db = MessengerDatabase.get(context)
+                MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
+            }
+        return store.observeUnreadCount(chatId)
+    }
 
     /** Switch the active community to [communityId] — rebuilds the engine for that community. */
-    fun switchToCommunity(communityId: String) {
-        val stored = configStore.loadStored(communityId) ?: return
+    fun switchToCommunity(communityId: String): Boolean {
+        val stored = configStore.loadStored(communityId) ?: return false
         val chatKeyStore = crypto.chatKeyStore(requireContext())
-        val chatKey = chatKeyStore.load(stored.chatId) ?: return
+        val chatKey = chatKeyStore.load(stored.chatId) ?: return false
         val identity = runBlocking { identityFactory.identityStore(requireContext()).loadOrCreate() }
+        runtimeSelectionGuard.begin()
         currentCommunityId = communityId
+        activeCommunityStore.select(communityId)
         EngineWiring.reconfigure(
             config = stored.config,
             chatId = stored.chatId,
@@ -311,6 +379,7 @@ internal object AppContainer {
             communityId = communityId,
         )
         refreshMemberNames()
+        return true
     }
 
     /**
@@ -337,14 +406,14 @@ internal object AppContainer {
         }
 
         // Register the DM chat in the registry for this community.
-        chatRegistry.add(currentCommunityId, ChatRegistry.Entry(chatId, peer.displayName, "dm"))
+        chatRegistry.add(graph.communityId, ChatRegistry.Entry(chatId, peer.displayName, "dm"))
 
         // DM roster: just the two participants (self + peer). The peer's on-disk identifier
         // is the hex of their Ed25519 signing public key.
         val peerId = Hex.encode(peer.copySigningPublicKey())
 
         // Switch the active send path to the DM chat.
-        switchToChat(chatId, peer.displayName, peerId)
+        if (!switchToChat(graph, chatId, peer.displayName, peerId)) return null
 
         return chatId
     }
@@ -354,15 +423,26 @@ internal object AppContainer {
      * Keystore and builds a new [RuntimeGraph] with the DM roster = [self, peerId].
      */
     private fun switchToChat(
+        expectedGraph: RuntimeGraph,
         chatId: String,
         chatName: String,
         peerId: String,
-    ) {
-        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return
-        val graph = runtimeGraph() ?: return
-        val roster = listOf(graph.senderIdentifier, peerId)
+    ): Boolean {
+        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return false
+        val roster = listOf(expectedGraph.senderIdentifier, peerId)
         val memberNames = mapOf(peerId to chatName)
-        EngineWiring.switchToChat(chatId, chatName, chatKey, roster, memberNames)
+        val revision = runtimeSelectionGuard.begin()
+        return EngineWiring.switchToChatIfCurrent(
+            runtimeSelectionGuard,
+            revision,
+            expectedGraph,
+            chatId,
+            chatName,
+            chatKey,
+            roster,
+            memberNames,
+            isCommunitySelected = { currentCommunityId == expectedGraph.communityId },
+        )
     }
 
     /**
@@ -637,8 +717,11 @@ internal object AppContainer {
                 chatId: String,
                 communityName: String,
             ) {
-                // Use chatId as communityId for simplicity — one community = one chat.
+                // Use chatId as communityId for this namespace and select it across process restarts.
                 configStore.save(config, chatId, communityName, communityId = chatId)
+                runtimeSelectionGuard.begin()
+                currentCommunityId = chatId
+                activeCommunityStore.select(chatId)
                 communityRegistry.add(CommunityRegistry.Entry(chatId, communityName, chatId))
                 // Auto-create the "General" chat for the new community.
                 chatRegistry.add(chatId, ChatRegistry.Entry(chatId, "General", "general"))

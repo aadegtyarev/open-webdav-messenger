@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
@@ -30,7 +31,7 @@ import org.openwebdav.messenger.transport.TransportFactory
  */
 internal class ChatFeedViewModel(
     private val graph: RuntimeGraph,
-    private val sendService: MessageSendService = MessageSendService(graph),
+    private val sendService: ChatMessageSender = MessageSendService(graph),
 ) : ViewModel() {
     val communityName: String = graph.communityName
 
@@ -78,6 +79,8 @@ internal class ChatFeedViewModel(
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     private val _draft = MutableStateFlow("")
+    private var draftRevision = 0L
+    private val reservedSendRevisions = mutableSetOf<Long>()
     val draft: StateFlow<String> = _draft
 
     private val _sendError = MutableStateFlow<String?>(null)
@@ -86,57 +89,60 @@ internal class ChatFeedViewModel(
     val sendError: StateFlow<String?> = _sendError
 
     fun onDraft(v: String) {
+        draftRevision++
         _draft.value = v
         _sendError.value = null
     }
 
     /**
-     * Send the current draft: clear the field, persist a local echo with SENDING status,
-     * then attempt the disk write. On success, mark the echo SENT. On failure,
-     * mark FAILED — the message stays in chat with an error indicator.
+     * Reserve the current draft revision, persist its retryable local echo, then clear only that unchanged
+     * draft and attempt the disk write. Delivery status is updated by [MessageSendService].
      */
     fun send() {
-        val text = _draft.value.trim()
+        val originalDraft = _draft.value
+        val text = originalDraft.trim()
         if (text.isEmpty()) return
-        _draft.value = ""
+        val sendDraftRevision = draftRevision
+        if (!reservedSendRevisions.add(sendDraftRevision)) return
         _sendError.value = null
         viewModelScope.launch {
-            val result =
-                try {
-                    sendService.send(text)
-                } catch (_: Exception) {
-                    null
+            var clearedRevision: Long? = null
+            try {
+                val result =
+                    sendService.send(text) {
+                        if (draftRevision == sendDraftRevision && _draft.value == originalDraft) {
+                            _draft.value = ""
+                            draftRevision++
+                            clearedRevision = draftRevision
+                        }
+                    }
+                if (!result.complete) {
+                    if (draftRevision == sendDraftRevision || draftRevision == clearedRevision) {
+                        _sendError.value = SEND_FAILED_MESSAGE
+                    }
                 }
-            if (result != null && result.logWritten) {
-                graph.store.markSent(result.messageId)
-            } else {
-                // Mark the echo as FAILED if it was created (it was — we persist before sending).
-                if (result != null) {
-                    graph.store.markFailed(result.messageId)
+            } catch (_: Exception) {
+                if (draftRevision == sendDraftRevision || draftRevision == clearedRevision) {
+                    _sendError.value = SEND_FAILED_MESSAGE
                 }
-                _sendError.value = SEND_FAILED_MESSAGE
+            } finally {
+                reservedSendRevisions.remove(sendDraftRevision)
             }
         }
     }
 
-    /** Retry sending a failed message — re-seal and re-send. */
-    fun retryFailed(
-        messageId: String,
-        body: String,
-    ) {
+    /** Retry the durable original operation; never mint a replacement message ID or envelope. */
+    fun retryFailed(messageId: String) {
+        val retryDraftRevision = draftRevision
         _sendError.value = null
         viewModelScope.launch {
-            val result =
+            val delivered =
                 try {
-                    sendService.send(body)
+                    sendService.retry(messageId)
                 } catch (_: Exception) {
-                    null
+                    false
                 }
-            if (result != null && result.logWritten) {
-                graph.store.markSent(result.messageId)
-            } else {
-                _sendError.value = SEND_FAILED_MESSAGE
-            }
+            if (!delivered && draftRevision == retryDraftRevision) _sendError.value = SEND_FAILED_MESSAGE
         }
     }
 

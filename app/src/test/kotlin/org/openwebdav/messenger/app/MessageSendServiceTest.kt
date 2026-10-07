@@ -1,10 +1,23 @@
 package org.openwebdav.messenger.app
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -12,6 +25,7 @@ import org.junit.runner.RunWith
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
+import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.identity.Identity
@@ -21,11 +35,15 @@ import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.protocol.MessageId
 import org.openwebdav.messenger.sync.ChatSubscription
 import org.openwebdav.messenger.sync.FakeDisk
+import org.openwebdav.messenger.sync.OutgoingOutbox
+import org.openwebdav.messenger.sync.SendOutcome
 import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.transport.WebDavTransport
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * JVM tests for the send path ([MessageSendService]) over the real engine seams + a FakeDisk-backed
@@ -61,13 +79,17 @@ class MessageSendServiceTest {
 
     private fun transport(): WebDavTransport = SyncTestSupport.transport(server)
 
-    private fun store(): MessageStore = SyncTestSupport.store(db)
+    private fun store(communityId: String = "default"): MessageStore = SyncTestSupport.store(db, communityId)
 
-    private fun graph(store: MessageStore): RuntimeGraph {
+    private fun graph(
+        store: MessageStore,
+        webDavServer: MockWebServer = server,
+        communityId: String = "default",
+    ): RuntimeGraph {
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
         val engine =
             SyncEngine(
-                transport = transport(),
+                transport = SyncTestSupport.transport(webDavServer),
                 envelope = envelope,
                 store = store,
                 keyProvider = { requested -> if (requested == chatId) chatKey else null },
@@ -76,12 +98,13 @@ class MessageSendServiceTest {
             engine = engine,
             store = store,
             envelope = envelope,
-            config = SyncTestSupport.config(server),
+            config = SyncTestSupport.config(webDavServer),
             chatId = chatId,
             communityName = "Community",
             chatKey = chatKey,
             identity = identity,
             senderIdentifier = Hex.encode(identity.copySignPublic()),
+            communityId = communityId,
         )
     }
 
@@ -104,6 +127,278 @@ class MessageSendServiceTest {
             assertEquals("hello world", rows.single().body)
             assertEquals(result.messageId, rows.single().messageId)
             // Exactly one shared-log file; NO change-index notes (roster is [self] only).
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+        }
+
+    @Test
+    fun uncertain_put_retry_reuses_original_envelope_and_message_id() =
+        runTest {
+            val store = store()
+            val graph = graph(store)
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
+            disk.failPutAfterStoreUnderPrefix[ChatPaths.LOG] = 503
+
+            val firstAttempt = service.send("retry me")
+            val original = store.messagesForChat(chatId).single()
+            val originalEnvelope = original.outboxEnvelope
+            assertTrue(originalEnvelope != null)
+            assertEquals(MessageEntity.STATUS_FAILED, original.sendStatus)
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+            val originalLogPath = ChatPaths.message(chatId, original.orderToken, originalEnvelope!!)
+            assertArrayEquals(originalEnvelope, disk.fileBytes(originalLogPath))
+
+            disk.failPutAfterStoreUnderPrefix.clear()
+            assertTrue(service.retry(firstAttempt.messageId))
+
+            val retried = store.messagesForChat(chatId)
+            assertEquals(1, retried.size)
+            assertEquals(firstAttempt.messageId, retried.single().messageId)
+            assertEquals(MessageEntity.STATUS_SENT, retried.single().sendStatus)
+            assertEquals(null, retried.single().outboxEnvelope)
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+            assertArrayEquals(originalEnvelope, disk.fileBytes(originalLogPath))
+        }
+
+    @Test
+    fun outgoing_claim_is_exclusive_and_late_failure_cannot_downgrade_read_success() =
+        runTest {
+            val store = store("community-a")
+            val graph = graph(store, communityId = "community-a")
+            disk.failPutUnderPrefix[ChatPaths.LOG] = 503
+            val sent = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L }).send("claim me")
+            val pending = store.messagesForChat(chatId).single()
+
+            assertNotNull(store.claimOutgoing(sent.messageId, "community-a", "claim-a"))
+            assertNull("a second worker/manual attempt must not own this ID", store.claimOutgoing(sent.messageId, "community-a", "claim-b"))
+            store.finishOutgoingClaim(sent.messageId, "community-a", "claim-a")
+            store.markMessagesReadUpTo(chatId, pending.orderToken)
+            store.markFailed(sent.messageId, "community-a")
+
+            val row = store.messagesForChat(chatId).single()
+            assertEquals(MessageEntity.STATUS_READ, row.sendStatus)
+            assertNull(row.outboxEnvelope)
+        }
+
+    @Test
+    fun contender_cleanup_and_late_owner_cleanup_cannot_release_another_claim() =
+        runTest {
+            val store = store("community-a")
+            store.persist(
+                messageId = "owned-claim",
+                orderToken = "0005",
+                message = SyncTestSupport.text(identity, "retry"),
+                receivedAtMillis = 1L,
+                sendStatus = MessageEntity.STATUS_FAILED,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "community-a",
+            )
+
+            assertNotNull(store.claimOutgoing("owned-claim", "community-a", "attempt-a"))
+            assertNull(
+                "B cannot acquire A's active claim",
+                store.claimOutgoing("owned-claim", "community-a", "attempt-b"),
+            )
+            store.failOutgoingClaim("owned-claim", "community-a", "attempt-b") // cancelled during acquisition
+            assertNull(
+                "C remains blocked while A owns the row",
+                store.claimOutgoing("owned-claim", "community-a", "attempt-c"),
+            )
+
+            store.failOutgoingClaim("owned-claim", "community-a", "attempt-a")
+            assertNotNull(store.claimOutgoing("owned-claim", "community-a", "attempt-c"))
+            store.failOutgoingClaim("owned-claim", "community-a", "attempt-a") // late cleanup from A
+            assertEquals(MessageEntity.STATUS_SENDING, store.messagesForChat(chatId).single().sendStatus)
+            store.failOutgoingClaim("owned-claim", "community-a", "attempt-c")
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+        }
+
+    @Test
+    fun late_initial_failure_cannot_release_newer_retry_claim_or_start_parallel_delivery() =
+        runTest {
+            val store = store("community-a")
+            store.persist(
+                messageId = "late-initial-failure",
+                orderToken = "0005",
+                message = SyncTestSupport.text(identity, "retry"),
+                receivedAtMillis = 1L,
+                sendStatus = MessageEntity.STATUS_SENDING,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "community-a",
+            )
+            store.markFailed("late-initial-failure", "community-a")
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+
+            var deliveryAttempts = 0
+            val deliveryStarted = CompletableDeferred<Unit>()
+            val finishDelivery = CompletableDeferred<Unit>()
+            val outbox =
+                OutgoingOutbox(store) { _, _ ->
+                    deliveryAttempts++
+                    deliveryStarted.complete(Unit)
+                    finishDelivery.await()
+                    SendOutcome(true, 1, 0)
+                }
+            val activeRetry = async { outbox.retry("late-initial-failure", "community-a", "self") }
+            deliveryStarted.await()
+
+            store.markFailed("late-initial-failure", "community-a")
+            assertFalse(outbox.retry("late-initial-failure", "community-a", "self"))
+            assertEquals(1, deliveryAttempts)
+            assertEquals(MessageEntity.STATUS_SENDING, store.messagesForChat(chatId).single().sendStatus)
+
+            finishDelivery.complete(Unit)
+            assertTrue(activeRetry.await())
+            assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+        }
+
+    @Test
+    fun manual_retry_and_worker_cycle_cannot_deliver_one_message_concurrently() =
+        runTest {
+            val store = store("community-a")
+            val graph = graph(store, communityId = "community-a")
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.IO, clock = { 1_717_000_000_000L })
+            disk.failPutUnderPrefix[ChatPaths.LOG] = 503
+            val sent = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L }).send("claim once")
+            disk.failPutUnderPrefix.clear()
+
+            val putStarted = CountDownLatch(1)
+            val releasePut = CountDownLatch(1)
+            server.dispatcher =
+                object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "PUT" && request.path.orEmpty().contains("/${ChatPaths.LOG}/")) {
+                            putStarted.countDown()
+                            check(releasePut.await(5, TimeUnit.SECONDS)) { "timed out waiting to release retry PUT" }
+                        }
+                        return disk.dispatch(request)
+                    }
+                }
+            try {
+                val manualRetry = async(Dispatchers.IO) { service.retry(sent.messageId) }
+                assertTrue(withContext(Dispatchers.IO) { putStarted.await(5, TimeUnit.SECONDS) })
+                graph.engine.pollCycle(graph.senderIdentifier, listOf(ChatSubscription(chatId)), "community-a")
+                assertTrue(
+                    "worker must not issue a duplicate while manual retry owns the row",
+                    disk.fileNames(ChatPaths.logDir(chatId)).isEmpty(),
+                )
+                releasePut.countDown()
+
+                assertTrue(manualRetry.await())
+                assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+                assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+            } finally {
+                releasePut.countDown()
+            }
+        }
+
+    @Test
+    fun outbox_retry_is_owned_by_community_when_dm_chat_ids_match() =
+        runTest {
+            val diskB = FakeDisk()
+            val serverB =
+                MockWebServer().apply {
+                    dispatcher = diskB
+                    start()
+                }
+            try {
+                val storeA = store("community-a")
+                val storeB = store("community-b")
+                val graphA = graph(storeA, server, "community-a")
+                val graphB = graph(storeB, serverB, "community-b")
+                val serviceA = MessageSendService(graphA, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
+                val serviceB = MessageSendService(graphB, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
+                disk.failPutUnderPrefix[ChatPaths.LOG] = 503
+
+                val send = serviceA.send("private to A")
+                val original = storeA.messagesForChat(chatId).single()
+                assertEquals("community-a", original.outboxCommunityId)
+                assertFalse(serviceB.retry(send.messageId))
+                graphB.engine.pollCycle(graphB.senderIdentifier, listOf(ChatSubscription(chatId)), "community-b")
+
+                assertTrue(diskB.fileNames(ChatPaths.logDir(chatId)).isEmpty())
+                assertEquals(MessageEntity.STATUS_FAILED, storeA.messagesForChat(chatId).single().sendStatus)
+                disk.failPutUnderPrefix.clear()
+                assertTrue(serviceA.retry(send.messageId))
+                assertEquals(MessageEntity.STATUS_SENT, storeA.messagesForChat(chatId).single().sendStatus)
+            } finally {
+                serverB.shutdown()
+            }
+        }
+
+    @Test
+    fun cancelling_initial_send_after_durable_insert_releases_it_for_same_process_retry() =
+        runTest {
+            val store = store("community-a")
+            val graph = graph(store, communityId = "community-a")
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined)
+            val persisted = CompletableDeferred<Unit>()
+            val sending =
+                launch {
+                    service.send("cancel after insert") {
+                        persisted.complete(Unit)
+                        awaitCancellation()
+                    }
+                }
+            persisted.await()
+            val messageId = store.messagesForChat(chatId).single().messageId
+
+            sending.cancelAndJoin()
+
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+            assertTrue(service.retry(messageId))
+            assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+        }
+
+    @Test
+    fun cancelling_claimed_outbox_attempt_releases_it_for_retry_without_reinitializing() =
+        runTest {
+            val store = store("community-a")
+            val message = SyncTestSupport.text(identity, "stored retry")
+            store.persist(
+                "cancel-retry-id",
+                "0005",
+                message,
+                1L,
+                sendStatus = MessageEntity.STATUS_FAILED,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "community-a",
+            )
+            val started = CompletableDeferred<Unit>()
+            val cancelledAttempt =
+                OutgoingOutbox(store) { _, _ ->
+                    started.complete(Unit)
+                    awaitCancellation()
+                }
+            val retry = launch { cancelledAttempt.retry("cancel-retry-id", "community-a", "self") }
+            started.await()
+            retry.cancelAndJoin()
+
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+            val sameProcessRetry = OutgoingOutbox(store) { _, _ -> SendOutcome(true, 1, 0) }
+            assertTrue(sameProcessRetry.retry("cancel-retry-id", "community-a", "self"))
+            assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+        }
+
+    @Test
+    fun next_sync_automatically_retries_the_original_outbox_operation() =
+        runTest {
+            val store = store()
+            val graph = graph(store)
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
+            disk.failPutAfterStoreUnderPrefix[ChatPaths.LOG] = 503
+            val sent = service.send("automatic retry")
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+
+            disk.failPutAfterStoreUnderPrefix.clear()
+            graph.engine.pollCycle(graph.senderIdentifier, listOf(ChatSubscription(chatId)))
+
+            val rows = store.messagesForChat(chatId)
+            assertEquals(1, rows.size)
+            assertEquals(sent.messageId, rows.single().messageId)
+            assertEquals(MessageEntity.STATUS_SENT, rows.single().sendStatus)
             assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
         }
 

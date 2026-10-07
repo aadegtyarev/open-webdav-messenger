@@ -16,8 +16,11 @@ import androidx.room.Query
 @Dao
 interface SyncCursorDao {
     /** Read the stored cursor for [chatId], or `null` if none has been recorded yet. */
-    @Query("SELECT * FROM sync_cursors WHERE chatId = :chatId")
-    suspend fun cursorFor(chatId: String): SyncCursorEntity?
+    @Query("SELECT * FROM sync_cursors WHERE communityId = :communityId AND chatId = :chatId")
+    suspend fun cursorFor(
+        communityId: String,
+        chatId: String,
+    ): SyncCursorEntity?
 
     /** Upsert the cursor for a chat (advance the high-water mark, §9.3). */
     @Insert(onConflict = OnConflictStrategy.REPLACE)

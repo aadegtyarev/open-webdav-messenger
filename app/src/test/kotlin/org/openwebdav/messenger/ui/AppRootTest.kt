@@ -67,6 +67,7 @@ class AppRootTest {
 
     @After
     fun tearDown() {
+        EngineWiring.initialize(JvmDeps(stored = null))
         server.shutdown()
         db.close()
     }
@@ -84,18 +85,18 @@ class AppRootTest {
     }
 
     /**
-     * With a persisted config, once ready AppRoot routes straight to the Feed — NOT back to the Start fork
-     * (the race regression). The community name in the feed's top bar proves the joined graph drove routing.
+     * With a persisted config, once ready AppRoot loads the runtime but opens the Chats list rather than
+     * forcing a chat feed.
      */
     @Test
-    fun saved_config_routes_to_feed_not_start() {
+    fun saved_config_routes_to_chats_without_opening_a_feed() {
         val stored = StoredConnection(SyncTestSupport.config(server), chatId, "My Community")
         EngineWiring.initialize(JvmDeps(stored = stored))
         composeRule.setContent { AppRoot() }
         composeRule.waitForIdle()
 
-        // The feed opened (its top bar shows the community name); the Start fork is absent.
-        composeRule.onNodeWithText("My Community").assertIsDisplayed()
+        // Runtime was resolved and the neutral Chats list is shown; neither feed nor onboarding is opened.
+        composeRule.onNodeWithText("Chats").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Create a community — I host the disk").assertDoesNotExist()
     }
 
@@ -115,8 +116,9 @@ class AppRootTest {
             communityName: String,
             chatKey: ChatKey,
             identity: Identity,
+            communityId: String,
         ): RuntimeGraph {
-            val store = MessageStore(db.messageDao(), db.syncCursorDao())
+            val store = MessageStore(db.messageDao(), db.syncCursorDao(), communityId)
             val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
             val engine =
                 SyncEngine(
@@ -135,6 +137,7 @@ class AppRootTest {
                 chatKey = chatKey,
                 identity = identity,
                 senderIdentifier = Hex.encode(identity.copySignPublic()),
+                communityId = communityId,
             )
         }
 
@@ -151,8 +154,7 @@ class AppRootTest {
 
         override fun saveRotatedConfig(
             newConfig: ConnectionConfig,
-            chatId: String,
-            communityName: String,
+            communityId: String,
         ): Boolean = false
     }
 }

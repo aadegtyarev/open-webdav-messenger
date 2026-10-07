@@ -27,7 +27,10 @@ internal class FakeDisk(private val chatRoot: String = SyncTestSupport.CHAT_ROOT
     /** Relative paths whose GET should return [code] (e.g. 429) instead of the body. */
     val failGet = HashMap<String, Int>()
 
-    /** Collection-path prefixes whose PUT should return [code] (e.g. 429) — partial-failure injection. */
+    /** Collection-path prefixes whose PUT should fail after persisting bytes (uncertain response injection). */
+    val failPutAfterStoreUnderPrefix = HashMap<String, Int>()
+
+    /** Collection-path prefixes whose PUT should return [code] before storing bytes. */
     val failPutUnderPrefix = HashMap<String, Int>()
 
     /** Record of every PROPFIND `Depth` header seen (for the propfind_uses_depth_1 stack test). */
@@ -46,6 +49,8 @@ internal class FakeDisk(private val chatRoot: String = SyncTestSupport.CHAT_ROOT
             .map { it.substringAfterLast('/') }
 
     fun has(relativePath: String): Boolean = files.containsKey(relativePath)
+
+    fun fileBytes(relativePath: String): ByteArray? = files[relativePath]?.copyOf()
 
     override fun dispatch(request: RecordedRequest): MockResponse {
         val rel = relativePath(request.path ?: "") ?: return MockResponse().setResponseCode(400)
@@ -84,7 +89,8 @@ internal class FakeDisk(private val chatRoot: String = SyncTestSupport.CHAT_ROOT
         }
         files[rel] = bytes
         ensureParents(rel)
-        return MockResponse().setResponseCode(201)
+        val responseCode = failPutAfterStoreUnderPrefix.entries.firstOrNull { rel.startsWith(it.key) }?.value ?: 201
+        return MockResponse().setResponseCode(responseCode)
     }
 
     private fun mkcol(rel: String): MockResponse {

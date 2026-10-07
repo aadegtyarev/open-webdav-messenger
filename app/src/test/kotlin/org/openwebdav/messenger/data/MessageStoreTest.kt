@@ -37,7 +37,7 @@ class MessageStoreTest {
     @Before
     fun setUp() {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), MessengerDatabase::class.java).build()
-        store = MessageStore(db.messageDao(), db.syncCursorDao())
+        store = MessageStore(db.messageDao(), db.syncCursorDao(), "default")
     }
 
     @After
@@ -59,7 +59,7 @@ class MessageStoreTest {
     fun `history is observable via the DAO flow`() =
         runTest {
             store.persist("0001~aaa", "0001", text("hello"), receivedAtMillis = 5L)
-            val emitted = db.messageDao().observeChat("c1").first()
+            val emitted = db.messageDao().observeChat("default", "c1").first()
             assertEquals(listOf("hello"), emitted.map { it.body })
         }
 
@@ -72,6 +72,26 @@ class MessageStoreTest {
             assertTrue(firstInsert)
             assertFalse(secondInsert) // duplicate → no new row
             assertEquals(1, store.messagesForChat("c1").size)
+        }
+
+    @Test
+    fun identical_chat_history_read_state_and_cursor_are_community_scoped() =
+        runTest {
+            val communityA = MessageStore(db.messageDao(), db.syncCursorDao(), "community-a")
+            val communityB = MessageStore(db.messageDao(), db.syncCursorDao(), "community-b")
+            communityA.persist("same-id", "0005", text("A"), receivedAtMillis = 1L)
+            communityB.persist("same-id", "0005", text("B"), receivedAtMillis = 2L)
+
+            assertEquals(listOf("A"), communityA.messagesForChat("c1").map { it.body })
+            assertEquals(listOf("B"), communityB.messagesForChat("c1").map { it.body })
+            communityA.markMessagesReadUpTo("c1", "0005")
+            assertEquals(MessageEntity.STATUS_READ, communityA.messagesForChat("c1").single().sendStatus)
+            assertEquals(MessageEntity.STATUS_SENT, communityB.messagesForChat("c1").single().sendStatus)
+
+            communityA.advanceCursor("c1", "0009")
+            communityB.advanceCursor("c1", "0005")
+            assertEquals("0009", communityA.cursorFor("c1"))
+            assertEquals("0005", communityB.cursorFor("c1"))
         }
 
     /** Cursor advances forward only, never backwards (§9.3). */

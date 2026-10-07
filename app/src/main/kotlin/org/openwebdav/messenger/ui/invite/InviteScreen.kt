@@ -43,6 +43,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import org.openwebdav.messenger.ui.runtimeScopeKey
 
 /**
  * Share screen — two tabs: "Download app" (QR → GitHub Releases) and "Invite" (QR → join token).
@@ -52,7 +53,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 @Composable
 internal fun InviteScreen(
     onBack: () -> Unit,
-    viewModel: InviteViewModel = viewModel(),
+    viewModel: InviteViewModel =
+        viewModel(
+            key = runtimeScopeKey("invite"),
+        ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
