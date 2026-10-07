@@ -78,6 +78,7 @@ internal class ChatFeedViewModel(
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
     private val _draft = MutableStateFlow("")
+    private var draftRevision = 0L
     val draft: StateFlow<String> = _draft
 
     private val _sendError = MutableStateFlow<String?>(null)
@@ -86,6 +87,7 @@ internal class ChatFeedViewModel(
     val sendError: StateFlow<String?> = _sendError
 
     fun onDraft(v: String) {
+        draftRevision++
         _draft.value = v
         _sendError.value = null
     }
@@ -96,22 +98,27 @@ internal class ChatFeedViewModel(
      * mark FAILED — the message stays in chat with an error indicator.
      */
     fun send() {
-        val text = _draft.value.trim()
+        val originalDraft = _draft.value
+        val text = originalDraft.trim()
         if (text.isEmpty()) return
+        val sendDraftRevision = draftRevision
         _sendError.value = null
         viewModelScope.launch {
             val result =
                 try {
                     sendService.send(text) {
-                        if (_draft.value == text) _draft.value = ""
+                        if (draftRevision == sendDraftRevision && _draft.value == originalDraft) {
+                            _draft.value = ""
+                            draftRevision++
+                        }
                     }
                 } catch (_: Exception) {
                     null
                 }
-            if (result != null && result.logWritten) {
+            if (result != null && result.complete) {
                 graph.store.markSent(result.messageId)
             } else {
-                // Mark the echo as FAILED if it was created (it was — we persist before sending).
+                // Keep the durable original envelope available for automatic/manual retry.
                 if (result != null) {
                     graph.store.markFailed(result.messageId)
                 }
@@ -120,22 +127,20 @@ internal class ChatFeedViewModel(
         }
     }
 
-    /** Retry sending a failed message — re-seal and re-send. */
-    fun retryFailed(
-        messageId: String,
-        body: String,
-    ) {
+    /** Retry the durable original operation; never mint a replacement message ID or envelope. */
+    fun retryFailed(messageId: String) {
         _sendError.value = null
         viewModelScope.launch {
-            val result =
+            val delivered =
                 try {
-                    sendService.send(body)
+                    sendService.retry(messageId)
                 } catch (_: Exception) {
-                    null
+                    false
                 }
-            if (result != null && result.logWritten) {
-                graph.store.markSent(result.messageId)
+            if (delivered) {
+                graph.store.markSent(messageId)
             } else {
+                graph.store.markFailed(messageId)
                 _sendError.value = SEND_FAILED_MESSAGE
             }
         }

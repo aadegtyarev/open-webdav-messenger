@@ -57,9 +57,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
-import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.ui.FeedViewModelFactory
+import org.openwebdav.messenger.ui.runtimeScopeKey
 
 /**
  * The chat feed + composer (`ui-chat-surface` Scenarios 5–6; ui-guide: feed is a vertical, conversation-
@@ -74,7 +74,7 @@ internal fun ChatFeedScreen(
     onBack: () -> Unit = {},
     viewModel: ChatFeedViewModel =
         viewModel(
-            key = "feed:${AppContainer.activeCommunityId}:${AppContainer.runtimeGraph()?.chatId}",
+            key = runtimeScopeKey("feed"),
             factory = FeedViewModelFactory,
         ),
 ) {
@@ -135,7 +135,10 @@ internal fun ChatFeedScreen(
     var previousMessageCount by remember { mutableStateOf(itemsWithDivider.size) }
     LaunchedEffect(itemsWithDivider.size) {
         val newCount = itemsWithDivider.size
-        if (didInitialScroll.value && newCount > previousMessageCount && listState.isAtBottom()) {
+        val wasAtBottomBeforeAppend = listState.isAtBottom()
+        if (didInitialScroll.value &&
+            shouldAutoScrollAfterAppend(wasAtBottomBeforeAppend, previousMessageCount, newCount)
+        ) {
             listState.animateScrollToItem(newCount - 1)
         }
         previousMessageCount = newCount
@@ -150,11 +153,8 @@ internal fun ChatFeedScreen(
             .filter { it != null }
             .collectLatest {
                 delay(MARK_READ_DELAY_MS)
-                val visibleRows =
-                    listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
-                        latestItemsWithDivider.getOrNull(info.index) as? ChatFeedViewModel.FeedRow
-                    }
-                val maxOrderToken = visibleRows.maxByOrNull { it.orderToken }?.orderToken ?: return@collectLatest
+                val visibleIndices = listState.layoutInfo.visibleItemsInfo.map { it.index }
+                val maxOrderToken = latestVisibleOrderToken(latestItemsWithDivider, visibleIndices) ?: return@collectLatest
                 viewModel.markRead(maxOrderToken)
             }
     }
@@ -224,7 +224,7 @@ internal fun ChatFeedScreen(
                     when (item) {
                         is DividerMarker -> NewMessagesDivider()
                         is ChatFeedViewModel.FeedRow ->
-                            MessageRow(item, onRetry = { viewModel.retryFailed(item.messageId, item.body) })
+                            MessageRow(item, onRetry = { viewModel.retryFailed(item.messageId) })
                     }
                 }
             }

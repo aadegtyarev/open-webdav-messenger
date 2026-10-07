@@ -30,7 +30,7 @@ import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
  */
 @Database(
     entities = [MessageEntity::class, SyncCursorEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class MessengerDatabase : RoomDatabase() {
@@ -48,6 +48,14 @@ abstract class MessengerDatabase : RoomDatabase() {
                     db.execSQL(
                         "ALTER TABLE messages ADD COLUMN sendStatus TEXT NOT NULL DEFAULT 'SENT'",
                     )
+                }
+            }
+
+        val MIGRATION_2_3 =
+            object : Migration(2, 3) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE messages ADD COLUMN outboxEnvelope BLOB")
+                    db.execSQL("ALTER TABLE messages ADD COLUMN outboxRecipients TEXT")
                 }
             }
 
@@ -73,7 +81,7 @@ abstract class MessengerDatabase : RoomDatabase() {
                 val factory = SupportFactory(key)
                 return Room.databaseBuilder(context, MessengerDatabase::class.java, DB_NAME)
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     // No allowMainThreadQueries() — DAOs are suspend/Flow (stack-notes Room).
                     // No fallbackToDestructiveMigration() — a schema bump must ship a Migration so local
                     // history is never silently dropped (stack-notes Room migrations).

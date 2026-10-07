@@ -29,13 +29,22 @@ class MessageStore(
         message: Message,
         receivedAtMillis: Long,
         sendStatus: String = MessageEntity.STATUS_SENT,
-    ): Boolean = messageDao.insertIgnore(toEntity(messageId, orderToken, message, receivedAtMillis, sendStatus)) != DEDUP_NO_ROW
+        outboxEnvelope: ByteArray? = null,
+        outboxRecipients: List<String> = emptyList(),
+    ): Boolean =
+        messageDao.insertIgnore(
+            toEntity(messageId, orderToken, message, receivedAtMillis, sendStatus, outboxEnvelope, outboxRecipients),
+        ) != DEDUP_NO_ROW
 
-    /** Mark a locally-sent message as successfully written to the disk. */
-    suspend fun markSent(messageId: String) = messageDao.updateSendStatus(messageId, MessageEntity.STATUS_SENT)
+    /** Mark a locally-sent message as fully delivered and discard its retry payload. */
+    suspend fun markSent(messageId: String) = messageDao.finishOutgoing(messageId)
 
-    /** Mark a locally-sent message as failed to reach the disk. */
-    suspend fun markFailed(messageId: String) = messageDao.updateSendStatus(messageId, MessageEntity.STATUS_FAILED)
+    /** Mark a locally-sent message for later retry without discarding its original operation. */
+    suspend fun markFailed(messageId: String) = messageDao.failOutgoing(messageId)
+
+    suspend fun markSending(messageId: String) = messageDao.markOutgoingSending(messageId)
+
+    suspend fun pendingOutgoing(): List<MessageEntity> = messageDao.pendingOutgoing()
 
     /** Mark all messages in [chatId] up to [orderToken] as READ (for received messages viewed by the user). */
     suspend fun markMessagesReadUpTo(
@@ -79,6 +88,8 @@ class MessageStore(
         message: Message,
         receivedAtMillis: Long,
         sendStatus: String,
+        outboxEnvelope: ByteArray?,
+        outboxRecipients: List<String>,
     ): MessageEntity {
         val senderHex = Hex.encode(message.sender.copySignPub())
         return when (message) {
@@ -96,6 +107,8 @@ class MessageStore(
                     sendTimestampMillis = message.sendTimestampMillis,
                     receivedAtMillis = receivedAtMillis,
                     sendStatus = sendStatus,
+                    outboxEnvelope = outboxEnvelope,
+                    outboxRecipients = outboxRecipients.takeIf { it.isNotEmpty() }?.joinToString("\n"),
                 )
             is ReactionMessage ->
                 MessageEntity(

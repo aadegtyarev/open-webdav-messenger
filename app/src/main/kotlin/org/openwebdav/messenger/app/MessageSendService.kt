@@ -53,19 +53,41 @@ internal class MessageSendService(
             val messageId = MessageId.messageId(orderToken, envelopeBytes)
 
             // Local echo FIRST — the message appears in chat instantly with SENDING status.
-            graph.store.persist(messageId, orderToken, message, now, MessageEntity.STATUS_SENDING)
+            graph.store.persist(
+                messageId = messageId,
+                orderToken = orderToken,
+                message = message,
+                receivedAtMillis = now,
+                sendStatus = MessageEntity.STATUS_SENDING,
+                outboxEnvelope = envelopeBytes,
+                outboxRecipients = graph.roster.filter { it != graph.senderIdentifier },
+            )
             onRecoverablyPersisted()
 
             val outcome =
-                graph.engine.send(
-                    graph.chatId,
-                    orderToken,
-                    envelopeBytes,
-                    allMembers = graph.roster,
-                    graph.senderIdentifier,
-                )
+                try {
+                    graph.engine.send(
+                        graph.chatId,
+                        orderToken,
+                        envelopeBytes,
+                        allMembers = graph.roster,
+                        graph.senderIdentifier,
+                    )
+                } catch (_: Exception) {
+                    org.openwebdav.messenger.sync.SendOutcome(false, 0, graph.roster.size)
+                }
 
-            SendResult(messageId = messageId, logWritten = outcome.logWritten)
+            if (outcome.complete) {
+                graph.store.markSent(messageId)
+            } else {
+                graph.store.markFailed(messageId)
+            }
+            SendResult(messageId = messageId, logWritten = outcome.logWritten, complete = outcome.complete)
+        }
+
+    suspend fun retry(messageId: String): Boolean =
+        withContext(ioDispatcher) {
+            graph.engine.retryOutgoing(messageId, graph.senderIdentifier)
         }
 
     /**
@@ -73,5 +95,5 @@ internal class MessageSendService(
      * @property logWritten whether the shared-`log/` write landed; `false` means kept-locally / will-retry
      *   (the echo row is already persisted, so the message is not lost — plan Scenario 6 offline send).
      */
-    data class SendResult(val messageId: String, val logWritten: Boolean)
+    data class SendResult(val messageId: String, val logWritten: Boolean, val complete: Boolean = logWritten)
 }

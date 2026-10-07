@@ -40,6 +40,18 @@ class MessengerDatabaseMigrationTest {
         helper.createDatabase(TEST_DB, 1).close()
     }
 
+    @Test
+    fun migratesVersion1ThroughOutboxSchema() {
+        helper.createDatabase(TEST_DB, 1).close()
+        helper.runMigrationsAndValidate(
+            TEST_DB,
+            3,
+            true,
+            MessengerDatabase.MIGRATION_1_2,
+            MessengerDatabase.MIGRATION_2_3,
+        ).close()
+    }
+
     /** Open the real Room database (SQLCipher-encrypted) and round-trip a write/read on-device. */
     @Test
     fun opensRealDatabaseAndPersists() {

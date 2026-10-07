@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -12,6 +13,7 @@ import org.junit.runner.RunWith
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
+import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.identity.Identity
@@ -104,6 +106,55 @@ class MessageSendServiceTest {
             assertEquals("hello world", rows.single().body)
             assertEquals(result.messageId, rows.single().messageId)
             // Exactly one shared-log file; NO change-index notes (roster is [self] only).
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+        }
+
+    @Test
+    fun uncertain_put_retry_reuses_original_envelope_and_message_id() =
+        runTest {
+            val store = store()
+            val graph = graph(store)
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
+            disk.failPutAfterStoreUnderPrefix[ChatPaths.LOG] = 503
+
+            val firstAttempt = service.send("retry me")
+            val original = store.messagesForChat(chatId).single()
+            val originalEnvelope = original.outboxEnvelope
+            assertTrue(originalEnvelope != null)
+            assertEquals(MessageEntity.STATUS_FAILED, original.sendStatus)
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+            val originalLogPath = ChatPaths.message(chatId, original.orderToken, originalEnvelope!!)
+            assertArrayEquals(originalEnvelope, disk.fileBytes(originalLogPath))
+
+            disk.failPutAfterStoreUnderPrefix.clear()
+            assertTrue(service.retry(firstAttempt.messageId))
+
+            val retried = store.messagesForChat(chatId)
+            assertEquals(1, retried.size)
+            assertEquals(firstAttempt.messageId, retried.single().messageId)
+            assertEquals(MessageEntity.STATUS_SENT, retried.single().sendStatus)
+            assertEquals(null, retried.single().outboxEnvelope)
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+            assertArrayEquals(originalEnvelope, disk.fileBytes(originalLogPath))
+        }
+
+    @Test
+    fun next_sync_automatically_retries_the_original_outbox_operation() =
+        runTest {
+            val store = store()
+            val graph = graph(store)
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
+            disk.failPutAfterStoreUnderPrefix[ChatPaths.LOG] = 503
+            val sent = service.send("automatic retry")
+            assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+
+            disk.failPutAfterStoreUnderPrefix.clear()
+            graph.engine.pollCycle(graph.senderIdentifier, listOf(ChatSubscription(chatId)))
+
+            val rows = store.messagesForChat(chatId)
+            assertEquals(1, rows.size)
+            assertEquals(sent.messageId, rows.single().messageId)
+            assertEquals(MessageEntity.STATUS_SENT, rows.single().sendStatus)
             assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
         }
 

@@ -51,6 +51,18 @@ interface MessageDao {
         status: String,
     )
 
+    @Query("UPDATE messages SET sendStatus = 'SENT', outboxEnvelope = NULL, outboxRecipients = NULL WHERE messageId = :messageId")
+    suspend fun finishOutgoing(messageId: String)
+
+    @Query("UPDATE messages SET sendStatus = 'FAILED' WHERE messageId = :messageId AND sendStatus != 'SENT'")
+    suspend fun failOutgoing(messageId: String)
+
+    @Query("UPDATE messages SET sendStatus = 'SENDING' WHERE messageId = :messageId AND sendStatus != 'SENT'")
+    suspend fun markOutgoingSending(messageId: String)
+
+    @Query("SELECT * FROM messages WHERE sendStatus IN ('SENDING', 'FAILED') AND outboxEnvelope IS NOT NULL")
+    suspend fun pendingOutgoing(): List<MessageEntity>
+
     /** Mark all non-SENDING messages up to [orderToken] as READ. */
     @Query(
         "UPDATE messages SET sendStatus = 'READ' " +

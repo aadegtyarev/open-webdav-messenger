@@ -103,5 +103,11 @@ class ChatFeedViewModelSendFailureTest {
             // The envelope failed before a recoverable Room echo could be stored.
             assertEquals("don't lose me", vm.draft.first())
             assertEquals(ChatFeedViewModel.SEND_FAILED_MESSAGE, vm.sendError.first())
+
+            vm.onDraft("submitted draft")
+            vm.send()
+            vm.onDraft("newer draft")
+            advanceUntilIdle()
+            assertEquals("newer draft", vm.draft.first())
         }
 }
