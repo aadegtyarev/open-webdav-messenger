@@ -145,15 +145,21 @@ internal object EngineWiring {
     private fun reconfigureIfCurrent(
         expectedCommunityRuntimeKey: String,
         config: ConnectionConfig,
-        chatId: String,
-        communityName: String,
-        chatKey: ChatKey,
-        identity: Identity,
         communityId: String,
     ): Boolean =
         synchronized(runtimeInstallLock) {
-            if (graph?.communityRuntimeKey != expectedCommunityRuntimeKey) return@synchronized false
-            reconfigure(config, chatId, communityName, chatKey, identity, communityId)
+            val activeGraph = graph ?: return@synchronized false
+            if (activeGraph.communityRuntimeKey != expectedCommunityRuntimeKey || activeGraph.communityId != communityId) {
+                return@synchronized false
+            }
+            reconfigure(
+                config = config,
+                chatId = activeGraph.chatId,
+                communityName = activeGraph.communityName,
+                chatKey = activeGraph.chatKey,
+                identity = activeGraph.identity,
+                communityId = communityId,
+            )
             true
         }
 
@@ -323,10 +329,6 @@ internal object EngineWiring {
                                     reconfigureIfCurrent(
                                         expectedCommunityRuntimeKey = g.communityRuntimeKey,
                                         config = newConfig,
-                                        chatId = g.chatId,
-                                        communityName = g.communityName,
-                                        chatKey = g.chatKey,
-                                        identity = g.identity,
                                         communityId = selectedCommunityId,
                                     )
                                     // Return immediately — the engine was rebuilt with the new

@@ -212,6 +212,7 @@ class EngineWiringTest {
 
             SyncRunner.current().runOnce()
 
+            assertEquals("opened-group", EngineWiring.current()?.chatId)
             assertEquals(chatId, deps.savedRotatedConnection?.chatId)
             assertEquals("Community anchor", deps.savedRotatedConnection?.communityName)
             EngineWiring.initialize(deps)
