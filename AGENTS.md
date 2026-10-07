@@ -1,6 +1,7 @@
 # Android Open WebDAV Messenger
 
 Project guidance for this Android/Kotlin Open WebDAV messaging client:
+- Conversation language: the user's. Artifacts, files, code, commits, and agent-authored documentation: English.
 - Follow Android/Kotlin conventions; document Android-specific decisions in code comments or `docs/`.
 - Keep changes within the repository root and requested scope.
 - Never commit secrets, credentials, signing keys, API tokens, or `local.properties`; use environment variables or a secure vault.

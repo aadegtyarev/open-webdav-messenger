@@ -11,7 +11,7 @@ Maintained as project reference documentation and read when designing, implement
 
 - Consult relevant entries before planning or implementing work that touches a listed component. If a needed component is missing, research and document its constraints before proceeding.
 - Use the stack constraints when evaluating implementation options.
-- If a requested change conflicts with a documented constraint, pause and resolve the conflict before proceeding; do not silently work around it.
+- If a requested change conflicts with a documented idiom or constraint, that change is **blocking** and must cite the relevant rule in this document.
 - Review changes to integrations against the relevant entries and cite this document when identifying a conflict.
 
 If this document is missing or empty for a component a change touches, document the gap and its relevant constraints before proceeding.
@@ -394,7 +394,7 @@ For each external system the project integrates with — what local artifact car
 
 >
 > The **public identity directory** introduced by the X25519 identity feature is part of this same WebDAV envelope contract: each directory entry carries a member's **public** Ed25519 (and/or X25519) identity key and is **Ed25519-signed** (verify with `crypto_sign_verify_detached`, reject on -1). Only public keys and signatures cross to the disk — identity **secret** keys stay Keystore-wrapped device-local (see *Android Keystore* component). Sealed-box rotation payloads (one `crypto_box_seal` per remaining member's public key) also live on the disk and must be specified in `docs/protocol/webdav-layout.md`. See the *Crypto — Public-key primitives* sub-section.
-> The WebDAV on-disk protocol layout document is the load-bearing contract for interoperability. Transport changes should reference this artifact.
+> The WebDAV on-disk protocol layout document is the load-bearing contract for interoperability. Transport changes and plans must reference `docs/protocol/webdav-layout.md`.
 >
 > The **compression codec is part of this envelope contract**, not a separate external system: the on-disk envelope must record which codec compressed the plaintext (or "none") so the reader can inflate before the recipient cannot. Compress-then-encrypt ordering and the codec identifier belong in `docs/protocol/webdav-layout.md`. See the *Traffic compression* component for the ordering invariant and the CRIME/BREACH and untrusted-decompression gotchas. Markdown rendering adds **no** integration contract — it is local UI over already-received message text.
 > **QR generation / scanning and the CAMERA permission add NO new integration contract.** The invite token is an opaque string carried **out-of-band** (shown/copied/scanned device-to-device, decision 9 follow-on (c)); it is **never** written to the WebDAV disk and there is no server (Architectural constraints). QR is a local UI/codec transport for that string, the scanner is a local camera input, and CAMERA is a device-permission gate — none deliver an artifact to an external system. The invite payload **format** (the `owdm1:` token grammar + what disk-access/key material it carries) is owned by the future invite/onboarding feature, not by these components. See the *QR code generation*, *QR code scanning*, and *Runtime CAMERA permission* components.
