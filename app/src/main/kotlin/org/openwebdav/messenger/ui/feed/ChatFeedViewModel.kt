@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
@@ -30,7 +31,7 @@ import org.openwebdav.messenger.transport.TransportFactory
  */
 internal class ChatFeedViewModel(
     private val graph: RuntimeGraph,
-    private val sendService: MessageSendService = MessageSendService(graph),
+    private val sendService: ChatMessageSender = MessageSendService(graph),
 ) : ViewModel() {
     val communityName: String = graph.communityName
 
@@ -79,6 +80,7 @@ internal class ChatFeedViewModel(
 
     private val _draft = MutableStateFlow("")
     private var draftRevision = 0L
+    private val reservedSendRevisions = mutableSetOf<Long>()
     val draft: StateFlow<String> = _draft
 
     private val _sendError = MutableStateFlow<String?>(null)
@@ -93,42 +95,45 @@ internal class ChatFeedViewModel(
     }
 
     /**
-     * Send the current draft: clear the field, persist a local echo with SENDING status,
-     * then attempt the disk write. On success, mark the echo SENT. On failure,
-     * mark FAILED — the message stays in chat with an error indicator.
+     * Reserve the current draft revision, persist its retryable local echo, then clear only that unchanged
+     * draft and attempt the disk write. Delivery status is updated by [MessageSendService].
      */
     fun send() {
         val originalDraft = _draft.value
         val text = originalDraft.trim()
         if (text.isEmpty()) return
         val sendDraftRevision = draftRevision
+        if (!reservedSendRevisions.add(sendDraftRevision)) return
         _sendError.value = null
         viewModelScope.launch {
-            val result =
-                try {
+            var clearedRevision: Long? = null
+            try {
+                val result =
                     sendService.send(text) {
                         if (draftRevision == sendDraftRevision && _draft.value == originalDraft) {
                             _draft.value = ""
                             draftRevision++
+                            clearedRevision = draftRevision
                         }
                     }
-                } catch (_: Exception) {
-                    null
+                if (!result.complete) {
+                    if (draftRevision == sendDraftRevision || draftRevision == clearedRevision) {
+                        _sendError.value = SEND_FAILED_MESSAGE
+                    }
                 }
-            if (result != null && result.complete) {
-                graph.store.markSent(result.messageId)
-            } else {
-                // Keep the durable original envelope available for automatic/manual retry.
-                if (result != null) {
-                    graph.store.markFailed(result.messageId)
+            } catch (_: Exception) {
+                if (draftRevision == sendDraftRevision || draftRevision == clearedRevision) {
+                    _sendError.value = SEND_FAILED_MESSAGE
                 }
-                _sendError.value = SEND_FAILED_MESSAGE
+            } finally {
+                reservedSendRevisions.remove(sendDraftRevision)
             }
         }
     }
 
     /** Retry the durable original operation; never mint a replacement message ID or envelope. */
     fun retryFailed(messageId: String) {
+        val retryDraftRevision = draftRevision
         _sendError.value = null
         viewModelScope.launch {
             val delivered =
@@ -137,12 +142,7 @@ internal class ChatFeedViewModel(
                 } catch (_: Exception) {
                     false
                 }
-            if (delivered) {
-                graph.store.markSent(messageId)
-            } else {
-                graph.store.markFailed(messageId)
-                _sendError.value = SEND_FAILED_MESSAGE
-            }
+            if (!delivered && draftRevision == retryDraftRevision) _sendError.value = SEND_FAILED_MESSAGE
         }
     }
 

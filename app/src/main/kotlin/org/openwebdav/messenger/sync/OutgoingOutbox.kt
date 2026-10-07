@@ -10,35 +10,39 @@ internal class OutgoingOutbox(
 ) {
     suspend fun retry(
         messageId: String,
+        communityId: String,
         senderIdentifier: String,
-    ): Boolean {
-        val pending = store.pendingOutgoing().firstOrNull { it.messageId == messageId } ?: return false
-        return deliverOne(pending, senderIdentifier).complete
-    }
+    ): Boolean = deliverOne(messageId, communityId, senderIdentifier)?.complete ?: false
 
     suspend fun retryChats(
         chatIds: Set<String>,
+        communityId: String,
         senderIdentifier: String,
     ) {
-        store.pendingOutgoing()
+        store.pendingOutgoing(communityId)
             .filter { it.chatId in chatIds }
-            .forEach { deliverOne(it, senderIdentifier) }
+            .forEach { deliverOne(it.messageId, communityId, senderIdentifier) }
     }
 
     private suspend fun deliverOne(
-        message: MessageEntity,
+        messageId: String,
+        communityId: String,
         senderIdentifier: String,
-    ): SendOutcome {
-        val envelope = message.outboxEnvelope ?: return SendOutcome(false, 0, 0)
+    ): SendOutcome? {
+        val message = store.claimOutgoing(messageId, communityId) ?: return null
+        val envelope = message.outboxEnvelope ?: return null
         val recipients = message.outboxRecipients?.split('\n')?.filter(String::isNotBlank).orEmpty()
-        store.markSending(message.messageId)
         val outcome =
             try {
                 sendStored(message.copy(outboxEnvelope = envelope, outboxRecipients = recipients.joinToString("\n")), senderIdentifier)
             } catch (_: Exception) {
                 SendOutcome(false, 0, recipients.size)
             }
-        if (outcome.complete) store.markSent(message.messageId) else store.markFailed(message.messageId)
+        if (outcome.complete) {
+            store.markSent(message.messageId, communityId)
+        } else {
+            store.markFailed(message.messageId, communityId)
+        }
         return outcome
     }
 }

@@ -1,11 +1,19 @@
 package org.openwebdav.messenger.app
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -28,6 +36,8 @@ import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.transport.WebDavTransport
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * JVM tests for the send path ([MessageSendService]) over the real engine seams + a FakeDisk-backed
@@ -65,11 +75,15 @@ class MessageSendServiceTest {
 
     private fun store(): MessageStore = SyncTestSupport.store(db)
 
-    private fun graph(store: MessageStore): RuntimeGraph {
+    private fun graph(
+        store: MessageStore,
+        webDavServer: MockWebServer = server,
+        communityId: String = "default",
+    ): RuntimeGraph {
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
         val engine =
             SyncEngine(
-                transport = transport(),
+                transport = SyncTestSupport.transport(webDavServer),
                 envelope = envelope,
                 store = store,
                 keyProvider = { requested -> if (requested == chatId) chatKey else null },
@@ -78,12 +92,13 @@ class MessageSendServiceTest {
             engine = engine,
             store = store,
             envelope = envelope,
-            config = SyncTestSupport.config(server),
+            config = SyncTestSupport.config(webDavServer),
             chatId = chatId,
             communityName = "Community",
             chatKey = chatKey,
             identity = identity,
             senderIdentifier = Hex.encode(identity.copySignPublic()),
+            communityId = communityId,
         )
     }
 
@@ -136,6 +151,99 @@ class MessageSendServiceTest {
             assertEquals(null, retried.single().outboxEnvelope)
             assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
             assertArrayEquals(originalEnvelope, disk.fileBytes(originalLogPath))
+        }
+
+    @Test
+    fun outgoing_claim_is_exclusive_and_late_failure_cannot_downgrade_read_success() =
+        runTest {
+            val store = store()
+            val graph = graph(store, communityId = "community-a")
+            disk.failPutUnderPrefix[ChatPaths.LOG] = 503
+            val sent = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L }).send("claim me")
+            val pending = store.messagesForChat(chatId).single()
+
+            assertNotNull(store.claimOutgoing(sent.messageId, "community-a"))
+            assertNull("a second worker/manual attempt must not own this ID", store.claimOutgoing(sent.messageId, "community-a"))
+            store.markSent(sent.messageId, "community-a")
+            store.markMessagesReadUpTo(chatId, pending.orderToken)
+            store.markFailed(sent.messageId, "community-a")
+
+            val row = store.messagesForChat(chatId).single()
+            assertEquals(MessageEntity.STATUS_READ, row.sendStatus)
+            assertNull(row.outboxEnvelope)
+        }
+
+    @Test
+    fun manual_retry_and_worker_cycle_cannot_deliver_one_message_concurrently() =
+        runTest {
+            val store = store()
+            val graph = graph(store, communityId = "community-a")
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.IO, clock = { 1_717_000_000_000L })
+            disk.failPutUnderPrefix[ChatPaths.LOG] = 503
+            val sent = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L }).send("claim once")
+            disk.failPutUnderPrefix.clear()
+
+            val putStarted = CountDownLatch(1)
+            val releasePut = CountDownLatch(1)
+            server.dispatcher =
+                object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "PUT" && request.path.orEmpty().contains("/${ChatPaths.LOG}/")) {
+                            putStarted.countDown()
+                            check(releasePut.await(5, TimeUnit.SECONDS)) { "timed out waiting to release retry PUT" }
+                        }
+                        return disk.dispatch(request)
+                    }
+                }
+            try {
+                val manualRetry = async(Dispatchers.IO) { service.retry(sent.messageId) }
+                assertTrue(withContext(Dispatchers.IO) { putStarted.await(5, TimeUnit.SECONDS) })
+                graph.engine.pollCycle(graph.senderIdentifier, listOf(ChatSubscription(chatId)), "community-a")
+                assertTrue(
+                    "worker must not issue a duplicate while manual retry owns the row",
+                    disk.fileNames(ChatPaths.logDir(chatId)).isEmpty(),
+                )
+                releasePut.countDown()
+
+                assertTrue(manualRetry.await())
+                assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+                assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+            } finally {
+                releasePut.countDown()
+            }
+        }
+
+    @Test
+    fun outbox_retry_is_owned_by_community_when_dm_chat_ids_match() =
+        runTest {
+            val diskB = FakeDisk()
+            val serverB =
+                MockWebServer().apply {
+                    dispatcher = diskB
+                    start()
+                }
+            try {
+                val store = store()
+                val graphA = graph(store, server, "community-a")
+                val graphB = graph(store, serverB, "community-b")
+                val serviceA = MessageSendService(graphA, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
+                val serviceB = MessageSendService(graphB, ioDispatcher = Dispatchers.Unconfined, clock = { 1_717_000_000_000L })
+                disk.failPutUnderPrefix[ChatPaths.LOG] = 503
+
+                val send = serviceA.send("private to A")
+                val original = store.messagesForChat(chatId).single()
+                assertEquals("community-a", original.outboxCommunityId)
+                assertFalse(serviceB.retry(send.messageId))
+                graphB.engine.pollCycle(graphB.senderIdentifier, listOf(ChatSubscription(chatId)), "community-b")
+
+                assertTrue(diskB.fileNames(ChatPaths.LOG).isEmpty())
+                assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
+                disk.failPutUnderPrefix.clear()
+                assertTrue(serviceA.retry(send.messageId))
+                assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+            } finally {
+                serverB.shutdown()
+            }
         }
 
     @Test

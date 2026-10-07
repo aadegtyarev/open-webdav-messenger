@@ -116,6 +116,7 @@ class AppRootTest {
             communityName: String,
             chatKey: ChatKey,
             identity: Identity,
+            communityId: String,
         ): RuntimeGraph {
             val store = MessageStore(db.messageDao(), db.syncCursorDao())
             val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
@@ -136,6 +137,7 @@ class AppRootTest {
                 chatKey = chatKey,
                 identity = identity,
                 senderIdentifier = Hex.encode(identity.copySignPublic()),
+                communityId = communityId,
             )
         }
 
@@ -154,6 +156,7 @@ class AppRootTest {
             newConfig: ConnectionConfig,
             chatId: String,
             communityName: String,
+            communityId: String,
         ): Boolean = false
     }
 }

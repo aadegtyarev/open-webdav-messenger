@@ -31,20 +31,50 @@ class MessageStore(
         sendStatus: String = MessageEntity.STATUS_SENT,
         outboxEnvelope: ByteArray? = null,
         outboxRecipients: List<String> = emptyList(),
+        outboxCommunityId: String? = null,
     ): Boolean =
         messageDao.insertIgnore(
-            toEntity(messageId, orderToken, message, receivedAtMillis, sendStatus, outboxEnvelope, outboxRecipients),
+            toEntity(
+                messageId,
+                orderToken,
+                message,
+                receivedAtMillis,
+                sendStatus,
+                outboxEnvelope,
+                outboxRecipients,
+                outboxCommunityId,
+            ),
         ) != DEDUP_NO_ROW
 
     /** Mark a locally-sent message as fully delivered and discard its retry payload. */
-    suspend fun markSent(messageId: String) = messageDao.finishOutgoing(messageId)
+    suspend fun markSent(
+        messageId: String,
+        communityId: String,
+    ) {
+        messageDao.finishOutgoing(messageId, communityId)
+    }
 
     /** Mark a locally-sent message for later retry without discarding its original operation. */
-    suspend fun markFailed(messageId: String) = messageDao.failOutgoing(messageId)
+    suspend fun markFailed(
+        messageId: String,
+        communityId: String,
+    ) {
+        messageDao.failOutgoing(messageId, communityId)
+    }
 
-    suspend fun markSending(messageId: String) = messageDao.markOutgoingSending(messageId)
+    suspend fun claimOutgoing(
+        messageId: String,
+        communityId: String,
+    ): MessageEntity? {
+        if (messageDao.claimOutgoing(messageId, communityId) != 1) return null
+        return messageDao.claimedOutgoing(messageId, communityId)
+    }
 
-    suspend fun pendingOutgoing(): List<MessageEntity> = messageDao.pendingOutgoing()
+    suspend fun pendingOutgoing(communityId: String): List<MessageEntity> = messageDao.pendingOutgoing(communityId)
+
+    suspend fun recoverInterruptedOutgoing(communityId: String) {
+        messageDao.recoverInterruptedOutgoing(communityId)
+    }
 
     /** Mark all messages in [chatId] up to [orderToken] as READ (for received messages viewed by the user). */
     suspend fun markMessagesReadUpTo(
@@ -90,6 +120,7 @@ class MessageStore(
         sendStatus: String,
         outboxEnvelope: ByteArray?,
         outboxRecipients: List<String>,
+        outboxCommunityId: String?,
     ): MessageEntity {
         val senderHex = Hex.encode(message.sender.copySignPub())
         return when (message) {
@@ -109,6 +140,7 @@ class MessageStore(
                     sendStatus = sendStatus,
                     outboxEnvelope = outboxEnvelope,
                     outboxRecipients = outboxRecipients.takeIf { it.isNotEmpty() }?.joinToString("\n"),
+                    outboxCommunityId = outboxCommunityId,
                 )
             is ReactionMessage ->
                 MessageEntity(

@@ -67,6 +67,7 @@ internal object AppContainer {
     private val directoryFactory by lazy { DirectoryFactory() }
     private val chatDirectoryFactory by lazy { ChatDirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
+    private val runtimeSelectionGuard = RuntimeSelectionGuard()
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -132,16 +133,18 @@ internal object AppContainer {
             activeCommunityId = currentCommunityId,
             activateCommunity = ::switchToCommunity,
             resolveContext = { selectedId ->
-                val stored = configStore.loadStored(selectedId)
-                val graph = runtimeGraph()
-                if (currentCommunityId == selectedId && stored != null && graph?.config == stored.config) {
-                    SelectedCommunityGroupContext(selectedId, stored, graph)
-                } else {
-                    null
-                }
+                selectedCommunityGroupContext(
+                    communityId = selectedId,
+                    activeCommunityId = currentCommunityId,
+                    stored = configStore.loadStored(selectedId),
+                    graph = runtimeGraph(),
+                    selectionRevision = runtimeSelectionGuard.current(),
+                )
             },
             create = { context -> createGroupChatForContext(name, access, context) },
-            open = { context, chatId -> openGroupChat(chatId, name, context.communityId) },
+            open = { context, chatId ->
+                openGroupChat(chatId, name, context.communityId, context.selectionRevision)
+            },
         )
 
     private suspend fun createGroupChatForContext(
@@ -213,10 +216,13 @@ internal object AppContainer {
         chatId: String,
         chatName: String,
         communityId: String = currentCommunityId,
+        expectedSelectionRevision: Long? = null,
     ): Boolean {
+        if (expectedSelectionRevision != null && !runtimeSelectionGuard.isCurrent(expectedSelectionRevision)) return false
         if (currentCommunityId != communityId && !switchToCommunity(communityId)) return false
+        val selectionRevision = runtimeSelectionGuard.begin()
         val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return false
-        val graph = runtimeGraph() ?: return false
+        val graph = runtimeGraph()?.takeIf { it.communityId == communityId } ?: return false
         // Roster: self + all community members from the directory.
         val roster = mutableListOf(graph.senderIdentifier)
         val memberNames = mutableMapOf<String, String>()
@@ -244,6 +250,12 @@ internal object AppContainer {
             } catch (_: Exception) {
                 // best-effort roster — start with just self
             }
+        }
+        if (!runtimeSelectionGuard.isCurrent(selectionRevision) ||
+            currentCommunityId != communityId ||
+            EngineWiring.current()?.scopeKey != graph.scopeKey
+        ) {
+            return false
         }
         EngineWiring.switchToChat(chatId, chatName, chatKey, roster, memberNames)
         return true
@@ -336,6 +348,7 @@ internal object AppContainer {
         val chatKeyStore = crypto.chatKeyStore(requireContext())
         val chatKey = chatKeyStore.load(stored.chatId) ?: return false
         val identity = runBlocking { identityFactory.identityStore(requireContext()).loadOrCreate() }
+        runtimeSelectionGuard.begin()
         currentCommunityId = communityId
         activeCommunityStore.select(communityId)
         EngineWiring.reconfigure(
@@ -399,6 +412,7 @@ internal object AppContainer {
         val graph = runtimeGraph() ?: return
         val roster = listOf(graph.senderIdentifier, peerId)
         val memberNames = mapOf(peerId to chatName)
+        runtimeSelectionGuard.begin()
         EngineWiring.switchToChat(chatId, chatName, chatKey, roster, memberNames)
     }
 

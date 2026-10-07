@@ -69,8 +69,9 @@ internal class SyncEngine(
 
     suspend fun retryOutgoing(
         messageId: String,
+        communityId: String,
         senderIdentifier: String,
-    ): Boolean = outgoingOutbox.retry(messageId, senderIdentifier)
+    ): Boolean = outgoingOutbox.retry(messageId, communityId, senderIdentifier)
 
     /**
      * §9.3: run one poll cycle for [memberIdentifier] over its joined [subscriptions]. Reads the change
@@ -88,6 +89,7 @@ internal class SyncEngine(
     suspend fun pollCycle(
         memberIdentifier: String,
         subscriptions: List<ChatSubscription>,
+        communityId: String = "default",
     ): CycleOutcome {
         val communityFloor = readCommunityFloor()
         val retentionDays = readRetentionWindow()
@@ -95,7 +97,7 @@ internal class SyncEngine(
             val days = retentionDays
             pruner?.window = days.days
         }
-        outgoingOutbox.retryChats(subscriptions.mapTo(mutableSetOf()) { it.chatId }, memberIdentifier)
+        outgoingOutbox.retryChats(subscriptions.mapTo(mutableSetOf()) { it.chatId }, communityId, memberIdentifier)
         val outcome = pollReader.cycle(memberIdentifier, subscriptions)
         val result =
             outcome.copy(

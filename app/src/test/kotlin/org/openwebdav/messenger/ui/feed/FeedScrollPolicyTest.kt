@@ -16,6 +16,16 @@ class FeedScrollPolicyTest {
     }
 
     @Test
+    fun statefulPolicyUsesLastViewportBeforeAWholeBatchAppend() {
+        val policy = FeedAppendPolicy(initialItemCount = 8)
+        policy.onViewportChanged(isNearBottom = true)
+
+        assertTrue(policy.onDatasetChanged(newItemCount = 15))
+        policy.onViewportChanged(isNearBottom = false)
+        assertFalse(policy.onDatasetChanged(newItemCount = 16))
+    }
+
+    @Test
     fun doesNotScrollWhenItemsWereRemovedOrUnchanged() {
         assertFalse(shouldAutoScrollAfterAppend(wasAtBottomBeforeAppend = true, previousItemCount = 8, newItemCount = 8))
         assertFalse(shouldAutoScrollAfterAppend(wasAtBottomBeforeAppend = true, previousItemCount = 8, newItemCount = 7))

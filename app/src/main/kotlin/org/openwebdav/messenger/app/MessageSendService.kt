@@ -22,54 +22,68 @@ import org.openwebdav.messenger.protocol.OrderToken
  *
  * All work is off the UI thread on [ioDispatcher] (network + AEAD + Room — stack-notes Kotlin/Compose).
  */
+internal interface ChatMessageSender {
+    suspend fun send(
+        text: String,
+        onRecoverablyPersisted: suspend () -> Unit = {},
+    ): MessageSendService.SendResult
+
+    suspend fun retry(messageId: String): Boolean
+}
+
 internal class MessageSendService(
     private val graph: RuntimeGraph,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis,
-) {
+) : ChatMessageSender {
     /** Send [text] in the joined chat and invoke [onRecoverablyPersisted] once its local echo is durable. */
-    suspend fun send(
+    override suspend fun send(
         text: String,
-        onRecoverablyPersisted: () -> Unit = {},
-    ): SendResult =
-        withContext(ioDispatcher) {
-            val now = clock()
-            val message =
-                TextMessage(
-                    chatId = graph.chatId,
-                    sender = graph.identity.publicIdentity(),
-                    replyTo = null,
-                    body = text,
-                    sendTimestampMillis = now,
+        onRecoverablyPersisted: suspend () -> Unit,
+    ): SendResult {
+        val prepared =
+            withContext(ioDispatcher) {
+                val now = clock()
+                val message =
+                    TextMessage(
+                        chatId = graph.chatId,
+                        sender = graph.identity.publicIdentity(),
+                        replyTo = null,
+                        body = text,
+                        sendTimestampMillis = now,
+                    )
+                val signSecret = graph.identity.copySignSecret()
+                val envelopeBytes =
+                    try {
+                        graph.envelope.seal(message, graph.chatKey, signSecret)
+                    } finally {
+                        signSecret.fill(0) // identity secret never lingers past use
+                    }
+                val orderToken = OrderToken.build(now, graph.senderIdentifier, graph.nextSeq())
+                val messageId = MessageId.messageId(orderToken, envelopeBytes)
+
+                // Local echo FIRST — the message appears in chat instantly with SENDING status.
+                graph.store.persist(
+                    messageId = messageId,
+                    orderToken = orderToken,
+                    message = message,
+                    receivedAtMillis = now,
+                    sendStatus = MessageEntity.STATUS_SENDING,
+                    outboxEnvelope = envelopeBytes,
+                    outboxRecipients = graph.roster.filter { it != graph.senderIdentifier },
+                    outboxCommunityId = graph.communityId,
                 )
-            val signSecret = graph.identity.copySignSecret()
-            val envelopeBytes =
-                try {
-                    graph.envelope.seal(message, graph.chatKey, signSecret)
-                } finally {
-                    signSecret.fill(0) // identity secret never lingers past use
-                }
-            val orderToken = OrderToken.build(now, graph.senderIdentifier, graph.nextSeq())
-            val messageId = MessageId.messageId(orderToken, envelopeBytes)
+                PreparedSend(orderToken, messageId, envelopeBytes)
+            }
+        onRecoverablyPersisted()
 
-            // Local echo FIRST — the message appears in chat instantly with SENDING status.
-            graph.store.persist(
-                messageId = messageId,
-                orderToken = orderToken,
-                message = message,
-                receivedAtMillis = now,
-                sendStatus = MessageEntity.STATUS_SENDING,
-                outboxEnvelope = envelopeBytes,
-                outboxRecipients = graph.roster.filter { it != graph.senderIdentifier },
-            )
-            onRecoverablyPersisted()
-
+        return withContext(ioDispatcher) {
             val outcome =
                 try {
                     graph.engine.send(
                         graph.chatId,
-                        orderToken,
-                        envelopeBytes,
+                        prepared.orderToken,
+                        prepared.envelopeBytes,
                         allMembers = graph.roster,
                         graph.senderIdentifier,
                     )
@@ -78,16 +92,23 @@ internal class MessageSendService(
                 }
 
             if (outcome.complete) {
-                graph.store.markSent(messageId)
+                graph.store.markSent(prepared.messageId, graph.communityId)
             } else {
-                graph.store.markFailed(messageId)
+                graph.store.markFailed(prepared.messageId, graph.communityId)
             }
-            SendResult(messageId = messageId, logWritten = outcome.logWritten, complete = outcome.complete)
+            SendResult(messageId = prepared.messageId, logWritten = outcome.logWritten, complete = outcome.complete)
         }
+    }
 
-    suspend fun retry(messageId: String): Boolean =
+    private data class PreparedSend(
+        val orderToken: String,
+        val messageId: String,
+        val envelopeBytes: ByteArray,
+    )
+
+    override suspend fun retry(messageId: String): Boolean =
         withContext(ioDispatcher) {
-            graph.engine.retryOutgoing(messageId, graph.senderIdentifier)
+            graph.engine.retryOutgoing(messageId, graph.communityId, graph.senderIdentifier)
         }
 
     /**

@@ -1,5 +1,7 @@
 package org.openwebdav.messenger.app
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -120,7 +122,7 @@ class EngineWiringTest {
         }
 
     @Test
-    fun background_runner_enumerates_all_joined_communities() =
+    fun suspended_community_a_cycle_keeps_its_immutable_context_after_reconfigure_to_b() =
         runTest {
             val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
             val deps =
@@ -130,11 +132,59 @@ class EngineWiringTest {
                     joinedCommunities = listOf("community-a", "community-b"),
                 )
             EngineWiring.initialize(deps)
+            val runnerA = SyncRunner.current()
+            val discoveryEntered = CompletableDeferred<Unit>()
+            val releaseDiscovery = CompletableDeferred<Unit>()
+            deps.discoveryEntered = discoveryEntered
+            deps.releaseDiscovery = releaseDiscovery
 
-            SyncRunner.current().runOnce()
+            val cycleA = async { runnerA.runOnce() }
+            discoveryEntered.await()
+            EngineWiring.reconfigure(
+                SyncTestSupport.config(server),
+                chatId,
+                "Community B",
+                chatKey,
+                identity,
+                communityId = "community-b",
+            )
+            deps.enumeratedCommunities.clear()
+            releaseDiscovery.complete(Unit)
+            cycleA.await()
 
-            assertTrue("background cycle must enumerate non-active community chats", "community-b" in deps.enumeratedCommunities)
-            assertTrue("new registrations must be included after discovery", deps.newChatSeenAfterDiscovery)
+            assertEquals(listOf("community-a", "community-b"), deps.enumeratedCommunities)
+            assertEquals("community-b", EngineWiring.current()?.communityId)
+        }
+
+    @Test
+    fun background_runner_polls_each_joined_community_on_its_own_webdav_root() =
+        runTest {
+            val serverB =
+                MockWebServer().apply {
+                    dispatcher = FakeDisk()
+                    start()
+                }
+            try {
+                val storedA = StoredConnection(SyncTestSupport.config(server), chatId, "Community A")
+                val storedB = StoredConnection(SyncTestSupport.config(serverB), chatId, "Community B")
+                val deps =
+                    JvmDeps(
+                        stored = storedA,
+                        activeCommunity = "community-a",
+                        joinedCommunities = listOf("community-a", "community-b"),
+                        storedByCommunity = mapOf("community-b" to storedB),
+                    )
+                EngineWiring.initialize(deps)
+
+                SyncRunner.current().runOnce()
+
+                assertTrue("active community A must be polled", server.requestCount > 0)
+                assertTrue("community B must use its own WebDAV root", serverB.requestCount > 0)
+                assertTrue("background cycle must enumerate non-active community chats", "community-b" in deps.enumeratedCommunities)
+                assertTrue("new registrations must be included after discovery", deps.newChatSeenAfterDiscovery)
+            } finally {
+                serverB.shutdown()
+            }
         }
 
     /** reconfigure builds a graph + installs the real runner after a first persist (owner create / join). */
@@ -159,11 +209,14 @@ class EngineWiringTest {
         private val stored: StoredConnection?,
         private val activeCommunity: String = "default",
         private val joinedCommunities: List<String> = emptyList(),
+        private val storedByCommunity: Map<String, StoredConnection> = emptyMap(),
     ) : EngineWiring.Deps {
         var scheduled = false
         var loadedCommunity: String? = null
         var discoveryComplete = false
         var newChatSeenAfterDiscovery = false
+        var discoveryEntered: CompletableDeferred<Unit>? = null
+        var releaseDiscovery: CompletableDeferred<Unit>? = null
         val enumeratedCommunities = mutableListOf<String>()
 
         override fun loadStoredConnection(): StoredConnection? = stored
@@ -174,7 +227,7 @@ class EngineWiringTest {
 
         override fun loadStoredConnection(communityId: String): StoredConnection? {
             loadedCommunity = communityId
-            return stored
+            return storedByCommunity[communityId] ?: stored
         }
 
         override fun loadChatKey(chatId: String): ChatKey = chatKey
@@ -187,6 +240,7 @@ class EngineWiringTest {
             communityName: String,
             chatKey: ChatKey,
             identity: Identity,
+            communityId: String,
         ): RuntimeGraph {
             val store = MessageStore(db.messageDao(), db.syncCursorDao())
             val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
@@ -207,6 +261,7 @@ class EngineWiringTest {
                 chatKey = chatKey,
                 identity = identity,
                 senderIdentifier = Hex.encode(identity.copySignPublic()),
+                communityId = communityId,
             )
         }
 
@@ -221,6 +276,8 @@ class EngineWiringTest {
         }
 
         override suspend fun discoverPublicChats() {
+            discoveryEntered?.complete(Unit)
+            releaseDiscovery?.await()
             discoveryComplete = true
         }
 
@@ -235,6 +292,7 @@ class EngineWiringTest {
             newConfig: ConnectionConfig,
             chatId: String,
             communityName: String,
+            communityId: String,
         ): Boolean = false // no credential rotation in these tests
     }
 }

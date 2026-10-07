@@ -27,8 +27,9 @@ a feed open.
 **Destination restoration and Back:** The current destination is saveable across
 activity recreation. System Back returns from the feed to Chats and from Invite
 to the feed; first-launch onboarding returns to Start. Toolbar Back from a feed
-also returns to Chats. Destination state does not substitute for persistence of
-community/chat data.
+also returns to Chats. A delayed open may install a chat only if its community
+and runtime selection are still current. Destination state does not substitute
+for persistence of community/chat data.
 
 ## Invite format
 
@@ -69,16 +70,20 @@ language.
 
 **Offline readiness (3-offline):** The feed shows whatever messages are in the
 local Room database. No network indicator, no "pull to refresh" — the underlying
-sync cycle handles freshness transparently. A send creates a local echo only
-after its retryable envelope is durably persisted; the draft clears after that
-persistence succeeds and is not erased by a stale asynchronous failure.
+sync cycle handles freshness transparently. One send is reserved per draft
+revision before asynchronous work starts, preventing a double tap from producing
+two messages. A send creates a local echo only after its retryable envelope is
+durably persisted; the persistence callback and draft compare-and-clear run on
+the UI dispatcher with draft edits. The draft clears after persistence succeeds
+and is not erased by a stale completion.
 
 **Send failure and retry (3-send-fail):** A failed or uncertain send remains in
 the feed with truthful local status. A transient error below the draft clears
 when the draft changes or a send succeeds. Automatic sync retry and explicit
 retry reuse the original persisted envelope and message ID; they do not create
-a replacement row or payload. A recoverable draft is retained if local
-persistence fails.
+a replacement row or payload. Retry work is restricted to the message's local
+community owner and only one delivery attempt may claim a message ID at a time.
+A recoverable draft is retained if local persistence fails.
 
 **Runtime scoping (3-scope):** Feed and invite state is scoped to the active
 community and chat. Changing either scope must not display or send with stale

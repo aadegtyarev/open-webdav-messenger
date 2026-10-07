@@ -41,14 +41,15 @@ class MessengerDatabaseMigrationTest {
     }
 
     @Test
-    fun migratesVersion1ThroughOutboxSchema() {
+    fun migratesVersion1ThroughCommunityOwnedOutboxSchema() {
         helper.createDatabase(TEST_DB, 1).close()
         helper.runMigrationsAndValidate(
             TEST_DB,
-            3,
+            4,
             true,
             MessengerDatabase.MIGRATION_1_2,
             MessengerDatabase.MIGRATION_2_3,
+            MessengerDatabase.MIGRATION_3_4,
         ).close()
     }
 

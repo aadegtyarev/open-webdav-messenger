@@ -44,24 +44,56 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY orderToken ASC")
     suspend fun messagesForChat(chatId: String): List<MessageEntity>
 
-    /** Update the sendStatus of a single message (e.g. SENDING → SENT or FAILED). */
-    @Query("UPDATE messages SET sendStatus = :status WHERE messageId = :messageId")
-    suspend fun updateSendStatus(
-        messageId: String,
-        status: String,
+    @Query(
+        "UPDATE messages SET sendStatus = 'SENT', outboxEnvelope = NULL, outboxRecipients = NULL " +
+            "WHERE messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'SENDING' AND outboxEnvelope IS NOT NULL",
     )
+    suspend fun finishOutgoing(
+        messageId: String,
+        communityId: String,
+    ): Int
 
-    @Query("UPDATE messages SET sendStatus = 'SENT', outboxEnvelope = NULL, outboxRecipients = NULL WHERE messageId = :messageId")
-    suspend fun finishOutgoing(messageId: String)
+    @Query(
+        "UPDATE messages SET sendStatus = 'FAILED' " +
+            "WHERE messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'SENDING' AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun failOutgoing(
+        messageId: String,
+        communityId: String,
+    ): Int
 
-    @Query("UPDATE messages SET sendStatus = 'FAILED' WHERE messageId = :messageId AND sendStatus != 'SENT'")
-    suspend fun failOutgoing(messageId: String)
+    @Query(
+        "UPDATE messages SET sendStatus = 'SENDING' " +
+            "WHERE messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'FAILED' AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun claimOutgoing(
+        messageId: String,
+        communityId: String,
+    ): Int
 
-    @Query("UPDATE messages SET sendStatus = 'SENDING' WHERE messageId = :messageId AND sendStatus != 'SENT'")
-    suspend fun markOutgoingSending(messageId: String)
+    @Query(
+        "SELECT * FROM messages WHERE messageId = :messageId AND outboxCommunityId = :communityId " +
+            "AND sendStatus = 'SENDING' AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun claimedOutgoing(
+        messageId: String,
+        communityId: String,
+    ): MessageEntity?
 
-    @Query("SELECT * FROM messages WHERE sendStatus IN ('SENDING', 'FAILED') AND outboxEnvelope IS NOT NULL")
-    suspend fun pendingOutgoing(): List<MessageEntity>
+    @Query(
+        "UPDATE messages SET sendStatus = 'FAILED' WHERE sendStatus = 'SENDING' " +
+            "AND outboxEnvelope IS NOT NULL AND outboxCommunityId = :communityId",
+    )
+    suspend fun recoverInterruptedOutgoing(communityId: String): Int
+
+    @Query(
+        "SELECT * FROM messages WHERE sendStatus = 'FAILED' AND outboxEnvelope IS NOT NULL " +
+            "AND outboxCommunityId = :communityId",
+    )
+    suspend fun pendingOutgoing(communityId: String): List<MessageEntity>
 
     /** Mark all non-SENDING messages up to [orderToken] as READ. */
     @Query(

@@ -12,7 +12,9 @@ This surface covers periodic sync, configured short-interval fast polling, and d
 
 **Shared multi-community sync:** Both worker and service call the same `SyncRunner` cycle. It enumerates joined communities and their registered/discovered chat IDs; network work is not limited to the currently open chat. Newly discovered group chats become eligible for subsequent cycles.
 
-**Outgoing outbox:** A retryable outgoing envelope and recipient set are persisted with the local message before network delivery. Automatic cycle retry and explicit retry use that exact envelope and message ID. Delivery success transitions the local row to sent; failure or uncertain outcome leaves it failed and eligible for retry. Missing or non-retryable local payloads are not reconstructed with a replacement ID.
+**Outgoing outbox:** A retryable envelope, recipients, and local community owner are persisted with the message before network delivery. Automatic cycle retry and explicit retry require that community owner and reuse the exact envelope and message ID, even when another community uses the same chat ID. A conditional Room claim allows only one delivery attempt per message ID at a time. Success/failure transitions require the row to remain claimed with its retry payload; success removes the payload, and a late failure cannot downgrade a sent/read row. Interrupted in-flight claims are returned to retryable state at process initialization.
+
+Legacy outbox rows created before community ownership existed remain ownerless and are not automatically or manually retried rather than risking delivery to the wrong WebDAV root. They are not assigned an inferred owner when multiple communities may share a chat ID.
 
 ## Failure behavior and limits
 

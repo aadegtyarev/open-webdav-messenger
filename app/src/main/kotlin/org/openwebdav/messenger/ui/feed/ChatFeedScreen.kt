@@ -131,17 +131,24 @@ internal fun ChatFeedScreen(
         }
     }
 
-    // Follow appended messages only when the user was already reading at the tail.
-    var previousMessageCount by remember { mutableStateOf(itemsWithDivider.size) }
-    LaunchedEffect(itemsWithDivider.size) {
-        val newCount = itemsWithDivider.size
-        val wasAtBottomBeforeAppend = listState.isAtBottom()
-        if (didInitialScroll.value &&
-            shouldAutoScrollAfterAppend(wasAtBottomBeforeAppend, previousMessageCount, newCount)
-        ) {
-            listState.animateScrollToItem(newCount - 1)
-        }
-        previousMessageCount = newCount
+    // Keep the last observed viewport state separate from the changing dataset. After an append,
+    // layoutInfo may already describe the new list, so reading isAtBottom() in that effect is too late.
+    val latestItemCount by rememberUpdatedState(itemsWithDivider.size)
+    LaunchedEffect(listState) {
+        val policy = FeedAppendPolicy(latestItemCount)
+        var hasViewportSample = false
+        snapshotFlow { latestItemCount to listState.isAtBottom() }
+            .collect { (itemCount, isNearBottom) ->
+                if (hasViewportSample && itemCount != policy.itemCount) {
+                    if (didInitialScroll.value && policy.onDatasetChanged(itemCount)) {
+                        listState.animateScrollToItem(itemCount - 1)
+                    } else if (!didInitialScroll.value) {
+                        policy.onDatasetChanged(itemCount)
+                    }
+                }
+                policy.onViewportChanged(isNearBottom)
+                hasViewportSample = true
+            }
     }
 
     // Progressive markRead: mark the highest visible message as READ after the
