@@ -33,8 +33,7 @@ import org.robolectric.annotation.Config
 
 /**
  * Send-failure handling for [ChatFeedViewModel]: if seal throws or the disk write fails,
- * the error is surfaced and the message stays in chat with FAILED status. The draft is NOT
- * restored — the message remains visible as a failed bubble the user can retry.
+ * the error is surfaced; when local persistence has not succeeded, the draft remains recoverable.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -65,9 +64,9 @@ class ChatFeedViewModelSendFailureTest {
         db.close()
     }
 
-    /** A seal that throws during send surfaces the error; draft is NOT restored (message stays as failed bubble). */
+    /** A seal failure before local persistence keeps the draft and surfaces the error. */
     @Test
-    fun send_failure_restores_draft_and_surfaces_error() =
+    fun send_failure_before_persistence_keeps_draft_and_surfaces_error() =
         runTest(mainDispatcher) {
             // The envelope seals via a native that always fails the AEAD encrypt → send() throws at seal.
             val failingEnvelope =
@@ -101,9 +100,8 @@ class ChatFeedViewModelSendFailureTest {
             vm.send()
             advanceUntilIdle()
 
-            // Draft is cleared (optimistic) — message is in chat with SENDING status.
-            // Error is surfaced.
-            assertEquals("", vm.draft.first())
+            // The envelope failed before a recoverable Room echo could be stored.
+            assertEquals("don't lose me", vm.draft.first())
             assertEquals(ChatFeedViewModel.SEND_FAILED_MESSAGE, vm.sendError.first())
         }
 }

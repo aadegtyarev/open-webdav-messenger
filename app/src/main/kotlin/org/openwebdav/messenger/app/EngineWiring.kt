@@ -91,6 +91,7 @@ internal object EngineWiring {
      */
     fun initialize(injected: Deps) {
         deps = injected
+        communityId = deps.activeCommunityId()
         graph = null
         rebuildFromStore()
         _ready.value = true
@@ -157,7 +158,7 @@ internal object EngineWiring {
     }
 
     private fun rebuildFromStore() {
-        val stored = deps.loadStoredConnection() ?: return // no config → keep the no-op runner (benign clean cycle)
+        val stored = deps.loadStoredConnection(communityId) ?: return // no config → keep the no-op runner (benign clean cycle)
         val chatKey = deps.loadChatKey(stored.chatId) ?: return // key gone → stay no-op
         val identity = deps.loadIdentity() ?: return
         val allChats = deps.communityChatIds(communityId)
@@ -275,6 +276,10 @@ internal object EngineWiring {
     internal interface Deps {
         fun loadStoredConnection(): StoredConnection?
 
+        fun activeCommunityId(): String = "default"
+
+        fun loadStoredConnection(communityId: String): StoredConnection? = loadStoredConnection()
+
         fun loadChatKey(chatId: String): ChatKey?
 
         fun loadIdentity(): Identity?
@@ -335,6 +340,9 @@ internal object EngineWiring {
  * The [crypto] / [identityFactory] / [configStore] are passed in so this reuses [AppContainer]'s single
  * process-scoped instances rather than re-constructing its own (AppContainer is the single holder).
  */
+private const val ACTIVE_COMMUNITY_PREFS = "owdm.active-community"
+private const val ACTIVE_COMMUNITY_KEY = "community_id"
+
 internal class AndroidDeps(
     private val appContext: Context,
     private val crypto: CryptoFactory,
@@ -346,6 +354,12 @@ internal class AndroidDeps(
     private val chatKeyStore by lazy { crypto.chatKeyStore(appContext) }
 
     override fun loadStoredConnection(): StoredConnection? = configStore.loadStored()
+
+    override fun activeCommunityId(): String =
+        appContext.getSharedPreferences(ACTIVE_COMMUNITY_PREFS, Context.MODE_PRIVATE)
+            .getString(ACTIVE_COMMUNITY_KEY, "default") ?: "default"
+
+    override fun loadStoredConnection(communityId: String): StoredConnection? = configStore.loadStored(communityId)
 
     override fun loadChatKey(chatId: String): ChatKey? = chatKeyStore.load(chatId)
 

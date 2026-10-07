@@ -42,6 +42,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.ui.FeedViewModelFactory
 
@@ -69,7 +72,11 @@ import org.openwebdav.messenger.ui.FeedViewModelFactory
 internal fun ChatFeedScreen(
     onShowInvite: () -> Unit,
     onBack: () -> Unit = {},
-    viewModel: ChatFeedViewModel = viewModel(factory = FeedViewModelFactory),
+    viewModel: ChatFeedViewModel =
+        viewModel(
+            key = "feed:${AppContainer.activeCommunityId}:${AppContainer.runtimeGraph()?.chatId}",
+            factory = FeedViewModelFactory,
+        ),
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
@@ -124,9 +131,20 @@ internal fun ChatFeedScreen(
         }
     }
 
+    // Follow appended messages only when the user was already reading at the tail.
+    var previousMessageCount by remember { mutableStateOf(itemsWithDivider.size) }
+    LaunchedEffect(itemsWithDivider.size) {
+        val newCount = itemsWithDivider.size
+        if (didInitialScroll.value && newCount > previousMessageCount && listState.isAtBottom()) {
+            listState.animateScrollToItem(newCount - 1)
+        }
+        previousMessageCount = newCount
+    }
+
     // Progressive markRead: mark the highest visible message as READ after the
     // user has viewed it for ~2.5s. Uses collectLatest so a scroll resets the timer —
     // only messages the user has actually looked at get marked read.
+    val latestItemsWithDivider by rememberUpdatedState(itemsWithDivider)
     LaunchedEffect(listState) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
             .filter { it != null }
@@ -134,7 +152,7 @@ internal fun ChatFeedScreen(
                 delay(MARK_READ_DELAY_MS)
                 val visibleRows =
                     listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
-                        itemsWithDivider.getOrNull(info.index) as? ChatFeedViewModel.FeedRow
+                        latestItemsWithDivider.getOrNull(info.index) as? ChatFeedViewModel.FeedRow
                     }
                 val maxOrderToken = visibleRows.maxByOrNull { it.orderToken }?.orderToken ?: return@collectLatest
                 viewModel.markRead(maxOrderToken)

@@ -6,10 +6,8 @@ import androidx.work.WorkManager
 /**
  * Coordinates the fast-poll foreground service and the WorkManager background poll.
  *
- * When fast polling is enabled:
- *  1. The WorkManager periodic poll is cancelled (the foreground service replaces it).
- *  2. [FastPollService] is started with the effective interval (user preference clamped to
- *     community floor and fast-poll platform floor).
+ * When fast polling is enabled, [FastPollService] is started while periodic WorkManager polling remains
+ * scheduled as a recovery path if the platform rejects or later stops the service.
  *
  * When fast polling is disabled:
  *  1. The foreground service is stopped.
@@ -62,7 +60,14 @@ object FastPollManager {
             .putBoolean(KEY_ENABLED, true)
             .putLong(KEY_INTERVAL_SECONDS, intervalSeconds)
             .apply()
-        SyncScheduler.cancel(workManager)
+        // Keep periodic delivery until the foreground service is confirmed running. WorkManager also
+        // remains scheduled afterwards as recovery for platform-restricted service restarts.
+        val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalSeconds.toLong()
+        val communityFloorForFallback = org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds
+        SyncScheduler.schedule(
+            workManager,
+            SyncScheduler.effectiveIntervalSeconds(memberPref, communityFloorForFallback),
+        )
         // Compute effective interval from the just-passed value (not from prefs — apply() is async).
         val communityFloor =
             try {
@@ -71,7 +76,11 @@ object FastPollManager {
                 PLATFORM_FLOOR_SECONDS
             }
         val effective = maxOf(intervalSeconds, communityFloor, PLATFORM_FLOOR_SECONDS)
-        FastPollService.start(context, effective)
+        try {
+            FastPollService.start(context, effective)
+        } catch (_: RuntimeException) {
+            // The scheduled periodic worker is deliberately retained as the fallback.
+        }
     }
 
     /**
@@ -104,8 +113,17 @@ object FastPollManager {
         workManager: WorkManager,
     ) {
         if (isEnabled(context)) {
-            SyncScheduler.cancel(workManager)
-            FastPollService.start(context, effectiveIntervalSeconds(context))
+            val memberPref = org.openwebdav.messenger.ui.settings.UserSettings.pollIntervalSeconds.toLong()
+            val communityFloor = org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds
+            SyncScheduler.schedule(
+                workManager,
+                SyncScheduler.effectiveIntervalSeconds(memberPref, communityFloor),
+            )
+            try {
+                FastPollService.start(context, effectiveIntervalSeconds(context))
+            } catch (_: RuntimeException) {
+                // Keep scheduled polling active if foreground startup is restricted.
+            }
         }
     }
 

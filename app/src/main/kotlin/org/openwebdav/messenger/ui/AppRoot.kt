@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.ui
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,14 +77,26 @@ internal fun AppRoot() {
 private fun AppNav() {
     val startAlreadyJoined = remember { AppContainer.runtimeGraph() != null }
     val hasCommunities = remember { AppContainer.communities().isNotEmpty() }
-    var screen: Screen by remember {
+    var screen: Screen by rememberSaveable(stateSaver = ScreenSaver) {
         mutableStateOf(
             when {
-                startAlreadyJoined -> Screen.Feed
+                startAlreadyJoined -> Screen.CommunityList
                 hasCommunities -> Screen.CommunityList
                 else -> Screen.Start
             },
         )
+    }
+    BackHandler(
+        enabled = screen != Screen.Start && screen != Screen.CommunityList,
+    ) {
+        screen =
+            when (screen) {
+                Screen.Feed -> Screen.CommunityList
+                Screen.Invite -> Screen.Feed
+                Screen.CreateCommunity, Screen.Join -> if (hasCommunities) Screen.CommunityList else Screen.Start
+                Screen.Settings -> Screen.CommunityList
+                Screen.CommunityList, Screen.Start -> screen
+            }
     }
 
     when (screen) {
@@ -134,13 +149,13 @@ private fun AppNav() {
         Screen.CreateCommunity ->
             CreateCommunityScreen(
                 onCreated = { screen = Screen.CommunityList },
-                onBack = { screen = Screen.CommunityList },
+                onBack = { screen = if (hasCommunities) Screen.CommunityList else Screen.Start },
             )
 
         Screen.Join ->
             JoinScreen(
                 onJoined = { screen = Screen.CommunityList },
-                onBack = { screen = Screen.CommunityList },
+                onBack = { screen = if (hasCommunities) Screen.CommunityList else Screen.Start },
             )
 
         Screen.Feed ->
@@ -157,6 +172,22 @@ private fun AppNav() {
 }
 
 /** The thin nav graph for this slice: the first-launch fork, the two onboarding screens, the feed + invite. */
+private val ScreenSaver =
+    Saver<Screen, String>(
+        save = { it::class.simpleName ?: "Start" },
+        restore = { name ->
+            when (name) {
+                "CommunityList" -> Screen.CommunityList
+                "CreateCommunity" -> Screen.CreateCommunity
+                "Join" -> Screen.Join
+                "Feed" -> Screen.Feed
+                "Invite" -> Screen.Invite
+                "Settings" -> Screen.Settings
+                else -> Screen.Start
+            }
+        },
+    )
+
 private sealed interface Screen {
     data object Start : Screen
 

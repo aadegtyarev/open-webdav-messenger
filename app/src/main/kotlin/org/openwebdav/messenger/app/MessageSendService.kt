@@ -27,8 +27,11 @@ internal class MessageSendService(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    /** Send [text] in the joined chat: seal, write to the shared log, persist the local echo. */
-    suspend fun send(text: String): SendResult =
+    /** Send [text] in the joined chat and invoke [onRecoverablyPersisted] once its local echo is durable. */
+    suspend fun send(
+        text: String,
+        onRecoverablyPersisted: () -> Unit = {},
+    ): SendResult =
         withContext(ioDispatcher) {
             val now = clock()
             val message =
@@ -51,6 +54,7 @@ internal class MessageSendService(
 
             // Local echo FIRST — the message appears in chat instantly with SENDING status.
             graph.store.persist(messageId, orderToken, message, now, MessageEntity.STATUS_SENDING)
+            onRecoverablyPersisted()
 
             val outcome =
                 graph.engine.send(

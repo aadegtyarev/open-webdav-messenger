@@ -98,12 +98,13 @@ internal class ChatFeedViewModel(
     fun send() {
         val text = _draft.value.trim()
         if (text.isEmpty()) return
-        _draft.value = ""
         _sendError.value = null
         viewModelScope.launch {
             val result =
                 try {
-                    sendService.send(text)
+                    sendService.send(text) {
+                        if (_draft.value == text) _draft.value = ""
+                    }
                 } catch (_: Exception) {
                     null
                 }
