@@ -24,6 +24,7 @@ import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.CredentialRotation
 import org.openwebdav.messenger.directory.DirectoryEntry
 import org.openwebdav.messenger.directory.DirectoryFactory
+import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.directory.RemoteChatProvisioner
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
@@ -74,12 +75,26 @@ internal object AppContainer {
     private val communityPolicyCoordinator = CommunityPolicyCoordinator()
     private val runtimeSelectionGuard = RuntimeSelectionGuard()
     private val chatOpenRequestCoordinator = ChatOpenRequestCoordinator()
+
+    @Volatile
+    private var chatOpenTestSeam: ChatOpenTestSeam? = null
+
+    internal data class ChatOpenTestSeam(
+        val loadChatKey: (String) -> ChatKey?,
+        val loadStored: (String) -> StoredConnection?,
+        val readDirectory: suspend (StoredConnection) -> DirectoryReadResult,
+        val onRosterEnrichmentCompleted: (() -> Unit)? = null,
+    )
+
     private val groupChatOpenCoordinator by lazy {
         GroupChatOpenCoordinator(
             selectionGuard = runtimeSelectionGuard,
             requestCoordinator = chatOpenRequestCoordinator,
             currentCommunityId = { currentCommunityId },
-            loadChatKey = { chatId -> crypto.chatKeyStore(requireContext()).load(chatId) },
+            loadChatKey = { chatId ->
+                val seam = chatOpenTestSeam
+                if (seam != null) seam.loadChatKey(chatId) else crypto.chatKeyStore(requireContext()).load(chatId)
+            },
             activateCommunity = ::switchToCommunityExclusive,
             currentGraph = ::runtimeGraph,
         )
@@ -95,6 +110,19 @@ internal object AppContainer {
 
     /** The current community ID (for multi-chat enumeration). */
     val activeCommunityId: String get() = currentCommunityId
+
+    internal fun configureChatOpenTestSeam(
+        communityId: String,
+        seam: ChatOpenTestSeam,
+    ) {
+        currentCommunityId = communityId
+        chatOpenTestSeam = seam
+    }
+
+    internal fun clearChatOpenTestSeam() {
+        chatOpenTestSeam = null
+        currentCommunityId = "default"
+    }
 
     /** Bind the application context (idempotent). Called from `Application.onCreate()` before [warmStart]. */
     fun bind(context: Context) {
@@ -179,8 +207,10 @@ internal object AppContainer {
             isRequestCurrent = { chatOpenRequestCoordinator.isCurrent(requestToken) },
             isSelectedContextCurrent = { context -> isCurrentGroupContext(context, requestToken) },
             activateCommunity = { selected ->
-                chatOpenRequestCoordinator.runIfCurrent(requestToken) {
-                    switchToCommunityExclusive(selected)
+                AccountMutationBarrier.process.withStableAccount {
+                    chatOpenRequestCoordinator.runIfCurrent(requestToken) {
+                        switchToCommunityExclusive(selected)
+                    }
                 }
             },
             resolveContext = { selectedId -> resolveSelectedGroupContext(selectedId, requestToken) },
@@ -234,28 +264,31 @@ internal object AppContainer {
         var rawChatId: ByteArray? = null
         val stored = context.stored
         val inserted =
-            chatOpenRequestCoordinator.runIfCurrent(requestToken) {
-                if (!isCurrentGroupContext(context, requestToken)) return@runIfCurrent false
-                val keySources = crypto.keySources()
-                val chatKey =
-                    if (access == ChatAccess.PUBLIC) {
-                        crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return@runIfCurrent false
-                    } else {
-                        keySources.newRandomKey()
-                    }
-                val nonce = keySources.newRandomKey().copyBytes().take(8).toByteArray()
-                val hash =
-                    crypto.nativeCrypto().genericHash(
-                        "owdm/group-chat/v1".toByteArray(Charsets.UTF_8) +
-                            byteArrayOf(0x1F) + nonce + context.communityId.toByteArray(Charsets.UTF_8) + name.toByteArray(Charsets.UTF_8),
-                        16,
-                    )
-                val chatId = Hex.encode(hash)
-                crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
-                chatRegistry.add(context.communityId, ChatRegistry.Entry(chatId, name, "group"))
-                createdChatId = chatId
-                rawChatId = hash
-                true
+            AccountMutationBarrier.process.withAccountReplacement {
+                chatOpenRequestCoordinator.runIfCurrent(requestToken) {
+                    if (!isCurrentGroupContext(context, requestToken)) return@runIfCurrent false
+                    val keySources = crypto.keySources()
+                    val chatKey =
+                        if (access == ChatAccess.PUBLIC) {
+                            crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return@runIfCurrent false
+                        } else {
+                            keySources.newRandomKey()
+                        }
+                    val nonce = keySources.newRandomKey().copyBytes().take(8).toByteArray()
+                    val hash =
+                        crypto.nativeCrypto().genericHash(
+                            "owdm/group-chat/v1".toByteArray(Charsets.UTF_8) +
+                                byteArrayOf(0x1F) + nonce + context.communityId.toByteArray(Charsets.UTF_8) +
+                                name.toByteArray(Charsets.UTF_8),
+                            16,
+                        )
+                    val chatId = Hex.encode(hash)
+                    crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
+                    chatRegistry.add(context.communityId, ChatRegistry.Entry(chatId, name, "group"))
+                    createdChatId = chatId
+                    rawChatId = hash
+                    true
+                }
             }
         if (!inserted) return null
         val chatId = createdChatId ?: return null
@@ -307,9 +340,9 @@ internal object AppContainer {
         if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return false
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return false
         val plan =
-            AccountMutationBarrier.process.withExclusive {
-                if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return@withExclusive null
-                if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) return@withExclusive null
+            AccountMutationBarrier.process.withStableAccount {
+                if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return@withStableAccount null
+                if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) return@withStableAccount null
                 prepareGroupChatOpen(chatId, chatName, communityId, expectedSelectionRevision, requestToken)
             } ?: return false
         return installPreparedGroupChat(plan)
@@ -322,9 +355,11 @@ internal object AppContainer {
         expectedSelectionRevision: Long?,
         requestToken: ChatOpenRequestCoordinator.Token,
     ): Boolean =
-        prepareGroupChatOpen(chatId, chatName, communityId, expectedSelectionRevision, requestToken)
-            ?.let { installPreparedGroupChat(it) }
-            ?: false
+        AccountMutationBarrier.process.withStableAccount {
+            prepareGroupChatOpen(chatId, chatName, communityId, expectedSelectionRevision, requestToken)
+                ?.let { installPreparedGroupChat(it) }
+                ?: false
+        }
 
     private data class PreparedGroupChatOpen(
         val selection: GroupChatOpenCoordinator.Plan,
@@ -346,7 +381,9 @@ internal object AppContainer {
                 expectedSelectionRevision,
                 requestToken,
             ) ?: return null
-        return PreparedGroupChatOpen(selection, configStore.loadStored(communityId))
+        val seam = chatOpenTestSeam
+        val stored = if (seam != null) seam.loadStored(communityId) else configStore.loadStored(communityId)
+        return PreparedGroupChatOpen(selection, stored)
     }
 
     private fun installPreparedGroupChat(plan: PreparedGroupChatOpen): Boolean {
@@ -395,7 +432,9 @@ internal object AppContainer {
 
     fun retryRecipientRoster(graph: RuntimeGraph) {
         if (runtimeGraph() !== graph || graph.recipientSnapshot() !is RecipientReadiness.Unavailable) return
-        val stored = configStore.loadStored(graph.communityId) ?: return
+        val seam = chatOpenTestSeam
+        val stored = if (seam != null) seam.loadStored(graph.communityId) else configStore.loadStored(graph.communityId)
+        if (stored == null) return
         val requestToken = beginChatOpenRequest()
         val selectionRevision = runtimeSelectionGuard.current()
         if (!updateRosterIfCurrent(
@@ -423,26 +462,34 @@ internal object AppContainer {
         val runtimeKey = graph.communityRuntimeKey
         val communityId = graph.communityId
         val chatId = graph.chatId
-        RecipientRosterEnricher(
-            scope = appScope,
-            graph = graph,
-            applyIfCurrent = { update ->
-                updateRosterIfCurrent(requestToken, selectionRevision, graph, runtimeKey, communityId, chatId, update)
-            },
-            read = {
-                val communityKey =
-                    crypto.chatKeyStore(requireContext()).load(stored.chatId)
-                        ?: throw IllegalStateException("Community key is unavailable")
-                val service =
-                    directoryFactory.directoryService(
-                        baseUrl = stored.config.baseUrl,
-                        username = stored.config.username,
-                        appPassword = stored.config.appPassword,
-                        communityRoot = stored.config.chatRoot,
-                    )
-                service.readDirectory(communityKey)
-            },
-        ).start()
+        val testSeam = chatOpenTestSeam
+        val enrichment =
+            RecipientRosterEnricher(
+                scope = appScope,
+                graph = graph,
+                applyIfCurrent = { update ->
+                    updateRosterIfCurrent(requestToken, selectionRevision, graph, runtimeKey, communityId, chatId, update)
+                },
+                read = {
+                    val seam = testSeam
+                    if (seam != null) {
+                        seam.readDirectory(stored)
+                    } else {
+                        val communityKey =
+                            crypto.chatKeyStore(requireContext()).load(stored.chatId)
+                                ?: throw IllegalStateException("Community key is unavailable")
+                        val service =
+                            directoryFactory.directoryService(
+                                baseUrl = stored.config.baseUrl,
+                                username = stored.config.username,
+                                appPassword = stored.config.appPassword,
+                                communityRoot = stored.config.chatRoot,
+                            )
+                        service.readDirectory(communityKey)
+                    }
+                },
+            ).start()
+        testSeam?.onRosterEnrichmentCompleted?.let { callback -> enrichment.invokeOnCompletion { callback() } }
     }
 
     private fun updateRosterIfCurrent(
@@ -566,7 +613,17 @@ internal object AppContainer {
     }
 
     /** Switch the active community to [communityId] — rebuilds the engine for that community. */
-    fun beginChatOpenRequest(): ChatOpenRequestCoordinator.Token = chatOpenRequestCoordinator.begin()
+    fun beginChatOpenRequest(): ChatOpenRequestCoordinator.Token =
+        chatOpenRequestCoordinator.begin {
+            val active = runtimeGraph()
+            if (active?.recipientSnapshot() is RecipientReadiness.Loading) {
+                EngineWiring.updateGraphIfCurrent(
+                    active,
+                    isContextCurrent = { runtimeGraph() === active },
+                    update = { active.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE)) },
+                )
+            }
+        }
 
     suspend fun switchToCommunity(
         communityId: String,
@@ -574,7 +631,7 @@ internal object AppContainer {
     ): Boolean {
         if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return false
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey
-        return AccountMutationBarrier.process.withExclusive {
+        return AccountMutationBarrier.process.withStableAccount {
             chatOpenRequestCoordinator.runIfCurrent(requestToken) {
                 if (expectedRuntimeKey != null && runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) {
                     return@runIfCurrent false
@@ -612,7 +669,7 @@ internal object AppContainer {
      */
     suspend fun startDm(peer: DirectoryEntry): String? {
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return null
-        return AccountMutationBarrier.process.withExclusive {
+        return AccountMutationBarrier.process.withStableAccount {
             if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) null else startDmExclusive(peer)
         }
     }

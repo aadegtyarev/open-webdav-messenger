@@ -10,7 +10,12 @@ internal class ChatOpenRequestCoordinator {
     private val lock = Any()
     private var generation = 0L
 
-    fun begin(): Token = synchronized(lock) { Token(this, ++generation) }
+    fun begin(onSuperseded: () -> Unit = {}): Token =
+        synchronized(lock) {
+            val token = Token(this, ++generation)
+            onSuperseded()
+            token
+        }
 
     fun isCurrent(token: Token): Boolean = synchronized(lock) { token.owner === this && token.generation == generation }
 

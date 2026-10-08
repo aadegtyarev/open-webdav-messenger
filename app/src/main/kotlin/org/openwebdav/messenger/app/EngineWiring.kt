@@ -188,6 +188,12 @@ internal object EngineWiring {
             if (activeGraph.communityRuntimeKey != expectedCommunityRuntimeKey || activeGraph.communityId != communityId) {
                 return@synchronized false
             }
+            val readiness =
+                when (val current = activeGraph.recipientSnapshot()) {
+                    RecipientReadiness.Loading ->
+                        RecipientReadiness.Unavailable("Verified roster lookup needs retry after credential rotation")
+                    else -> current
+                }
             reconfigure(
                 config = config,
                 chatId = activeGraph.chatId,
@@ -197,7 +203,7 @@ internal object EngineWiring {
                 communityId = communityId,
                 roster = activeGraph.roster,
                 memberNames = activeGraph.memberNames,
-                recipientReadiness = activeGraph.recipientSnapshot(),
+                recipientReadiness = readiness,
             )
             true
         }
@@ -366,9 +372,21 @@ internal object EngineWiring {
                                 if (newConfig != null) {
                                     // Apply the new credential: persist it and rebuild the engine so
                                     // the poll cycle below (and all future cycles) use the new URL.
-                                    if (deps.saveRotatedConfig(newConfig, selectedCommunityId)) {
-                                        // Delete the credential blob from disk (best-effort — if it
-                                        // stays, the next cycle re-opens and no-ops idempotently).
+                                    val saved =
+                                        AccountMutationBarrier.process.withAccountReplacement {
+                                            if (!deps.saveRotatedConfig(newConfig, selectedCommunityId)) {
+                                                false
+                                            } else {
+                                                reconfigureIfCurrent(
+                                                    expectedCommunityRuntimeKey = g.communityRuntimeKey,
+                                                    config = newConfig,
+                                                    communityId = selectedCommunityId,
+                                                )
+                                                true
+                                            }
+                                        }
+                                    if (saved) {
+                                        // Delete remotely only after releasing the local account replacement gate.
                                         try {
                                             val delTransport = TransportFactory.create(newConfig)
                                             @Suppress("TooGenericExceptionCaught")
@@ -376,16 +394,6 @@ internal object EngineWiring {
                                         } catch (_: Exception) {
                                             // best-effort — blob stays on disk, next cycle retries
                                         }
-                                        // Rebuild the engine with the new config. The current graph
-                                        // fields (chatId, communityName, chatKey, identity) stay the same;
-                                        // only the ConnectionConfig changes.
-                                        reconfigureIfCurrent(
-                                            expectedCommunityRuntimeKey = g.communityRuntimeKey,
-                                            config = newConfig,
-                                            communityId = selectedCommunityId,
-                                        )
-                                        // Return immediately — the engine was rebuilt with the new
-                                        // credential; the next scheduled poll will use it.
                                         return@withExclusive CycleOutcome(
                                             newCount = 0,
                                             skippedCount = 0,

@@ -113,8 +113,11 @@ cursors merge to the lexicographically later order token. Legacy rows carrying
 an outbox envelope are never reassigned by this history repair. Repeated repair
 is idempotent. Changing scope must not
 display or send with stale state from the previous runtime. Credential-only
-runtime rotation preserves the active graph's roster and member names so peer
-recipients and change-index notifications remain intact. Group creation uses
+runtime rotation preserves Ready roster/member-name state so peer recipients
+and change-index notifications remain intact; an in-flight Loading roster becomes
+Unavailable with retry rather than remaining stuck on the replaced graph. Local
+chat open/install synchronizes with account replacement, but is not held behind a
+network poll. Group creation uses
 the selected community's stored connection and runtime graph and opens the
 created group in that community. Group creation and chat opening retain one
 production request token issued at the Create/open tap. Group/DM roster

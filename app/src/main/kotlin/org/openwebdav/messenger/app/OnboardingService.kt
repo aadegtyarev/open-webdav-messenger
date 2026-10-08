@@ -110,7 +110,7 @@ internal class OnboardingService(
         return JoinResult.Joined(token.chatId, token.communityName)
     }
 
-    private fun persistAndReconfigure(
+    private suspend fun persistAndReconfigure(
         config: ConnectionConfig,
         chatId: String,
         communityName: String,
@@ -118,9 +118,11 @@ internal class OnboardingService(
         identity: Identity,
         isHost: Boolean = false,
     ) {
-        deps.chatKeyStore().store(chatId, chatKey)
-        deps.saveConfig(config, chatId, communityName)
-        deps.reconfigure(config, chatId, communityName, chatKey, identity, isHost)
+        AccountMutationBarrier.process.withAccountReplacement {
+            deps.chatKeyStore().store(chatId, chatKey)
+            deps.saveConfig(config, chatId, communityName)
+            deps.reconfigure(config, chatId, communityName, chatKey, identity, isHost)
+        }
     }
 
     private fun isHttps(url: String): Boolean = url.trim().lowercase().startsWith("https://")
