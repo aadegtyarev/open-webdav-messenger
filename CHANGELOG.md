@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.24.1] — 2026-10-08
+
+### Added
+
+- Private group rosters now use verified, chat-key-authenticated membership claims.
+
+### Changed
+
+- New invites require authenticated explicit public/private access. Legacy invites
+  without authenticated access are rejected; request a fresh invite link.
+- Public group and direct-message roster behavior is unchanged.
+
 ## [0.24.0] — 2026-10-08
 
 ### Added
