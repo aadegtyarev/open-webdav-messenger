@@ -71,6 +71,12 @@ text. No markup rendering, no linkification, no auto-loading of remote content.
 This is a conscious security decision — the renderer never interprets any markup
 language.
 
+**Local feed-open latency (3-open):** Every chat type—General, group, and DM—
+installs its local runtime and displays the Room-backed Feed without waiting for
+WebDAV roster, directory, or metadata reads. A slow or unavailable network does
+not delay the local Feed. Opening uses account stability only; it does not wait
+on the network-poll serialization barrier.
+
 **Offline readiness (3-offline):** The feed shows whatever messages are in the
 local Room database. There is no global network indicator or "pull to refresh" —
 the underlying sync cycle handles freshness transparently. Group and DM feeds
@@ -124,7 +130,9 @@ production request token issued at the Create/open tap. Group/DM roster
 resolution after opening is asynchronous and applies only while its request
 token, exact runtime graph, community, chat, and selection revision remain
 current. Cancellation propagates; stale enrichment cannot alter the active
-runtime. A delayed operation may mutate selection/runtime or install only while
+runtime. A superseding open converts abandoned Loading to retryable
+Unavailable before the new request establishes its own readiness. A delayed
+operation may mutate selection/runtime or install only while
 its token is current and its
 captured graph and selection revision remain valid; a later chat tap invalidates
 earlier work before mutation and again at install after suspension. When group
