@@ -13,7 +13,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.openwebdav.messenger.keystore.CommunityRegistry
+import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.HistoryKeyStore
+import org.openwebdav.messenger.transport.ConnectionConfig
 
 /**
  * room_migration_tested (stack-notes Room migrations) — the
@@ -182,6 +185,182 @@ class MessengerDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun alreadyVersion6StartupRepairMovesSoleOwnerHistoryAndPreservesConflictsAndOutbox() {
+        val legacy = MessengerDatabase.LEGACY_UNSCOPED_COMMUNITY_ID
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val priorEntries = configureRepairCommunity(context)
+        helper.createDatabase(TEST_DB, 6).apply {
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, " +
+                    "kind, body, receivedAtMillis, sendStatus) VALUES ('$legacy', 'general-old', 'general', '1', " +
+                    "'s', 1, 'history', 1, 'SENT')",
+            )
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, " +
+                    "kind, body, receivedAtMillis, sendStatus) VALUES ('$legacy', 'collision', 'general', '2', " +
+                    "'s', 1, 'legacy-copy', 2, 'SENT')",
+            )
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, " +
+                    "kind, body, receivedAtMillis, sendStatus) VALUES ('community-a', 'collision', 'general', '2', " +
+                    "'s', 1, 'owned-copy', 2, 'SENT')",
+            )
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, kind, body, receivedAtMillis, " +
+                    "sendStatus, outboxEnvelope) VALUES ('$legacy', 'legacy-outbox', 'general', '3', 's', 1, 'retry', 3, " +
+                    "'FAILED', X'0102')",
+            )
+            execSQL("INSERT INTO sync_cursors VALUES ('$legacy', 'general', '1')")
+            execSQL("INSERT INTO sync_cursors VALUES ('community-a', 'general', '2')")
+            close()
+        }
+        try {
+            val db =
+                Room.databaseBuilder(context, MessengerDatabase::class.java, TEST_DB)
+                    .addCallback(MessengerDatabase.legacyHistoryRepairCallback(context))
+                    .openHelperFactory(FrameworkSQLiteOpenHelperFactory())
+                    .build()
+            try {
+                kotlinx.coroutines.runBlocking {
+                    val dao = db.messageDao()
+                    assertEquals(1, dao.count("community-a", "general-old"))
+                    assertEquals(1, dao.count("__legacy_unscoped__", "collision"))
+                    assertEquals(1, dao.count("community-a", "collision"))
+                    assertEquals(1, dao.count("__legacy_unscoped__", "legacy-outbox"))
+                    assertEquals(emptyList<org.openwebdav.messenger.data.MessageEntity>(), dao.pendingOutgoing("community-a"))
+                    db.openHelper.readableDatabase.query(
+                        "SELECT outboxCommunityId FROM messages WHERE messageId = 'legacy-outbox'",
+                    ).use { row ->
+                        assertEquals(true, row.moveToFirst())
+                        assertEquals(true, row.isNull(0))
+                    }
+                    assertEquals("2", db.syncCursorDao().cursorFor("community-a", "general")?.orderToken)
+                }
+            } finally {
+                db.close()
+            }
+            val reopened =
+                Room.databaseBuilder(context, MessengerDatabase::class.java, TEST_DB)
+                    .addCallback(MessengerDatabase.legacyHistoryRepairCallback(context))
+                    .openHelperFactory(FrameworkSQLiteOpenHelperFactory())
+                    .build()
+            try {
+                kotlinx.coroutines.runBlocking {
+                    assertEquals(1, reopened.messageDao().count("community-a", "general-old"))
+                    assertEquals(1, reopened.messageDao().count("__legacy_unscoped__", "collision"))
+                }
+            } finally {
+                reopened.close()
+            }
+        } finally {
+            restoreRepairCommunity(context, priorEntries)
+            context.deleteDatabase(TEST_DB)
+        }
+    }
+
+    @Test
+    fun upgradedLegacyGeneralHistoryIsRepairedBeforeRoomIsReturned() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val priorEntries = configureRepairCommunity(context)
+        helper.createDatabase(TEST_DB, 4).apply {
+            execSQL(
+                "INSERT INTO messages (messageId, chatId, orderToken, senderSignPub, kind, body, replyTo, targetId, " +
+                    "reactionIndex, sendTimestampMillis, receivedAtMillis, sendStatus, outboxEnvelope, outboxRecipients, " +
+                    "outboxCommunityId) VALUES ('old-general', 'general-chat', '0001', 's', 1, 'old history', NULL, " +
+                    "NULL, NULL, 1, 2, 'SENT', NULL, NULL, NULL)",
+            )
+            execSQL("INSERT INTO sync_cursors VALUES ('general-chat', '0001')")
+            close()
+        }
+        try {
+            val db =
+                Room.databaseBuilder(context, MessengerDatabase::class.java, TEST_DB)
+                    .addMigrations(
+                        MessengerDatabase.MIGRATION_1_2,
+                        MessengerDatabase.MIGRATION_2_3,
+                        MessengerDatabase.MIGRATION_3_4,
+                        MessengerDatabase.MIGRATION_4_5,
+                        MessengerDatabase.MIGRATION_5_6,
+                    )
+                    .addCallback(MessengerDatabase.legacyHistoryRepairCallback(context))
+                    .openHelperFactory(FrameworkSQLiteOpenHelperFactory())
+                    .build()
+            try {
+                kotlinx.coroutines.runBlocking {
+                    assertEquals(1, db.messageDao().count("community-a", "old-general"))
+                    assertEquals("0001", db.syncCursorDao().cursorFor("community-a", "general-chat")?.orderToken)
+                }
+            } finally {
+                db.close()
+            }
+        } finally {
+            restoreRepairCommunity(context, priorEntries)
+            context.deleteDatabase(TEST_DB)
+        }
+    }
+
+    @Test
+    fun ambiguousOwnersLeaveLegacyRowsAndCursorsUnchanged() {
+        val legacy = MessengerDatabase.LEGACY_UNSCOPED_COMMUNITY_ID
+        helper.createDatabase(TEST_DB, 6).apply {
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, " +
+                    "kind, body, receivedAtMillis, sendStatus) VALUES ('$legacy', 'ambiguous', 'general', '1', " +
+                    "'s', 1, 'history', 1, 'SENT')",
+            )
+            execSQL("INSERT INTO sync_cursors VALUES ('$legacy', 'general', '1')")
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 6, true).use { db ->
+            LegacyHistoryRepair.repair(db, listOf("community-a", "community-b"))
+            db.query("SELECT communityId FROM messages WHERE messageId = 'ambiguous'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(legacy, row.getString(0))
+            }
+            db.query("SELECT communityId FROM sync_cursors WHERE chatId = 'general'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(legacy, row.getString(0))
+            }
+        }
+    }
+
+    @Test
+    fun unreadable_enumerated_connection_keeps_legacy_rows_unscoped() {
+        val legacy = MessengerDatabase.LEGACY_UNSCOPED_COMMUNITY_ID
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val priorEntries = configureRepairCommunity(context)
+        val unreadableFile = java.io.File(context.filesDir, "connconfig/config.bin-community-b")
+        unreadableFile.writeBytes(byteArrayOf(1, 2, 3))
+        helper.createDatabase(TEST_DB, 6).apply {
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, " +
+                    "kind, body, receivedAtMillis, sendStatus) VALUES ('$legacy', 'hidden-ambiguous', 'general', '1', " +
+                    "'s', 1, 'history', 1, 'SENT')",
+            )
+            close()
+        }
+        try {
+            val db =
+                Room.databaseBuilder(context, MessengerDatabase::class.java, TEST_DB)
+                    .addCallback(MessengerDatabase.legacyHistoryRepairCallback(context))
+                    .openHelperFactory(FrameworkSQLiteOpenHelperFactory())
+                    .build()
+            try {
+                kotlinx.coroutines.runBlocking {
+                    assertEquals(1, db.messageDao().count(legacy, "hidden-ambiguous"))
+                    assertEquals(0, db.messageDao().count("community-a", "hidden-ambiguous"))
+                }
+            } finally {
+                db.close()
+            }
+        } finally {
+            unreadableFile.delete()
+            restoreRepairCommunity(context, priorEntries)
+            context.deleteDatabase(TEST_DB)
+        }
+    }
+
     /** Open the real Room database (SQLCipher-encrypted) and round-trip a write/read on-device. */
     @Test
     fun opensRealDatabaseAndPersists() {
@@ -202,6 +381,27 @@ class MessengerDatabaseMigrationTest {
             db.close()
             context.deleteDatabase(REAL_DB)
         }
+    }
+
+    private fun configureRepairCommunity(context: android.content.Context): List<CommunityRegistry.Entry> {
+        val registry = CommunityRegistry(context)
+        val priorEntries = registry.all()
+        ConnectionConfigStore(context).save(
+            ConnectionConfig("https://disk.example.test", "user", "fake-password", "root"),
+            "anchor",
+            "A",
+            "community-a",
+        )
+        registry.replace(listOf(CommunityRegistry.Entry("community-a", "A", "anchor")))
+        return priorEntries
+    }
+
+    private fun restoreRepairCommunity(
+        context: android.content.Context,
+        entries: List<CommunityRegistry.Entry>,
+    ) {
+        CommunityRegistry(context).replace(entries)
+        ConnectionConfigStore(context).clear("community-a")
     }
 
     private companion object {

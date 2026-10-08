@@ -27,15 +27,20 @@ internal suspend fun <Context> createGroupInSelectedCommunity(
     communityId: String,
     activeCommunityId: String,
     isRuntimeCurrent: () -> Boolean = { true },
+    isRequestCurrent: () -> Boolean = { true },
+    isSelectedContextCurrent: (Context) -> Boolean = { isRequestCurrent() },
     activateCommunity: suspend (String) -> Boolean,
     resolveContext: suspend (String) -> Context?,
     create: suspend (Context) -> String?,
     open: suspend (Context, String) -> Boolean,
 ): String? =
     AccountMutationBarrier.process.withExclusive {
-        if (!isRuntimeCurrent()) return@withExclusive null
+        if (!isRequestCurrent() || !isRuntimeCurrent()) return@withExclusive null
         if (communityId != activeCommunityId && !activateCommunity(communityId)) return@withExclusive null
+        if (!isRequestCurrent()) return@withExclusive null
         val context = resolveContext(communityId) ?: return@withExclusive null
+        if (!isSelectedContextCurrent(context)) return@withExclusive null
         val chatId = create(context) ?: return@withExclusive null
-        chatId.takeIf { open(context, it) }
+        if (!isSelectedContextCurrent(context)) return@withExclusive null
+        chatId.takeIf { isSelectedContextCurrent(context) && open(context, it) }
     }

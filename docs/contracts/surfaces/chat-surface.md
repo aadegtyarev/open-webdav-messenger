@@ -92,17 +92,34 @@ A recoverable draft is retained if local persistence fails.
 community and chat. Room history, unread/read state, and sync cursors are
 partitioned by local community plus chat ID, so identical protocol DM IDs in
 different WebDAV roots cannot merge feed state or advance one another's cursor.
-Wire chat IDs and crypto are unchanged. History whose prior community owner was
-not persisted is retained under an unscoped legacy namespace and is not exposed
-in a joined feed rather than guessed into a community. Changing scope must not
+Wire chat IDs and crypto are unchanged. At database open, legacy messages and
+sync cursors are transactionally repaired into the sole distinct joined
+community proven by the durable community registry and enumerated stored
+connections (or, only when that registry is empty, a single stored legacy
+connection with a nonblank joined-chat marker). Every enumerated connection must
+decode and classify consistently; an unreadable or unclassifiable connection
+fails repair closed. Current selection alone never establishes ownership. With
+zero or multiple joined communities, legacy
+history stays hidden and unassigned. A colliding message ID is preserved in the
+legacy namespace while the already-owned row remains unchanged; colliding
+cursors merge to the lexicographically later order token. Legacy rows carrying
+an outbox envelope are never reassigned by this history repair. Repeated repair
+is idempotent. Changing scope must not
 display or send with stale state from the previous runtime. Credential-only
 runtime rotation preserves the active graph's roster and member names so peer
 recipients and change-index notifications remain intact. Group creation uses
 the selected community's stored connection and runtime graph and opens the
-created group in that community. A delayed open atomically installs only against
-the graph and selection revision it captured. Credential rotation changes the
-stored connection credentials while retaining the persisted community anchor
-chat ID and name, even while a group or DM is open.
+created group in that community. Group creation and chat opening retain one
+production request token issued at the Create/open tap. A delayed operation may
+mutate selection/runtime or install only while its token is current and its
+captured graph and selection revision remain valid; a later chat tap invalidates
+earlier work before mutation and again at install after suspension. When group
+creation intentionally activates a different community, it captures and validates
+the new selected graph/revision; an unrelated intervening context change aborts
+creation/opening. Cancellation of a public-group publication propagates instead
+of being reported as success.
+Credential rotation changes the stored connection credentials while retaining
+the persisted community anchor chat ID and name, even while a group or DM is open.
 
 **Accessible retry control:** Failed-message retry is a labelled button with a
 minimum 48×48dp target. It invokes the existing retry operation for the original

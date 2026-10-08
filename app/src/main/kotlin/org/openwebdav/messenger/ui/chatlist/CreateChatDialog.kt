@@ -126,8 +126,9 @@ internal fun CreateChatDialog(
                     if (name.isBlank() || creating) return@TextButton
                     creating = true
                     val access = if (isPrivate) ChatAccess.PRIVATE else ChatAccess.PUBLIC
+                    val requestToken = AppContainer.beginChatOpenRequest()
                     scope.launch(Dispatchers.IO) {
-                        val chatId = AppContainer.createGroupChat(name.trim(), community.id, access)
+                        val chatId = AppContainer.createGroupChat(name.trim(), community.id, access, requestToken)
                         withContext(Dispatchers.Main) {
                             creating = false
                             if (chatId != null) {

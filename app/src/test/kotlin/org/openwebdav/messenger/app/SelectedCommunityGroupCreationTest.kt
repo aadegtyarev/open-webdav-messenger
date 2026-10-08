@@ -1,5 +1,8 @@
 package org.openwebdav.messenger.app
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -95,6 +98,88 @@ class SelectedCommunityGroupCreationTest {
 
             assertEquals("group-b", result)
             assertEquals("community-b", activeCommunity)
+        }
+
+    @Test
+    fun later_general_request_stays_current_when_suspended_group_creation_resumes() =
+        runTest {
+            val requests = ChatOpenRequestCoordinator()
+            val createToken = requests.begin()
+            val publishStarted = CompletableDeferred<Unit>()
+            val finishPublish = CompletableDeferred<String?>()
+            val context = TestContext("community-a", TestGraph("community-a", "transport-a", "identity-a"))
+            var activeCommunity = "community-a"
+            var runtimeCommunity = "community-a"
+            var revision = 0
+            var mutations = 0
+            var opens = 0
+
+            val creation =
+                async {
+                    createGroupInSelectedCommunity(
+                        communityId = "community-a",
+                        activeCommunityId = activeCommunity,
+                        isRuntimeCurrent = { runtimeCommunity == "community-a" },
+                        isRequestCurrent = { requests.isCurrent(createToken) },
+                        activateCommunity = { false },
+                        resolveContext = { context },
+                        create = {
+                            mutations++
+                            publishStarted.complete(Unit)
+                            finishPublish.await()
+                        },
+                        open = { _, _ ->
+                            opens++
+                            true
+                        },
+                    )
+                }
+            publishStarted.await()
+            val mutationsBeforeGeneral = mutations
+            val generalToken = requests.begin()
+
+            finishPublish.complete("group-a")
+            assertNull(creation.await())
+            assertEquals("community-a", activeCommunity)
+            assertEquals("community-a", runtimeCommunity)
+            assertEquals(0, revision)
+            assertEquals(mutationsBeforeGeneral, mutations)
+            assertEquals(0, opens)
+            assertTrue(
+                requests.runIfCurrent(generalToken) {
+                    activeCommunity = "community-b"
+                    runtimeCommunity = "community-b"
+                    revision++
+                    true
+                },
+            )
+            assertTrue(requests.isCurrent(generalToken))
+            assertEquals("community-b", activeCommunity)
+            assertEquals("community-b", runtimeCommunity)
+            assertEquals(1, revision)
+        }
+
+    @Test
+    fun cancellation_from_group_publication_propagates_through_creation() =
+        runTest {
+            val cancellation = CancellationException("publication cancelled")
+            val context = TestContext("community-a", TestGraph("community-a", "transport-a", "identity-a"))
+            try {
+                createGroupInSelectedCommunity(
+                    communityId = "community-a",
+                    activeCommunityId = "community-a",
+                    activateCommunity = { false },
+                    resolveContext = { context },
+                    create = {
+                        bestEffortGroupPublication { throw cancellation }
+                        "group-a"
+                    },
+                    open = { _, _ -> error("cancelled creation must not open") },
+                )
+                throw AssertionError("expected cancellation")
+            } catch (actual: CancellationException) {
+                assertSame(cancellation, actual)
+            }
         }
 
     private data class TestGraph(val communityId: String, val transport: String, val identity: String)

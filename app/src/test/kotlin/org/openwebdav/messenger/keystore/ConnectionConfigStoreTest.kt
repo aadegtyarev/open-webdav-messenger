@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.openwebdav.messenger.data.LegacyHistoryOwnerResolver
 import org.openwebdav.messenger.transport.ConnectionConfig
 
 /**
@@ -51,6 +52,30 @@ class ConnectionConfigStoreTest {
         assertEquals("community-anchor-chat", rotated.chatId)
         assertEquals("Community anchor", rotated.communityName)
         assertNotEquals(openedGroupId, rotated.chatId)
+    }
+
+    @Test
+    fun unreadable_enumerated_connection_disables_single_owner_repair() {
+        val entry = CommunityRegistry.Entry("community-a", "A", "anchor-a")
+        val readable = StoredConnection(ConnectionConfig("https://disk.example.test", "u", "p", "root"), "anchor-a", "A")
+        val loadedIds = mutableListOf<String>()
+
+        val owner =
+            LegacyHistoryOwnerResolver.resolve(
+                registryEntries = listOf(entry),
+                physicalConfigIds = listOf("community-a", "community-b"),
+                loadStored = { id ->
+                    loadedIds += id
+                    if (id == "community-a") readable else null
+                },
+            )
+
+        assertNull(owner)
+        assertEquals(listOf("community-a", "community-b"), loadedIds)
+        assertEquals(
+            "community-a",
+            LegacyHistoryOwnerResolver.resolve(listOf(entry, entry), listOf("community-a", "community-a")) { readable },
+        )
     }
 
     /** A corrupt / wrong-version blob deserializes to null (reject-don't-guess), never a partial config. */
