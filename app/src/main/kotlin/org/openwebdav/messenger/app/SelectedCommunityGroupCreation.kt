@@ -35,7 +35,10 @@ internal suspend fun <Context> createGroupInSelectedCommunity(
     AccountMutationBarrier.process.withExclusive {
         if (!isRuntimeCurrent()) return@withExclusive null
         if (communityId != activeCommunityId && !activateCommunity(communityId)) return@withExclusive null
+        if (!isRuntimeCurrent()) return@withExclusive null
         val context = resolveContext(communityId) ?: return@withExclusive null
+        if (!isRuntimeCurrent()) return@withExclusive null
         val chatId = create(context) ?: return@withExclusive null
-        chatId.takeIf { open(context, it) }
+        if (!isRuntimeCurrent()) return@withExclusive null
+        chatId.takeIf { isRuntimeCurrent() && open(context, it) }
     }

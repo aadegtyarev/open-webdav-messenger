@@ -109,12 +109,14 @@ display or send with stale state from the previous runtime. Credential-only
 runtime rotation preserves the active graph's roster and member names so peer
 recipients and change-index notifications remain intact. Group creation uses
 the selected community's stored connection and runtime graph and opens the
-created group in that community. A delayed open atomically installs only while
-its production request token is current and the captured graph and selection
-revision remain valid. Tokens are issued at tap dispatch, invalidating earlier
-work before selection/runtime mutation and again at install after suspension.
-Credential rotation changes the stored connection credentials while retaining the persisted community anchor
-chat ID and name, even while a group or DM is open.
+created group in that community. Group creation and chat opening retain one
+production request token issued at the Create/open tap. A delayed operation may
+mutate selection/runtime or install only while its token is current and its
+captured graph and selection revision remain valid; a later chat tap invalidates
+earlier work before mutation and again at install after suspension. Cancellation
+of a public-group publication propagates instead of being reported as success.
+Credential rotation changes the stored connection credentials while retaining
+the persisted community anchor chat ID and name, even while a group or DM is open.
 
 **Accessible retry control:** Failed-message retry is a labelled button with a
 minimum 48×48dp target. It invokes the existing retry operation for the original

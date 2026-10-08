@@ -3,6 +3,7 @@ package org.openwebdav.messenger.app
 import android.content.Context
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -167,13 +168,22 @@ internal object AppContainer {
         name: String,
         communityId: String = currentCommunityId,
         access: ChatAccess = ChatAccess.PUBLIC,
+        requestToken: ChatOpenRequestCoordinator.Token = beginChatOpenRequest(),
     ): String? {
+        if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return null
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return null
         return createGroupInSelectedCommunity(
             communityId = communityId,
             activeCommunityId = currentCommunityId,
-            isRuntimeCurrent = { runtimeGraph()?.communityRuntimeKey == expectedRuntimeKey },
-            activateCommunity = ::switchToCommunityExclusive,
+            isRuntimeCurrent = {
+                chatOpenRequestCoordinator.isCurrent(requestToken) &&
+                    runtimeGraph()?.communityRuntimeKey == expectedRuntimeKey
+            },
+            activateCommunity = { selected ->
+                chatOpenRequestCoordinator.runIfCurrent(requestToken) {
+                    switchToCommunityExclusive(selected)
+                }
+            },
             resolveContext = { selectedId ->
                 selectedCommunityGroupContext(
                     communityId = selectedId,
@@ -183,15 +193,9 @@ internal object AppContainer {
                     selectionRevision = runtimeSelectionGuard.current(),
                 )
             },
-            create = { context -> createGroupChatForContext(name, access, context) },
+            create = { context -> createGroupChatForContext(name, access, context, requestToken) },
             open = { context, chatId ->
-                openGroupChatExclusive(
-                    chatId,
-                    name,
-                    context.communityId,
-                    context.selectionRevision,
-                    beginChatOpenRequest(),
-                )
+                openGroupChatExclusive(chatId, name, context.communityId, context.selectionRevision, requestToken)
             },
         )
     }
@@ -200,29 +204,40 @@ internal object AppContainer {
         name: String,
         access: ChatAccess,
         context: SelectedCommunityGroupContext,
+        requestToken: ChatOpenRequestCoordinator.Token,
     ): String? {
-        val communityId = context.communityId
+        var createdChatId: String? = null
+        var rawChatId: ByteArray? = null
         val stored = context.stored
-        val graph = context.graph
-        val keySources = crypto.keySources()
-        val chatKey =
-            if (access == ChatAccess.PUBLIC) {
-                crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return null
-            } else {
-                keySources.newRandomKey()
+        val inserted =
+            chatOpenRequestCoordinator.runIfCurrent(requestToken) {
+                val keySources = crypto.keySources()
+                val chatKey =
+                    if (access == ChatAccess.PUBLIC) {
+                        crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return@runIfCurrent false
+                    } else {
+                        keySources.newRandomKey()
+                    }
+                val nonce = keySources.newRandomKey().copyBytes().take(8).toByteArray()
+                val hash =
+                    crypto.nativeCrypto().genericHash(
+                        "owdm/group-chat/v1".toByteArray(Charsets.UTF_8) +
+                            byteArrayOf(0x1F) + nonce + context.communityId.toByteArray(Charsets.UTF_8) + name.toByteArray(Charsets.UTF_8),
+                        16,
+                    )
+                val chatId = Hex.encode(hash)
+                crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
+                chatRegistry.add(context.communityId, ChatRegistry.Entry(chatId, name, "group"))
+                createdChatId = chatId
+                rawChatId = hash
+                true
             }
-        // Public chats share a key, so mix a nonce and community identity into the group ID.
-        val nonce = keySources.newRandomKey().copyBytes().take(8).toByteArray()
-        val hash =
-            crypto.nativeCrypto().genericHash(
-                "owdm/group-chat/v1".toByteArray(Charsets.UTF_8) +
-                    byteArrayOf(0x1F) + nonce + communityId.toByteArray(Charsets.UTF_8) + name.toByteArray(Charsets.UTF_8),
-                16,
-            )
-        val chatId = Hex.encode(hash)
-        crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
-        chatRegistry.add(communityId, ChatRegistry.Entry(chatId, name, "group"))
-        if (access == ChatAccess.PUBLIC && !publishPublicGroup(stored, graph, hash, name)) return null
+        if (!inserted) return null
+        val chatId = createdChatId ?: return null
+        if (access == ChatAccess.PUBLIC) {
+            if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return null
+            if (!publishPublicGroup(stored, context.graph, rawChatId ?: return null, name)) return null
+        }
         return chatId
     }
 
@@ -231,8 +246,8 @@ internal object AppContainer {
         graph: RuntimeGraph,
         rawChatId: ByteArray,
         title: String,
-    ): Boolean {
-        try {
+    ): Boolean =
+        bestEffortGroupPublication {
             val service =
                 chatDirectoryFactory.chatDirectoryService(
                     baseUrl = stored.config.baseUrl,
@@ -240,7 +255,7 @@ internal object AppContainer {
                     appPassword = stored.config.appPassword,
                     communityRoot = stored.config.chatRoot,
                 )
-            val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return false
+            val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return@bestEffortGroupPublication false
             service.publishChatEntry(
                 identity = graph.identity,
                 chatId = rawChatId,
@@ -250,12 +265,8 @@ internal object AppContainer {
                 versionCounter = 1,
                 communityKey = communityKey,
             )
-            return true
-        } catch (_: Exception) {
-            // Directory publish is best-effort; the locally registered chat remains available.
-            return true
+            true
         }
-    }
 
     /**
      * Open an existing group chat by [chatId]. Loads the key, loads the roster from the directory,
@@ -336,6 +347,8 @@ internal object AppContainer {
                         memberNames[memberHex] = entry.displayName
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 // Best-effort roster — start with just self.
             }
