@@ -95,7 +95,6 @@ internal class VerifiedRosterCache(
 
     fun invalidateAll() =
         synchronized(lock) {
-            generation++
-            store.clear()
+            (++generation).run { store.clear() }
         }
 }
