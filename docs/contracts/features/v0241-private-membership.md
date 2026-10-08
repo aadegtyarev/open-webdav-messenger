@@ -10,11 +10,11 @@ a valid remote join claim is listed, read, and verified; self remains locally
 present for UX and send normalization. General/public retain the exact full
 community directory, and DMs retain exactly self plus peer.
 
-This changes membership evidence only. The existing bearer invite remains a
-capability to the chat key; its access semantics are unchanged. It introduces no
-new trust authority: claims are gated by current verified community directory
-entries. After implementation and release, pause for device validation before a
-separate removal/revocation feature.
+Membership evidence only changes. The bearer invite remains a capability to the
+chat key; it carries no community ID/key/credentials and grants no privilege. A
+claim proves chat-key possession and self-asserted identity; an accessible current
+directory match strengthens provenance but is not required to join that chat.
+Pause for device validation before separate removal/revocation work.
 
 ## Affected contracts
 
@@ -26,16 +26,16 @@ separate removal/revocation feature.
 
 ## Protocol
 
-Each private chat has a remote membership collection. When creating, opening, or
-importing a private chat, a client publishes an idempotent self join claim. The
-canonical claim binds protocol version, community ID, chat ID, signing public
-identity, and box public identity. It proves control of the signing identity with
-Ed25519 and possession of the chat key with an AEAD/MAC proof using the chat key
-and explicit domain separation. Verification strictly bounds and validates
-canonical bytes, paths, content, community/chat context, signature, and key
-possession; it cross-checks the exact signing+box pair against a current verified
-community `DirectoryEntry`. Unknown, mismatched, tampered, cross-context/replayed,
-and duplicate-identity claims fail closed.
+Each private chat has a remote membership collection. Create/open/import
+publishes an idempotent self claim binding protocol version, community ID, chat ID,
+signing+box public identities, and canonical bytes. Ed25519 proves signer control;
+chat-key AEAD/MAC with domain separation proves key possession. Strictly validate
+bounds, paths, content, canonicality, context, signature, and key proof. If the
+current directory is accessible, an exact signing+box match marks community
+verification; absence/inaccessibility does not reject a valid claim or grant
+community access. A conflicting directory entry for the signer fails closed.
+Exact same signer+canonical claim is one member; signer equivocation (different
+box key or claim context), tampering, and cross-context claims fail closed.
 
 Only remotely listed/read and verified claims may supply private recipients.
 Invite creation or an attempt to publish a claim never adds a peer. Local self is
@@ -43,6 +43,8 @@ always present, but publication status is truthful. Import stores the invite key
 registers the chat, and attempts self publication. Offline/write failure leaves
 retryable pending state and explains that other members may not see the user yet.
 Neither publication nor listing implies remote acknowledgement or atomic invite.
+UI labels self-asserted display names as private-chat-only when no accessible
+matching directory entry exists; it never implies community verification.
 
 Private open reads only its membership collection, never the full directory as a
 roster. Its exact community+chat claim snapshot has explicit provenance and is
@@ -60,11 +62,10 @@ public behavior is unchanged; DM behavior is unchanged.
 
 ## Lifecycle, privacy, and limits
 
-Legacy private chats do not infer invitees. Each upgraded client publishes its own
-claim on open and via background retry; the roster converges as members open. The
-UI explains this transitional, append-only membership state. Removal, revocation,
-roles/host authority, and deleting history already downloaded are non-goals for
-this release and require a separate approved feature.
+Legacy private chats infer no invitees. Each upgraded client publishes self on
+open/background retry; the roster converges as members open. UI explains this
+transitional append-only state. Removal, revocation, roles/host authority, and
+removing downloaded history are a separate feature's non-goals here.
 
 Backup/restore does not export remote claims or cache as authoritative membership.
 A restored identity/key republishes its own claim and invalidates cache. These are
@@ -72,7 +73,8 @@ best-effort operations with honest status, not remote-acknowledged or crash-atom
 membership. Collection listing/read and claim sizes/counts are bounded with DoS
 limits. Never reveal raw chat keys, private keys, or credentials. The WebDAV disk
 operator may observe membership-collection traffic/existence consistent with
-current chat metadata; this is an explicit privacy limitation.
+current chat metadata; this is an explicit privacy limitation. A private-chat-only
+claim conveys no community membership, directory trust, or community access.
 
 ## Acceptance and validation
 
@@ -92,9 +94,6 @@ current chat metadata; this is an explicit privacy limitation.
 
 ## Scope boundary
 
-Do not change bearer-invite key access semantics, introduce a trust authority,
-claim acknowledgement/atomicity, or broaden General/public/DM membership behavior.
-If implementation requires any of these, stop for approval. Protocol and
-architecture documentation changes belong to this feature only if they specify
-this approved protocol; implementation and release/device validation are outside
-this contract-recording task.
+Do not change bearer-invite access semantics, add trust authority or claim
+acknowledgement/atomicity, or alter General/public/DM behavior. Stop if required.
+Protocol/architecture updates may specify only this approved protocol.
