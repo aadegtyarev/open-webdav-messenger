@@ -27,15 +27,17 @@ Pause for device validation before separate removal/revocation work.
 ## Protocol
 
 Each private chat has a remote membership collection. Create/open/import
-publishes an idempotent self claim binding protocol version, community ID, chat ID,
-signing+box public identities, and canonical bytes. Ed25519 proves signer control;
-chat-key AEAD/MAC with domain separation proves key possession. Strictly validate
-bounds, paths, content, canonicality, context, signature, and key proof. If the
-current directory is accessible, an exact signing+box match marks community
+publishes an idempotent self claim binding protocol domain/version, chat ID,
+signing+box public identities, and canonical bytes. The wire identity is chatId+chatKey; do not put local communityId on wire or
+derive trust from URL/username.
+Ed25519 proves signer control; chat-key AEAD/MAC with domain separation proves
+key possession. Bind canonical collection/path/filename/content; strictly validate
+bounds, paths, canonicality, context, signature, and key proof. If the current
+community directory is accessible, an exact signing+box match marks community
 verification; absence/inaccessibility does not reject a valid claim or grant
 community access. A conflicting directory entry for the signer fails closed.
 Exact same signer+canonical claim is one member; signer equivocation (different
-box key or claim context), tampering, and cross-context claims fail closed.
+box key or chat context), tampering, and cross-chat claims fail closed.
 
 Only remotely listed/read and verified claims may supply private recipients.
 Invite creation or an attempt to publish a claim never adds a peer. Local self is
@@ -47,12 +49,11 @@ UI labels self-asserted display names as private-chat-only when no accessible
 matching directory entry exists; it never implies community verification.
 
 Private open reads only its membership collection, never the full directory as a
-roster. Its exact community+chat claim snapshot has explicit provenance and is
-encrypted, bounded, and corruption-safe; reuse of an existing roster cache is
-allowed only if claims resolve to verified entries and kind/provenance cannot
-collide. A valid cache gives immediate Ready with silent refresh; a miss is
-Loading; listing failure is Unavailable with Retry. Exact context and generation
-fence results and invalidation on account/restore/key replacement/kind/chat.
+roster. Cache provenance binds local community+chat, chat key, identity, kind, and
+protocol; it is encrypted, bounded, corruption-safe, and cannot cross local
+accounts. A valid cache gives immediate Ready with silent refresh; a miss is
+Loading; listing failure is Unavailable with Retry. Exact context/generation fence
+results; account/restore/key replacement/kind/chat changes invalidate it.
 
 Send and notification paths consume the same atomic verified private Ready
 roster. New sends are disabled before remote claims load except when a valid
@@ -79,8 +80,8 @@ claim conveys no community membership, directory trust, or community access.
 ## Acceptance and validation
 
 - Codec/crypto, canonicality, exact-context, adversarial, safe-path, bounds, and
-  resource-limit tests cover valid and rejected claims (including duplicate,
-  replay/cross-context, unknown, mismatch, and tampering).
+  resource-limit tests cover valid/rejected claims, duplicate/equivocation,
+  replay/cross-chat, unknown, mismatch, and tampering.
 - Tests cover create/import, offline/write failure and pending retry, reopen,
   legacy convergence without invitee inference, valid cache, cache miss/corruption,
   listing failure/retry, and cache invalidation.
