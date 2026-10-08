@@ -32,6 +32,18 @@ internal class VerifiedRosterCache(
             Lookup(accepted, generation)
         }
 
+    fun applyCached(
+        lookup: Lookup,
+        isCurrent: () -> Boolean,
+        apply: () -> Boolean,
+    ): Boolean =
+        synchronized(lock) {
+            commitCoordinator.serialized {
+                if (lookup.roster == null || lookup.generation != generation || !isCurrent()) return@serialized false
+                apply()
+            }
+        }
+
     fun load(
         communityId: String,
         chatId: String,

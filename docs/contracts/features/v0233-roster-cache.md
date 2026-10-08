@@ -27,7 +27,7 @@ No trust in display-name cache; no permanent bypass of WebDAV verification; no p
 
 ## Interfaces and constraints
 
-Preserve exact community/chat and cryptographic/account provenance through cache lookup, refresh commit, and invalidation. Cache reads are local and bounded; WebDAV refresh is always asynchronous. Cache data is non-secret and must be validated before use. Existing request token, runtime graph, selection, and account-generation guards apply to both cache and network results.
+Preserve exact community/chat and cryptographic/account provenance through cache lookup, refresh commit, and invalidation. Cached application verifies the lookup generation while holding the cache lock and applies only to the exact current runtime. A General continuation carries its original request token, selection revision, and installed graph; only the named startup/restore refresh entry point issues an independent token. Cache reads are local and bounded; WebDAV refresh is always asynchronous. Cache data is non-secret and must be validated before use. Existing request token, runtime graph, selection, and account-generation guards apply to both cache and network results.
 
 ## Acceptance criteria
 

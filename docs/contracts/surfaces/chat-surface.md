@@ -97,11 +97,14 @@ after persistence succeeds and is not erased by a stale completion.
 verified public participant entries, encrypted with the Android Keystore. Cache
 identity is exact community/chat scope and is bound to the community key, chat key,
 and account public identity. A valid hit installs Ready before the asynchronous
-WebDAV verification refresh; this cached Ready state is visually normal and keeps
-Send enabled. A current verified refresh replaces the runtime roster and durable
-cache under the shared commit coordinator; if atomic cache replacement fails, the
-old encrypted cache remains while the verified roster may still update the active
-runtime. A refresh failure preserves cached Ready without a foreground error.
+WebDAV verification refresh only if the lookup generation is still current at the
+exact-context apply; invalidation racing a cache hit rejects that apply. A General
+continuation retains its originating request token and exact installed runtime, so
+a newer open cannot redirect it to another chat. This cached Ready state is
+visually normal and keeps Send enabled. A current verified refresh replaces the
+runtime roster and durable cache under the shared commit coordinator; if atomic
+cache replacement fails, the old encrypted cache remains while the verified roster
+may still update the active runtime. A refresh failure preserves cached Ready without a foreground error.
 Without a valid hit, Loading keeps Send disabled, shows localized input guidance
 and an accessible progress action, and transitions to Ready or Unavailable after
 remote verification. Cache data is strictly bounded and malformed data fails

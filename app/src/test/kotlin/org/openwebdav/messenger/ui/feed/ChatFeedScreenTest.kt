@@ -310,7 +310,7 @@ class ChatFeedScreenTest {
             ),
         )
         val graph = checkNotNull(AppContainer.runtimeGraph())
-        AppContainer.prepareGeneralRoster(graph)
+        AppContainer.startIndependentGeneralRosterRefreshForStartupOrRestore(graph)
         assertTrue(graph.recipientSnapshot() is RecipientReadiness.Ready)
         assertEquals("Peer", graph.memberNames.values.single())
         read.complete(DirectoryReadResult(emptyList(), 0, listingFailed = true))
