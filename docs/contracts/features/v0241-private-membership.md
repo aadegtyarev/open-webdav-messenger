@@ -10,11 +10,14 @@ a valid remote join claim is listed, read, and verified; self remains locally
 present for UX and send normalization. General/public retain the exact full
 community directory, and DMs retain exactly self plus peer.
 
-Membership evidence only changes. The bearer invite remains a capability to the
-chat key; it carries no community ID/key/credentials and grants no privilege. A
-claim proves chat-key possession and self-asserted identity; an accessible current
-directory match strengthens provenance but is not required to join that chat.
-Pause for device validation before separate removal/revocation work.
+Membership evidence only changes; invite still grants only chatId+chatKey
+capability, with no community ID/key/credentials or added privilege. New invites
+require an authenticated strict `access=public|private` discriminator, which only
+selects roster protocol. Legacy missing/invalid/tampered access is rejected before
+mutation with localized actionable fresh-invite guidance; never guess. A claim
+proves key possession and self-asserted identity; accessible directory matching
+strengthens provenance, not required for joining the chat. Pause for device
+validation before separate removal/revocation work.
 
 ## Affected contracts
 
@@ -28,16 +31,14 @@ Pause for device validation before separate removal/revocation work.
 
 Each private chat has a remote membership collection. Create/open/import
 publishes an idempotent self claim binding protocol domain/version, chat ID,
-signing+box public identities, and canonical bytes. The wire identity is chatId+chatKey; do not put local communityId on wire or
-derive trust from URL/username.
-Ed25519 proves signer control; chat-key AEAD/MAC with domain separation proves
-key possession. Bind canonical collection/path/filename/content; strictly validate
-bounds, paths, canonicality, context, signature, and key proof. If the current
-community directory is accessible, an exact signing+box match marks community
-verification; absence/inaccessibility does not reject a valid claim or grant
-community access. A conflicting directory entry for the signer fails closed.
-Exact same signer+canonical claim is one member; signer equivocation (different
-box key or chat context), tampering, and cross-chat claims fail closed.
+signing+box identities, and canonical bytes. Wire identity is chatId+chatKey;
+local communityId, URL, or username are never wire trust. Ed25519 proves signer
+control; chat-key AEAD/MAC with domain separation proves key possession. Bind
+canonical collection/path/filename/content; strictly validate bounds, paths,
+context, signature, and key proof. An accessible exact directory pair strengthens
+provenance; absence/inaccessibility still permits chat-only membership. Conflicting
+directory entry for signer fails closed. Exact duplicate signer claim is one member;
+equivocation (different box key/chat context), tampering, cross-chat fail closed.
 
 Only remotely listed/read and verified claims may supply private recipients.
 Invite creation or an attempt to publish a claim never adds a peer. Local self is
