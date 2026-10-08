@@ -3,6 +3,8 @@ package org.openwebdav.messenger.invite
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.chatdirectory.ChatAccess
+import org.openwebdav.messenger.identity.IdentityCrypto
 import java.io.ByteArrayOutputStream
 import java.util.Base64
 import java.util.zip.Deflater
@@ -28,15 +30,26 @@ import java.util.zip.InflaterInputStream
  * payload is cheap, but the codec must not block a composable (stack-notes Kotlin off-main-thread).
  */
 internal class InviteCodec(
+    private val identityCrypto: IdentityCrypto,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /** Encode [token] to the `owdm1:<base64url(gzip(json))>` string, off the UI thread. */
     suspend fun encode(token: InviteToken): String =
         withContext(ioDispatcher) {
+            require(isAuthenticated(token)) { "invite access metadata is unauthenticated" }
             val json = FlatJson.encode(toFields(token))
             val gzipped = gzip(json.toByteArray(Charsets.UTF_8))
             PREFIX + base64Url.encodeToString(gzipped)
         }
+
+    fun sign(
+        token: InviteToken,
+        signingSecret: ByteArray,
+    ): InviteToken {
+        require(token.access == ChatAccess.PUBLIC || token.access == ChatAccess.PRIVATE)
+        val unsigned = token.copy(signature = ByteArray(InviteToken.SIGNATURE_BYTES))
+        return unsigned.copy(signature = identityCrypto.sign(signatureInput(unsigned), signingSecret))
+    }
 
     /** Decode an `owdm1:` [text] back to an [InviteToken], or a typed [Result.Rejected], off the UI thread. */
     suspend fun decode(text: String): Result =
@@ -52,12 +65,25 @@ internal class InviteCodec(
         val gzipped = decodeBase64Url(payload) ?: return Result.Rejected
         val json = gunzip(gzipped) ?: return Result.Rejected
         val fields = FlatJson.decode(json.toString(Charsets.UTF_8)) ?: return Result.Rejected
-        return fromFields(fields)?.let { Result.Decoded(it) } ?: Result.Rejected
+        if (fields[KEY_VERSION] == LEGACY_FORMAT_VERSION) return Result.Legacy
+        val token = fromFields(fields) ?: return Result.Rejected
+        if (!isAuthenticated(token)) {
+            token.chatKey.fill(0)
+            return Result.Rejected
+        }
+        return Result.Decoded(token)
     }
 
     private fun toFields(token: InviteToken): Map<String, String> =
+        fieldsWithoutAuthentication(token) +
+            mapOf(
+                KEY_VERSION to FORMAT_VERSION,
+                KEY_SIGNER to base64Url.encodeToString(token.signingPublicKey),
+                KEY_SIGNATURE to base64Url.encodeToString(token.signature),
+            )
+
+    private fun fieldsWithoutAuthentication(token: InviteToken): LinkedHashMap<String, String> =
         linkedMapOf(
-            KEY_VERSION to FORMAT_VERSION,
             KEY_BASE_URL to token.baseUrl,
             KEY_USERNAME to token.username,
             KEY_APP_PASSWORD to token.appPassword,
@@ -65,12 +91,29 @@ internal class InviteCodec(
             KEY_CHAT_ID to token.chatId,
             KEY_CHAT_KEY to base64Url.encodeToString(token.chatKey),
             KEY_COMMUNITY to token.communityName,
+            KEY_ACCESS to accessName(token.access),
         )
 
+    private fun signatureInput(token: InviteToken): ByteArray =
+        SIGNATURE_DOMAIN.toByteArray(Charsets.UTF_8) + byteArrayOf(0) +
+            FlatJson.encode(fieldsWithoutAuthentication(token)).toByteArray(Charsets.UTF_8)
+
+    private fun isAuthenticated(token: InviteToken): Boolean =
+        (token.access == ChatAccess.PUBLIC || token.access == ChatAccess.PRIVATE) &&
+            identityCrypto.verify(token.signature, signatureInput(token), token.signingPublicKey)
+
     private fun fromFields(fields: Map<String, String>): InviteToken? {
-        if (fields[KEY_VERSION] != FORMAT_VERSION) return null
+        if (fields[KEY_VERSION] != FORMAT_VERSION || fields.keys != CURRENT_FIELDS) return null
+        val access = parseAccess(fields[KEY_ACCESS] ?: return null) ?: return null
         val rawKey = decodeBase64Url(fields[KEY_CHAT_KEY] ?: return null) ?: return null
-        if (rawKey.size != InviteToken.CHAT_KEY_BYTES) return null
+        val signer = decodeBase64Url(fields[KEY_SIGNER] ?: return null) ?: return null
+        val signature = decodeBase64Url(fields[KEY_SIGNATURE] ?: return null) ?: return null
+        if (rawKey.size != InviteToken.CHAT_KEY_BYTES || signer.size != InviteToken.SIGNING_KEY_BYTES ||
+            signature.size != InviteToken.SIGNATURE_BYTES
+        ) {
+            rawKey.fill(0)
+            return null
+        }
         return InviteToken(
             baseUrl = fields[KEY_BASE_URL] ?: return null,
             username = fields[KEY_USERNAME] ?: return null,
@@ -79,8 +122,24 @@ internal class InviteCodec(
             chatId = fields[KEY_CHAT_ID] ?: return null,
             chatKey = rawKey,
             communityName = fields[KEY_COMMUNITY] ?: return null,
+            access = access,
+            signingPublicKey = signer,
+            signature = signature,
         )
     }
+
+    private fun accessName(access: ChatAccess): String =
+        when (access) {
+            ChatAccess.PUBLIC -> "public"
+            ChatAccess.PRIVATE -> "private"
+        }
+
+    private fun parseAccess(value: String): ChatAccess? =
+        when (value) {
+            "public" -> ChatAccess.PUBLIC
+            "private" -> ChatAccess.PRIVATE
+            else -> null
+        }
 
     private fun gzip(bytes: ByteArray): ByteArray {
         val out = ByteArrayOutputStream()
@@ -124,6 +183,9 @@ internal class InviteCodec(
     sealed interface Result {
         data class Decoded(val token: InviteToken) : Result
 
+        /** Old v1 invite lacks authenticated access metadata; callers must reject and request a fresh token. */
+        data object Legacy : Result
+
         data object Rejected : Result
     }
 
@@ -140,8 +202,10 @@ internal class InviteCodec(
         /** The read-buffer size for the bounded inflate loop. */
         private const val INFLATE_BUFFER_BYTES = 4096
 
-        /** The JSON `v` field value — a second version guard inside the payload (reject on mismatch). */
-        private const val FORMAT_VERSION = "1"
+        /** Version 2 adds signed access metadata; v1 is identified only to produce fresh-invite guidance. */
+        private const val FORMAT_VERSION = "2"
+        private const val LEGACY_FORMAT_VERSION = "1"
+        private const val SIGNATURE_DOMAIN = "owdm/invite/access/v2"
 
         private const val KEY_VERSION = "v"
         private const val KEY_BASE_URL = "u"
@@ -151,6 +215,23 @@ internal class InviteCodec(
         private const val KEY_CHAT_ID = "c"
         private const val KEY_CHAT_KEY = "k"
         private const val KEY_COMMUNITY = "m"
+        private const val KEY_ACCESS = "a"
+        private const val KEY_SIGNER = "s"
+        private const val KEY_SIGNATURE = "g"
+        private val CURRENT_FIELDS =
+            setOf(
+                KEY_VERSION,
+                KEY_BASE_URL,
+                KEY_USERNAME,
+                KEY_APP_PASSWORD,
+                KEY_CHAT_ROOT,
+                KEY_CHAT_ID,
+                KEY_CHAT_KEY,
+                KEY_COMMUNITY,
+                KEY_ACCESS,
+                KEY_SIGNER,
+                KEY_SIGNATURE,
+            )
 
         // URL-safe base64 (RFC 4648 §5) WITHOUT padding — the token travels in a QR / a copied string,
         // where '+' '/' '=' are awkward; url-safe + no-pad keeps it compact and copy-clean.

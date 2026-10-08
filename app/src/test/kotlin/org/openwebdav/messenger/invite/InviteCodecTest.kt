@@ -7,6 +7,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.openwebdav.messenger.chatdirectory.ChatAccess
+import org.openwebdav.messenger.identity.IdentityTestSupport
 
 /**
  * JVM unit tests for the `owdm1:` invite codec (`ui-chat-surface` plan Test plan): round-trip every field
@@ -14,19 +16,32 @@ import org.junit.Test
  * Android — the codec's framing (json/gzip/base64url) is self-contained. All NEW tests.
  */
 class InviteCodecTest {
-    private val codec = InviteCodec()
+    private val identityCrypto = IdentityTestSupport.identityCrypto()
+    private val identity = identityCrypto.generateIdentity()
+    private val codec = InviteCodec(identityCrypto)
 
-    private fun sampleToken(): InviteToken =
-        InviteToken(
-            // Obvious fake values (SC21 — no secret material in source/tests).
-            baseUrl = "https://disk.example.test",
-            username = "owner-login",
-            appPassword = "fake-app-password-not-real",
-            chatRoot = "owdm/community-root",
-            chatId = "chatidchatidchatidchatid01",
-            chatKey = ByteArray(InviteToken.CHAT_KEY_BYTES) { (it * 7 + 1).toByte() },
-            communityName = "Тестовое сообщество 🚀 with unicode + \"quotes\"",
-        )
+    private fun sampleToken(access: ChatAccess = ChatAccess.PUBLIC): InviteToken {
+        val token =
+            InviteToken(
+                // Obvious fake values (SC21 — no secret material in source/tests).
+                baseUrl = "https://disk.example.test",
+                username = "owner-login",
+                appPassword = "fake-app-password-not-real",
+                chatRoot = "owdm/community-root",
+                chatId = "chatidchatidchatidchatid01",
+                chatKey = ByteArray(InviteToken.CHAT_KEY_BYTES) { (it * 7 + 1).toByte() },
+                communityName = "Тестовое сообщество 🚀 with unicode + \"quotes\"",
+                access = access,
+                signingPublicKey = identity.copySignPublic(),
+                signature = ByteArray(InviteToken.SIGNATURE_BYTES),
+            )
+        val secret = identity.copySignSecret()
+        return try {
+            codec.sign(token, secret)
+        } finally {
+            secret.fill(0)
+        }
+    }
 
     /** invite_token_round_trips_owner_to_member — every field recovered byte-identically. */
     @Test
@@ -47,6 +62,7 @@ class InviteCodecTest {
             assertEquals(original.chatId, recovered.chatId)
             assertArrayEquals(original.chatKey, recovered.chatKey)
             assertEquals(original.communityName, recovered.communityName)
+            assertEquals(original.access, recovered.access)
             assertEquals(original, recovered)
         }
 
@@ -77,9 +93,12 @@ class InviteCodecTest {
     fun invite_decode_rejects_wrong_length_chat_key() {
         // Build a valid owdm1 JSON but with a 4-byte (not 32-byte) base64url key.
         val badKey = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(4))
+        val base = sampleToken()
         val json =
-            "{\"v\":\"1\",\"u\":\"https://x.test\",\"n\":\"a\",\"p\":\"b\"," +
-                "\"r\":\"c\",\"c\":\"d\",\"k\":\"$badKey\",\"m\":\"e\"}"
+            "{\"v\":\"2\",\"u\":\"${base.baseUrl}\",\"n\":\"${base.username}\",\"p\":\"${base.appPassword}\"," +
+                "\"r\":\"${base.chatRoot}\",\"c\":\"${base.chatId}\",\"k\":\"$badKey\",\"m\":\"${base.communityName}\"," +
+                "\"a\":\"public\",\"s\":\"${java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(base.signingPublicKey)}\"," +
+                "\"g\":\"${java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(base.signature)}\"}"
         assertReject(codec.decodeBlocking(InviteCodec.PREFIX + gzipBase64(json)))
     }
 
@@ -91,6 +110,34 @@ class InviteCodecTest {
         assertTrue(s.contains("appPassword=***"))
         assertTrue(s.contains("chatKey=***"))
     }
+
+    @Test
+    fun legacy_v1_is_identified_for_actionable_rejection() {
+        val json = "{\"v\":\"1\",\"u\":\"x\"}"
+        assertTrue(codec.decodeBlocking(InviteCodec.PREFIX + gzipBase64(json)) is InviteCodec.Result.Legacy)
+    }
+
+    @Test
+    fun private_access_round_trips_as_authenticated_metadata() =
+        runTest {
+            val token = sampleToken(ChatAccess.PRIVATE)
+            val decoded = codec.decodeBlocking(codec.encode(token))
+            assertTrue(decoded is InviteCodec.Result.Decoded)
+            assertEquals(ChatAccess.PRIVATE, (decoded as InviteCodec.Result.Decoded).token.access)
+        }
+
+    @Test
+    fun access_tampering_and_unknown_or_missing_value_are_rejected() =
+        runTest {
+            val token = sampleToken()
+            val encoded = codec.encode(token)
+            val compressed = java.util.Base64.getUrlDecoder().decode(encoded.removePrefix(InviteCodec.PREFIX))
+            val inflated = java.util.zip.InflaterInputStream(compressed.inputStream()).readBytes().toString(Charsets.UTF_8)
+            assertReject(codec.decodeBlocking(InviteCodec.PREFIX + gzipBase64(inflated.replace("public", "private"))))
+            assertReject(codec.decodeBlocking(InviteCodec.PREFIX + gzipBase64(inflated.replace("public", "admin"))))
+            val missing = inflated.replace(Regex(",\\\"a\\\":\\\"public\\\""), "")
+            assertReject(codec.decodeBlocking(InviteCodec.PREFIX + gzipBase64(missing)))
+        }
 
     private fun assertReject(result: InviteCodec.Result) {
         assertTrue("expected Rejected, got $result", result is InviteCodec.Result.Rejected)

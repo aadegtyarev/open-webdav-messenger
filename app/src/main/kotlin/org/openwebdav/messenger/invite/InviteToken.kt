@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.invite
 
+import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.Aead
 
 /**
@@ -30,9 +31,13 @@ internal data class InviteToken(
     val chatId: String,
     val chatKey: ByteArray,
     val communityName: String,
+    val access: ChatAccess,
+    val signingPublicKey: ByteArray,
+    val signature: ByteArray,
 ) {
     init {
         require(chatKey.size == CHAT_KEY_BYTES) { "chatKey must be $CHAT_KEY_BYTES bytes, got ${chatKey.size}" }
+        require(this.signingPublicKey.size == SIGNING_KEY_BYTES && this.signature.size == SIGNATURE_BYTES)
     }
 
     /** Redacted — an invite carries the app-password + raw chat key and must never print them. */
@@ -50,7 +55,10 @@ internal data class InviteToken(
             chatRoot == other.chatRoot &&
             chatId == other.chatId &&
             chatKey.contentEquals(other.chatKey) &&
-            communityName == other.communityName
+            communityName == other.communityName &&
+            access == other.access &&
+            signingPublicKey.contentEquals(other.signingPublicKey) &&
+            signature.contentEquals(other.signature)
 
     override fun hashCode(): Int {
         var result = baseUrl.hashCode()
@@ -60,11 +68,16 @@ internal data class InviteToken(
         result = 31 * result + chatId.hashCode()
         result = 31 * result + chatKey.contentHashCode()
         result = 31 * result + communityName.hashCode()
+        result = 31 * result + access.hashCode()
+        result = 31 * result + signingPublicKey.contentHashCode()
+        result = 31 * result + signature.contentHashCode()
         return result
     }
 
     companion object {
         /** The raw chat-key width — single-sourced from [Aead.KEY_BYTES] (the libsodium-derived home). */
         const val CHAT_KEY_BYTES = Aead.KEY_BYTES
+        const val SIGNING_KEY_BYTES = 32
+        const val SIGNATURE_BYTES = 64
     }
 }

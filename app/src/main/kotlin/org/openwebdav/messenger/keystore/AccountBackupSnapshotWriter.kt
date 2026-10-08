@@ -28,7 +28,7 @@ internal class AccountBackupSnapshotWriter(
         (previousIds - replacementIds).forEach(chatRegistry::clear)
         backup.communities.forEach { community ->
             configStore.save(community.config, community.anchorChatId, community.name, community.id)
-            chatRegistry.replace(community.id, community.chats.map { ChatRegistry.Entry(it.id, it.name, it.kind) })
+            chatRegistry.replace(community.id, community.chats.map { ChatRegistry.Entry(it.id, it.name, it.kind, it.access) })
         }
         communityRegistry.replace(backup.communities.map { CommunityRegistry.Entry(it.id, it.name, it.anchorChatId) })
         activeStore.selectStrict(backup.activeCommunityId)

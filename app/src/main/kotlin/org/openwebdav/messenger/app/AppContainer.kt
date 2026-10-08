@@ -33,9 +33,22 @@ import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ActiveCommunityStore
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.keystore.ChatRegistry
+import org.openwebdav.messenger.keystore.CommunityKeyStore
 import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
+import org.openwebdav.messenger.membership.PendingPrivateClaimStore
+import org.openwebdav.messenger.membership.PrivateClaimRetryCandidate
+import org.openwebdav.messenger.membership.PrivateClaimRetryCursorStore
+import org.openwebdav.messenger.membership.PrivateClaimRetryQueue
+import org.openwebdav.messenger.membership.PrivateMembershipAead
+import org.openwebdav.messenger.membership.PrivateMembershipCache
+import org.openwebdav.messenger.membership.PrivateMembershipCacheProvenance
+import org.openwebdav.messenger.membership.PrivateMembershipCacheStore
+import org.openwebdav.messenger.membership.PrivateMembershipClaimCodec
+import org.openwebdav.messenger.membership.PrivateMembershipClaimCrypto
+import org.openwebdav.messenger.membership.PrivateMembershipPublisher
+import org.openwebdav.messenger.membership.PrivateMembershipService
 import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.sync.FastPollManager
@@ -69,6 +82,7 @@ internal object AppContainer {
     private val activeCommunityStore by lazy { ActiveCommunityStore(requireContext()) }
     private val communityRegistry by lazy { CommunityRegistry(requireContext()) }
     private val chatRegistry by lazy { ChatRegistry(requireContext()) }
+    private val communityKeyStore by lazy { CommunityKeyStore(requireContext()) }
     private val directoryFactory by lazy { DirectoryFactory() }
     private val chatDirectoryFactory by lazy { ChatDirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
@@ -78,6 +92,40 @@ internal object AppContainer {
     private val chatOpenRequestCoordinator = ChatOpenRequestCoordinator(rosterCommitCoordinator)
     private val productionRosterCache by lazy {
         VerifiedRosterCache(VerifiedRosterCacheStore(requireContext()), rosterCommitCoordinator)
+    }
+    private val privateMembershipCache by lazy {
+        PrivateMembershipCache(
+            PrivateMembershipCacheStore(requireContext()),
+            PrivateMembershipCacheProvenance(crypto.nativeCrypto()),
+            rosterCommitCoordinator,
+        )
+    }
+    private val pendingPrivateClaimStore by lazy { PendingPrivateClaimStore(requireContext(), crypto.nativeCrypto()) }
+    private val privateClaimRetryCursorStore by lazy { PrivateClaimRetryCursorStore(requireContext()) }
+    private val privateMembershipClaims by lazy {
+        PrivateMembershipClaimCrypto(PrivateMembershipAead(crypto.aead()), PrivateMembershipClaimCodec(identityFactory.identityCrypto()))
+    }
+    private val privateMembershipPublisher by lazy {
+        PrivateMembershipPublisher(pendingPrivateClaimStore, privateMembershipClaims)
+    }
+    private val privateMembershipCoordinator by lazy {
+        PrivateMembershipCoordinator(
+            appScope,
+            privateMembershipCache,
+            privateMembershipPublisher,
+            { config -> PrivateMembershipService(TransportFactory.create(config), privateMembershipClaims) },
+            { stored, key ->
+                val result =
+                    directoryFactory.directoryService(
+                        stored.config.baseUrl,
+                        stored.config.username,
+                        stored.config.appPassword,
+                        stored.config.chatRoot,
+                    ).readDirectory(key)
+                if (result.listingFailed) null else result.entries
+            },
+            ROSTER_UNAVAILABLE,
+        )
     }
 
     @Volatile
@@ -90,6 +138,9 @@ internal object AppContainer {
 
     @Volatile
     private var credentialRotationTestSeam: CredentialRotationTestSeam? = null
+
+    @Volatile
+    private var inviteAccessTestOverride: ChatAccess? = null
 
     @Volatile
     private var onboardingRosterRefreshContext: GeneralRosterRefreshContext? = null
@@ -124,6 +175,7 @@ internal object AppContainer {
         val onRosterEnrichmentCompleted: (() -> Unit)? = null,
         val cachePersistence: VerifiedRosterCachePersistence? = null,
         val chatKind: ((String, String) -> String?)? = null,
+        val chatAccess: ((String, String) -> String?)? = null,
         val provisionDm: ((Identity, DirectoryEntry, String) -> Boolean)? = null,
         val onGeneralRosterCompleted: (() -> Unit)? = null,
         val beforeGeneralRosterPreparation: (() -> Unit)? = null,
@@ -225,17 +277,33 @@ internal object AppContainer {
         EngineWiring.awaitReady()
     }
 
-    internal fun invalidateRosterCaches() = rosterCache.invalidateAll()
+    internal fun invalidateRosterCaches() {
+        rosterCache.invalidateAll()
+        privateMembershipCache.invalidateAll()
+        pendingPrivateClaimStore.clearAll()
+        privateClaimRetryCursorStore.clearAll()
+    }
 
     /** Rebuild after account replacement; clear again to fence work started during restore. */
     fun rebuildAfterRestore() {
         rosterCache.invalidateAll()
+        privateMembershipCache.invalidateAll()
+        pendingPrivateClaimStore.clearAll()
+        privateClaimRetryCursorStore.clearAll()
         rebuildStoredRuntime(requireGraph = true)
+    }
+
+    /** Resume roster/network preparation only after the restore replacement gate has released. */
+    fun resumeRuntimeAfterAccountReplacement() {
+        runtimeGraph()?.let(::startIndependentGeneralRosterRefreshForStartupOrRestore)
     }
 
     /** Reinstall the previous runtime after rollback; the cache stays cleared across replacement. */
     fun restorePreviousRuntime() {
         rosterCache.invalidateAll()
+        privateMembershipCache.invalidateAll()
+        pendingPrivateClaimStore.clearAll()
+        privateClaimRetryCursorStore.clearAll()
         rebuildStoredRuntime(requireGraph = communityRegistry.all().isNotEmpty())
     }
 
@@ -244,15 +312,12 @@ internal object AppContainer {
         val fallback = communityRegistry.all().firstOrNull()?.id ?: "default"
         currentCommunityId = activeCommunityStore.load(fallback)
         UserSettings.selectCommunity(currentCommunityId)
-        EngineWiring.initialize(
-            AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory),
-            afterGraphInstalled = ::startIndependentGeneralRosterRefreshForStartupOrRestore,
-        )
+        EngineWiring.initialize(AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory))
         if (requireGraph) check(runtimeGraph() != null) { "Backup contains no usable community" }
     }
 
     /** The composed onboarding service (owner-create / member-join). */
-    fun onboarding(): OnboardingService = OnboardingService(productionOnboardingDeps())
+    fun onboarding(): OnboardingService = OnboardingService(productionOnboardingDeps(), InviteCodec(identityFactory.identityCrypto()))
 
     /**
      * Group chat creation within the current community.
@@ -354,7 +419,7 @@ internal object AppContainer {
                         )
                     val chatId = Hex.encode(hash)
                     crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
-                    chatRegistry.add(context.communityId, ChatRegistry.Entry(chatId, name, "group"))
+                    chatRegistry.add(context.communityId, ChatRegistry.Entry(chatId, name, "group", access.name.lowercase()))
                     createdChatId = chatId
                     rawChatId = hash
                     true
@@ -436,6 +501,7 @@ internal object AppContainer {
         val stored: StoredConnection?,
         val communityKey: ChatKey?,
         val kind: String,
+        val access: String,
     )
 
     private fun prepareGroupChatOpen(
@@ -455,12 +521,18 @@ internal object AppContainer {
             ) ?: return null
         val seam = chatOpenTestSeam
         val stored = if (seam != null) seam.loadStored(communityId) else configStore.loadStored(communityId)
-        val communityKey = stored?.let { loadRosterCommunityKey(it) }
-        val kind =
-            seam?.chatKind?.invoke(communityId, chatId)
-                ?: runCatching { chatRegistry.all(communityId).firstOrNull { it.id == chatId }?.kind }
-                    .getOrNull() ?: "group"
-        return PreparedGroupChatOpen(selection, stored, communityKey, kind)
+        val row = runCatching { chatRegistry.all(communityId).firstOrNull { it.id == chatId } }.getOrNull()
+        val kind = seam?.chatKind?.invoke(communityId, chatId) ?: row?.kind ?: "group"
+        val access = seam?.chatAccess?.invoke(communityId, chatId) ?: if (seam != null) "public" else row?.access ?: "unknown"
+        val communityKey =
+            stored?.let {
+                if (seam != null && access == ChatAccess.PUBLIC.name.lowercase()) {
+                    seam.loadChatKey(it.chatId)
+                } else {
+                    loadCommunityDirectoryKey(communityId)
+                }
+            }
+        return PreparedGroupChatOpen(selection, stored, communityKey, kind, access)
     }
 
     private fun installPreparedGroupChat(plan: PreparedGroupChatOpen): Boolean {
@@ -479,6 +551,7 @@ internal object AppContainer {
                     memberNames = emptyMap(),
                     isCommunitySelected = { currentCommunityId == selection.communityId },
                     recipientReadiness = RecipientReadiness.Loading,
+                    privateMembershipChat = plan.access == ChatAccess.PRIVATE.name.lowercase(),
                 )
             }
         if (!installed) return false
@@ -490,6 +563,19 @@ internal object AppContainer {
                     runtimeSelectionGuard.isCurrent(selection.selectionRevision)
             } ?: return false
         val stored = plan.stored
+        if (plan.kind == "group" && plan.access == ChatAccess.PRIVATE.name.lowercase()) {
+            graph.enablePrivateMembership()
+            if (stored == null) {
+                graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
+            } else {
+                preparePrivateRoster(graph, selection.requestToken, selection.selectionRevision, stored, plan.communityKey)
+            }
+            return true
+        }
+        if (plan.access == "unknown" && plan.kind != "dm" && stored != null) {
+            launchUnknownChatAccessResolution(graph, selection.requestToken, selection.selectionRevision, stored, plan.communityKey)
+            return true
+        }
         if (stored == null) {
             updateRosterIfCurrent(
                 selection.requestToken,
@@ -546,14 +632,208 @@ internal object AppContainer {
         return true
     }
 
+    private fun preparePrivateRoster(
+        graph: RuntimeGraph,
+        requestToken: ChatOpenRequestCoordinator.Token,
+        revision: Long,
+        stored: StoredConnection,
+        communityKey: ChatKey?,
+    ) {
+        val runtimeKey = graph.communityRuntimeKey
+        val isCurrent = {
+            isRosterContextCurrent(requestToken, revision, graph, runtimeKey, graph.communityId, graph.chatId)
+        }
+        privateMembershipCoordinator.prepare(graph, stored, communityKey, isCurrent)
+    }
+
+    private fun launchUnknownChatAccessResolution(
+        graph: RuntimeGraph,
+        requestToken: ChatOpenRequestCoordinator.Token,
+        revision: Long,
+        stored: StoredConnection,
+        communityKey: ChatKey?,
+    ) {
+        val runtimeKey = graph.communityRuntimeKey
+        val communityId = graph.communityId
+        val chatId = graph.chatId
+        val accountGeneration = AccountMutationBarrier.process.replacementGeneration()
+        appScope.launch {
+            val accessCommit =
+                ChatAccessRegistryCommit(
+                    AccountMutationBarrier.process,
+                    { id -> runCatching { chatRegistry.all(id) }.getOrNull() },
+                    { id, rows -> runCatching { chatRegistry.replace(id, rows) }.isSuccess },
+                )
+
+            suspend fun commitAccess(access: ChatAccess): ChatAccess? =
+                accessCommit.commit(communityId, chatId, access, accountGeneration) {
+                    isRosterContextCurrent(requestToken, revision, graph, runtimeKey, communityId, chatId)
+                }
+
+            val currentRows = runCatching { chatRegistry.all(communityId) }.getOrNull().orEmpty()
+            val currentEntry = currentRows.singleOrNull { it.id == chatId }
+            if (currentEntry?.kind == "general" && isExactGeneralAnchor(communityId, chatId, stored.chatId)) {
+                val migrated =
+                    AccountMutationBarrier.process.withStableAccount {
+                        if (AccountMutationBarrier.process.replacementGeneration() != accountGeneration ||
+                            !isRosterContextCurrent(requestToken, revision, graph, runtimeKey, communityId, chatId)
+                        ) {
+                            false
+                        } else {
+                            migrateExactGeneralAnchor(communityId, chatId, stored.chatId)
+                        }
+                    }
+                if (migrated) {
+                    prepareGeneralRoster(graph, requestToken, revision)
+                } else {
+                    markRosterUnavailable(requestToken, revision, graph, runtimeKey, communityId, chatId)
+                }
+                return@launch
+            }
+            val key = communityKey
+            if (key == null) {
+                markRosterUnavailable(requestToken, revision, graph, runtimeKey, communityId, chatId)
+                return@launch
+            }
+            val result =
+                runCatching {
+                    chatDirectoryFactory.chatDirectoryService(
+                        stored.config.baseUrl,
+                        stored.config.username,
+                        stored.config.appPassword,
+                        stored.config.chatRoot,
+                    ).readChatDirectory(key)
+                }.getOrNull()
+            val descriptor = result?.entries?.singleOrNull { ChatDescriptorIdMatcher.matches(it.chatId, chatId) }
+            if (result == null || result.listingFailed || descriptor == null) {
+                markRosterUnavailable(requestToken, revision, graph, runtimeKey, communityId, chatId)
+                return@launch
+            }
+            when (commitAccess(descriptor.access)) {
+                ChatAccess.PRIVATE -> {
+                    graph.enablePrivateMembership()
+                    preparePrivateRoster(graph, requestToken, revision, stored, loadCommunityDirectoryKey(communityId))
+                }
+                ChatAccess.PUBLIC -> prepareGeneralRoster(graph, requestToken, revision)
+                null -> markRosterUnavailable(requestToken, revision, graph, runtimeKey, communityId, chatId)
+            }
+        }
+    }
+
+    private fun markRosterUnavailable(
+        requestToken: ChatOpenRequestCoordinator.Token,
+        revision: Long,
+        graph: RuntimeGraph,
+        runtimeKey: String,
+        communityId: String,
+        chatId: String,
+    ) {
+        updateRosterIfCurrent(requestToken, revision, graph, runtimeKey, communityId, chatId) {
+            graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
+        }
+    }
+
+    internal suspend fun retryPrivateMembershipClaims(
+        communityId: String,
+        identity: Identity,
+    ) {
+        val accountGeneration = AccountMutationBarrier.process.replacementGeneration()
+        val stored = configStore.loadStored(communityId) ?: return
+        val rows = runCatching { chatRegistry.all(communityId) }.getOrNull() ?: return
+        val keyStore = crypto.chatKeyStore(requireContext())
+        val candidates = mutableListOf<PrivateClaimRetryCandidate>()
+        val keys = mutableMapOf<String, ChatKey>()
+        rows.filter { it.kind == "group" && it.access == ChatAccess.PRIVATE.name.lowercase() }.forEach { row ->
+            val key = runCatching { keyStore.load(row.id) }.getOrNull() ?: return@forEach
+            val record = runCatching { pendingPrivateClaimStore.load(communityId, row.id, "private", key, identity) }.getOrNull()
+            if (record?.uploaded == true) {
+                record.fileBytes.fill(0)
+                return@forEach
+            }
+            val pending = record != null
+            record?.fileBytes?.fill(0)
+            candidates += PrivateClaimRetryCandidate(row.id, pending)
+            keys[row.id] = key
+        }
+        val cursors = privateClaimRetryCursorStore.load(communityId, identity)
+        val selected =
+            PrivateClaimRetryQueue.select(
+                candidates,
+                cursors.pendingChatId,
+                cursors.freshChatId,
+                pendingLimit = MAX_PRIVATE_CLAIM_RETRIES,
+                newLimit = MAX_PRIVATE_CLAIM_NEW_PUBLICATIONS,
+            )
+        val identityPublic = identity.copySignPublic()
+        for (candidate in selected) {
+            val row = rows.singleOrNull { it.id == candidate.chatId } ?: continue
+            val key = keys[candidate.chatId] ?: continue
+            val contextCurrent = {
+                val currentRow = runCatching { chatRegistry.all(communityId).singleOrNull { it.id == row.id } }.getOrNull()
+                val currentKey = runCatching { keyStore.load(row.id) }.getOrNull()
+                val currentGraphIdentity = runtimeGraph()?.identity
+                val currentKeyBytes = currentKey?.copyBytes()
+                val expectedKeyBytes = key.copyBytes()
+                val sameKey =
+                    try {
+                        currentKeyBytes?.contentEquals(expectedKeyBytes) == true
+                    } finally {
+                        currentKeyBytes?.fill(0)
+                        expectedKeyBytes.fill(0)
+                    }
+                AccountMutationBarrier.process.replacementGeneration() == accountGeneration &&
+                    runCatching { configStore.loadStored(communityId)?.config == stored.config }.getOrDefault(false) &&
+                    currentRow?.kind == "group" && currentRow.access == ChatAccess.PRIVATE.name.lowercase() &&
+                    sameKey && currentGraphIdentity?.copySignPublic()?.contentEquals(identityPublic) == true
+            }
+            val service = PrivateMembershipService(TransportFactory.create(stored.config), privateMembershipClaims)
+            val status =
+                privateMembershipPublisher.publish(
+                    ChatAccess.PRIVATE,
+                    communityId,
+                    row.id,
+                    UserSettings.displayName,
+                    identity,
+                    key,
+                    service,
+                    accountGeneration,
+                    contextCurrent,
+                )
+            AccountMutationBarrier.process.withStableAccount {
+                if (AccountMutationBarrier.process.replacementGeneration() == accountGeneration &&
+                    runCatching(contextCurrent).getOrDefault(false)
+                ) {
+                    runCatching {
+                        if (candidate.pending) {
+                            privateClaimRetryCursorStore.savePending(communityId, identity, row.id)
+                        } else {
+                            privateClaimRetryCursorStore.saveFresh(communityId, identity, row.id)
+                        }
+                    }
+                    runtimeGraph()?.takeIf { it.communityId == communityId && it.chatId == row.id }?.updatePrivateClaimStatus(status)
+                }
+            }
+        }
+    }
+
     fun retryRecipientRoster(graph: RuntimeGraph) {
         if (runtimeGraph() !== graph || graph.recipientSnapshot() !is RecipientReadiness.Unavailable) return
         val seam = chatOpenTestSeam
         val stored = if (seam != null) seam.loadStored(graph.communityId) else configStore.loadStored(graph.communityId)
         if (stored == null) return
-        val communityKey = loadRosterCommunityKey(stored) ?: return
         val requestToken = beginChatOpenRequest()
-        val selectionRevision = runtimeSelectionGuard.current()
+        val revision = runtimeSelectionGuard.current()
+        if (graph.privateMembershipChat) {
+            preparePrivateRoster(graph, requestToken, revision, stored, loadCommunityDirectoryKey(graph.communityId))
+            return
+        }
+        val row = runCatching { chatRegistry.all(graph.communityId).firstOrNull { it.id == graph.chatId } }.getOrNull()
+        if ((row?.kind == "group" || row?.kind == "general") && row.access == "unknown") {
+            launchUnknownChatAccessResolution(graph, requestToken, revision, stored, loadCommunityDirectoryKey(graph.communityId))
+            return
+        }
+        val communityKey = loadRosterCommunityKey(stored) ?: return
+        val selectionRevision = revision
         val lookup = rosterCache.lookup(graph.communityId, graph.chatId, communityKey, graph.chatKey, graph.identity)
         var cacheGeneration = lookup.generation
         val isCurrent = {
@@ -761,7 +1041,7 @@ internal object AppContainer {
                     if (existing.none { it.id == chatIdHex }) {
                         chatRegistry.add(
                             community.id,
-                            ChatRegistry.Entry(chatIdHex, entry.title, "group"),
+                            ChatRegistry.Entry(chatIdHex, entry.title, "group", "public"),
                         )
                     }
                 }
@@ -775,9 +1055,15 @@ internal object AppContainer {
     fun allChats(): List<UnifiedChat> {
         val result = mutableListOf<UnifiedChat>()
         for (community in communityRegistry.all()) {
-            result.add(UnifiedChat(community.chatId, "General", "general", community.id, community.name))
-            for (chat in chatRegistry.all(community.id)) {
-                if (chat.kind != "general") {
+            val chats = chatRegistry.all(community.id)
+            val anchor = chats.firstOrNull { it.id == community.chatId }
+            if (anchor == null || anchor.kind == "general") {
+                result.add(UnifiedChat(community.chatId, "General", "general", community.id, community.name))
+            } else {
+                result.add(UnifiedChat(anchor.id, anchor.name, anchor.kind, community.id, community.name))
+            }
+            for (chat in chats) {
+                if (chat.kind != "general" && chat.id != community.chatId) {
                     result.add(UnifiedChat(chat.id, chat.name, chat.kind, community.id, community.name))
                 }
             }
@@ -943,7 +1229,7 @@ internal object AppContainer {
         }
 
         // Register the DM chat in the registry for this community.
-        chatRegistry.add(graph.communityId, ChatRegistry.Entry(chatId, peer.displayName, "dm"))
+        chatRegistry.add(graph.communityId, ChatRegistry.Entry(chatId, peer.displayName, "dm", "private"))
 
         // DM roster: just the two participants (self + peer). The peer's on-disk identifier
         // is the hex of their Ed25519 signing public key.
@@ -1012,6 +1298,7 @@ internal object AppContainer {
             memberNames,
             isCommunitySelected = { currentCommunityId == expectedGraph.communityId },
             recipientReadiness = recipientReadiness,
+            privateMembershipChat = false,
         )
     }
 
@@ -1097,7 +1384,31 @@ internal object AppContainer {
     internal fun startIndependentGeneralRosterRefreshForStartupOrRestore(graph: RuntimeGraph) {
         val requestToken = chatOpenRequestCoordinator.begin()
         val revision = runtimeSelectionGuard.current()
-        prepareGeneralRoster(graph, requestToken, revision)
+        val seam = chatOpenTestSeam
+        val row = runCatching { chatRegistry.all(graph.communityId).firstOrNull { it.id == graph.chatId } }.getOrNull()
+        val kind = seam?.chatKind?.invoke(graph.communityId, graph.chatId) ?: row?.kind ?: "group"
+        val access = seam?.chatAccess?.invoke(graph.communityId, graph.chatId) ?: if (seam != null) "public" else row?.access
+        val stored = if (seam != null) seam.loadStored(graph.communityId) else configStore.loadStored(graph.communityId)
+        stored ?: return
+        when (access) {
+            "private" ->
+                if (kind == "group") {
+                    graph.enablePrivateMembership()
+                    preparePrivateRoster(graph, requestToken, revision, stored, loadCommunityDirectoryKey(graph.communityId))
+                } else if (kind == "dm") {
+                    prepareGeneralRoster(graph, requestToken, revision)
+                } else {
+                    graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
+                }
+            "public" -> prepareGeneralRoster(graph, requestToken, revision)
+            "unknown" ->
+                if (kind == "group" || kind == "general") {
+                    launchUnknownChatAccessResolution(graph, requestToken, revision, stored, loadCommunityDirectoryKey(graph.communityId))
+                } else if (kind != "dm") {
+                    graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
+                }
+            else -> graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
+        }
     }
 
     private fun prepareGeneralRoster(
@@ -1442,9 +1753,12 @@ internal object AppContainer {
      * are wiped after framing — they live in the returned string only (a bearer token, never logged).
      */
     suspend fun buildInvite(graph: RuntimeGraph): String {
+        val access = resolveInviteAccess(graph) ?: error("Chat access is unresolved; refresh before inviting")
         val raw = graph.chatKey.export()
+        val secret = graph.identity.copySignSecret()
+        val codec = InviteCodec(identityFactory.identityCrypto())
         return try {
-            InviteCodec().encode(
+            val token =
                 InviteToken(
                     baseUrl = graph.config.baseUrl,
                     username = graph.config.username,
@@ -1453,11 +1767,112 @@ internal object AppContainer {
                     chatId = graph.chatId,
                     chatKey = raw,
                     communityName = graph.communityName,
-                ),
-            )
+                    access = access,
+                    signingPublicKey = graph.identity.copySignPublic(),
+                    signature = ByteArray(InviteToken.SIGNATURE_BYTES),
+                )
+            codec.encode(codec.sign(token, secret))
         } finally {
             raw.fill(0)
+            secret.fill(0)
         }
+    }
+
+    internal fun setInviteAccessTestOverride(access: ChatAccess?) {
+        inviteAccessTestOverride = access
+    }
+
+    private suspend fun resolveInviteAccess(graph: RuntimeGraph): ChatAccess? {
+        if (runtimeGraph() !== graph || currentCommunityId != graph.communityId) return null
+        inviteAccessTestOverride?.let { return it }
+        val rows = runCatching { chatRegistry.all(graph.communityId) }.getOrNull() ?: return null
+        val row = rows.singleOrNull { it.id == graph.chatId } ?: return null
+        if (row.kind == "dm") return null
+        if (row.access == "public" && row.kind == "group") return ChatAccess.PUBLIC
+        if (row.access == "private" && row.kind == "group") return ChatAccess.PRIVATE
+        val stored = configStore.loadStored(graph.communityId) ?: return null
+        val accountGeneration = AccountMutationBarrier.process.replacementGeneration()
+        val selectionRevision = runtimeSelectionGuard.current()
+        if (row.kind == "general" && row.access == "public" &&
+            isExactGeneralAnchor(graph.communityId, graph.chatId, stored.chatId)
+        ) {
+            return ChatAccess.PUBLIC
+        }
+        if (row.kind == "general" && row.access == "unknown" &&
+            isExactGeneralAnchor(graph.communityId, graph.chatId, stored.chatId)
+        ) {
+            return AccountMutationBarrier.process.withStableAccount {
+                if (!isInviteResolutionCurrent(graph, accountGeneration, selectionRevision, stored)) return@withStableAccount null
+                if (migrateExactGeneralAnchor(graph.communityId, graph.chatId, stored.chatId)) ChatAccess.PUBLIC else null
+            }
+        }
+        val communityKey = loadCommunityDirectoryKey(graph.communityId) ?: return null
+        val result =
+            chatDirectoryFactory.chatDirectoryService(
+                stored.config.baseUrl,
+                stored.config.username,
+                stored.config.appPassword,
+                stored.config.chatRoot,
+            ).readChatDirectory(communityKey)
+        if (result.listingFailed) return null
+        val descriptor = result.entries.singleOrNull { ChatDescriptorIdMatcher.matches(it.chatId, graph.chatId) } ?: return null
+        val accessCommit =
+            ChatAccessRegistryCommit(
+                AccountMutationBarrier.process,
+                { id -> runCatching { chatRegistry.all(id) }.getOrNull() },
+                { id, freshRows -> runCatching { chatRegistry.replace(id, freshRows) }.isSuccess },
+            )
+        return accessCommit.commit(graph.communityId, graph.chatId, descriptor.access, accountGeneration) {
+            isInviteResolutionCurrent(graph, accountGeneration, selectionRevision, stored)
+        }
+    }
+
+    private fun isInviteResolutionCurrent(
+        graph: RuntimeGraph,
+        accountGeneration: Long,
+        selectionRevision: Long,
+        stored: StoredConnection,
+    ): Boolean =
+        AccountMutationBarrier.process.replacementGeneration() == accountGeneration &&
+            runtimeGraph() === graph && currentCommunityId == graph.communityId &&
+            graph.communityRuntimeKey == runtimeGraph()?.communityRuntimeKey &&
+            graph.chatId.isNotBlank() && runtimeSelectionGuard.isCurrent(selectionRevision) &&
+            runCatching { configStore.loadStored(graph.communityId)?.config == stored.config }.getOrDefault(false)
+
+    private fun loadCommunityDirectoryKey(communityId: String): ChatKey? {
+        val community = runCatching { communityRegistry.all().singleOrNull { it.id == communityId } }.getOrNull() ?: return null
+        val stored = runCatching { configStore.loadStored(communityId) }.getOrNull() ?: return null
+        val anchor = runCatching { chatRegistry.all(communityId).singleOrNull { it.id == community.chatId } }.getOrNull()
+        return CommunityDirectoryKeyPolicy.resolve(
+            community.chatId,
+            stored.chatId,
+            anchor,
+            communityKeyStore.load(communityId),
+            crypto.chatKeyStore(requireContext()).load(community.chatId),
+        )
+    }
+
+    private fun isExactGeneralAnchor(
+        communityId: String,
+        chatId: String,
+        storedAnchorId: String,
+    ): Boolean {
+        val community = runCatching { communityRegistry.all().singleOrNull { it.id == communityId } }.getOrNull() ?: return false
+        val rows = runCatching { chatRegistry.all(communityId) }.getOrNull() ?: return false
+        return LegacyGeneralAnchorAccess.migrate(community.chatId, storedAnchorId, chatId, rows) != null
+    }
+
+    /** Caller holds the stable-account barrier; only the exact General anchor may migrate unknown to public. */
+    private fun migrateExactGeneralAnchor(
+        communityId: String,
+        chatId: String,
+        storedAnchorId: String,
+    ): Boolean {
+        val community = runCatching { communityRegistry.all().singleOrNull { it.id == communityId } }.getOrNull() ?: return false
+        val rows = runCatching { chatRegistry.all(communityId) }.getOrNull() ?: return false
+        val migrated = LegacyGeneralAnchorAccess.migrate(community.chatId, storedAnchorId, chatId, rows) ?: return false
+        if (migrated == rows) return true
+        return runCatching { chatRegistry.replace(communityId, migrated) }.isSuccess
     }
 
     private fun requireContext(): Context = appContext ?: error("AppContainer.bind(context) not called")
@@ -1465,6 +1880,8 @@ internal object AppContainer {
     /** Production [OnboardingService.Deps] — native crypto + Keystore-wrapped stores + the engine wiring. */
     private fun productionOnboardingDeps(): OnboardingService.Deps =
         object : OnboardingService.Deps {
+            private var afterReplacementWork: (() -> Unit)? = null
+
             override fun keySources(): KeySources = crypto.keySources()
 
             override fun chatKeyStore(): ChatKeyStorePort = crypto.chatKeyStore(requireContext())
@@ -1473,12 +1890,15 @@ internal object AppContainer {
                 config: ConnectionConfig,
                 chatId: String,
                 communityName: String,
+                access: String,
             ) {
                 // Use chatId as communityId for this namespace and select it across process restarts.
                 configStore.save(config, chatId, communityName, communityId = chatId)
                 communityRegistry.add(CommunityRegistry.Entry(chatId, communityName, chatId))
-                // Auto-create the "General" chat for the new community.
-                chatRegistry.add(chatId, ChatRegistry.Entry(chatId, "General", "general"))
+                // Imported private invites are isolated synthetic communities, not directory authorities.
+                val kind = if (access == ChatAccess.PRIVATE.name.lowercase()) "group" else "general"
+                val name = if (kind == "general") "General" else communityName
+                chatRegistry.add(chatId, ChatRegistry.Entry(chatId, name, kind, access))
                 val requestToken = chatOpenRequestCoordinator.begin()
                 var revision = runtimeSelectionGuard.current()
                 val selected =
@@ -1490,7 +1910,25 @@ internal object AppContainer {
                         true
                     }
                 onboardingRosterRefreshContext =
-                    if (selected) GeneralRosterRefreshContext(requestToken, revision) else null
+                    if (selected && access == ChatAccess.PUBLIC.name.lowercase()) {
+                        GeneralRosterRefreshContext(requestToken, revision)
+                    } else {
+                        null
+                    }
+            }
+
+            override fun storeCommunityKey(
+                communityId: String,
+                key: ChatKey,
+            ) = communityKeyStore.store(communityId, key)
+
+            override fun invalidateChatState(
+                chatId: String,
+                identity: Identity,
+            ) {
+                rosterCache.invalidate(chatId, chatId)
+                privateMembershipCache.invalidate(chatId, chatId)
+                pendingPrivateClaimStore.invalidate(chatId, chatId, identity)
             }
 
             override suspend fun ensureIdentity(): Identity = identityFactory.identityStore(requireContext()).loadOrCreate()
@@ -1518,40 +1956,62 @@ internal object AppContainer {
                 )
                 val installedGraph = EngineWiring.current()?.takeIf { it.communityId == chatId }
                 val refreshContext = onboardingRosterRefreshContext
-                if (installedGraph != null && refreshContext != null) {
-                    prepareGeneralRoster(installedGraph, refreshContext.requestToken, refreshContext.selectionRevision)
-                }
                 onboardingRosterRefreshContext = null
-                val runtimeGeneration = installedGraph?.communityRuntimeKey ?: return
-                val initialPolicy = if (isHost) communityPolicyCoordinator.defaults(chatId) else null
-                appScope.launch {
-                    try {
-                        val transport = TransportFactory.create(config)
-                        communityPolicyCoordinator.runInitialWrites(
-                            request = initialPolicy,
-                            expectedRuntimeGeneration = runtimeGeneration,
-                            currentRuntimeGeneration = { runtimeGraph()?.communityRuntimeKey },
-                            writeRoster = {
-                                RosterService(transport).addMyself(
-                                    org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
-                                )
-                            },
-                            writePolicy = { policy ->
-                                CommunityMetadata.write(
-                                    transport = transport,
-                                    metadata = CommunityMetadata(policy.pollFloorSeconds, policy.retentionDays),
-                                    hostIdentity = identity,
-                                    identityCrypto = identityFactory.identityCrypto(),
-                                ) is WebDavResult.Success
-                            },
-                            commitPolicy = { policy ->
-                                UserSettings.setCommunityMetadata(chatId, policy.pollFloorSeconds, policy.retentionDays)
-                            },
-                        )
-                    } catch (_: Exception) {
-                        initialPolicy?.let(communityPolicyCoordinator::complete)
+                if (installedGraph == null) return
+                afterReplacementWork = {
+                    if (refreshContext != null) {
+                        prepareGeneralRoster(installedGraph, refreshContext.requestToken, refreshContext.selectionRevision)
+                    } else if (installedGraph.privateMembershipChat) {
+                        val requestToken = chatOpenRequestCoordinator.begin()
+                        val revision = runtimeSelectionGuard.current()
+                        val stored = configStore.loadStored(chatId)
+                        if (stored != null) {
+                            preparePrivateRoster(
+                                installedGraph,
+                                requestToken,
+                                revision,
+                                stored,
+                                loadCommunityDirectoryKey(installedGraph.communityId),
+                            )
+                        }
+                    }
+                    val runtimeGeneration = installedGraph.communityRuntimeKey
+                    val initialPolicy = if (isHost) communityPolicyCoordinator.defaults(chatId) else null
+                    appScope.launch {
+                        try {
+                            val transport = TransportFactory.create(config)
+                            communityPolicyCoordinator.runInitialWrites(
+                                request = initialPolicy,
+                                expectedRuntimeGeneration = runtimeGeneration,
+                                currentRuntimeGeneration = { runtimeGraph()?.communityRuntimeKey },
+                                writeRoster = {
+                                    RosterService(transport).addMyself(
+                                        org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
+                                    )
+                                },
+                                writePolicy = { policy ->
+                                    CommunityMetadata.write(
+                                        transport = transport,
+                                        metadata = CommunityMetadata(policy.pollFloorSeconds, policy.retentionDays),
+                                        hostIdentity = identity,
+                                        identityCrypto = identityFactory.identityCrypto(),
+                                    ) is WebDavResult.Success
+                                },
+                                commitPolicy = { policy ->
+                                    UserSettings.setCommunityMetadata(chatId, policy.pollFloorSeconds, policy.retentionDays)
+                                },
+                            )
+                        } catch (_: Exception) {
+                            initialPolicy?.let(communityPolicyCoordinator::complete)
+                        }
                     }
                 }
+            }
+
+            override suspend fun afterAccountReplacement() {
+                val work = afterReplacementWork
+                afterReplacementWork = null
+                work?.invoke()
             }
 
             override suspend fun checkFolder(
@@ -1610,6 +2070,8 @@ internal object AppContainer {
     }
 
     private const val ROSTER_UNAVAILABLE = "Verified members unavailable — reconnect and retry"
+    private const val MAX_PRIVATE_CLAIM_RETRIES = 64
+    private const val MAX_PRIVATE_CLAIM_NEW_PUBLICATIONS = 64
     private const val CHAT_ID_RANDOM_BYTES = 16
     private const val CHAT_ID_CHARS = 26
 }

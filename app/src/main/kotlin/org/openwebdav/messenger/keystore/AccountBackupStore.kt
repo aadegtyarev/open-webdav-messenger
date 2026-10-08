@@ -37,7 +37,7 @@ internal class AccountBackupStore(
                 val stored = checkNotNull(configStore.loadStored(entry.id)) { "Missing stored connection for ${entry.id}" }
                 val chats =
                     chatRegistry.all(entry.id).ifEmpty {
-                        listOf(ChatRegistry.Entry(stored.chatId, stored.communityName, "general"))
+                        listOf(ChatRegistry.Entry(stored.chatId, stored.communityName, "general", "unknown"))
                     }
                 val communityKey =
                     communityKeyStore.load(entry.id)
@@ -50,7 +50,7 @@ internal class AccountBackupStore(
                     entry.name,
                     entry.chatId,
                     stored.config,
-                    chats.map { ChatBackup(it.id, it.name, it.kind) },
+                    chats.map { ChatBackup(it.id, it.name, it.kind, it.access) },
                     encodedCommunityKey,
                     UserSettings.isHostFor(entry.id),
                     UserSettings.pollFloorFor(entry.id),

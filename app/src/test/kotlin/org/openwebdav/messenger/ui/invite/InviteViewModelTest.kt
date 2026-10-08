@@ -18,9 +18,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppTestSupport
 import org.openwebdav.messenger.app.EngineWiring
 import org.openwebdav.messenger.app.RuntimeGraph
+import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
@@ -63,6 +65,7 @@ class InviteViewModelTest {
         server.start()
         db = SyncTestSupport.inMemoryDb()
         identity = AppTestSupport.newIdentity()
+        AppContainer.setInviteAccessTestOverride(ChatAccess.PUBLIC)
     }
 
     @After
@@ -70,6 +73,7 @@ class InviteViewModelTest {
         Dispatchers.resetMain()
         server.shutdown()
         db.close()
+        AppContainer.setInviteAccessTestOverride(null)
     }
 
     /** ZXing throws on a token too long for a QR — the boundary the VM guards (documents finding 6's cause). */

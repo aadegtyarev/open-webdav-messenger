@@ -6,6 +6,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.openwebdav.messenger.chatdirectory.ChatAccess
+import org.openwebdav.messenger.identity.IdentityTestSupport
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
@@ -39,8 +41,10 @@ class InviteStackSpecTest {
     fun invite_codec_off_ui_dispatcher() =
         runTest {
             val tracker = TrackingDispatcher()
-            val codec = InviteCodec(ioDispatcher = tracker)
-            val token =
+            val identityCrypto = IdentityTestSupport.identityCrypto()
+            val identity = identityCrypto.generateIdentity()
+            val codec = InviteCodec(identityCrypto, ioDispatcher = tracker)
+            val unsigned =
                 InviteToken(
                     baseUrl = "https://disk.example.test",
                     username = "u",
@@ -49,7 +53,17 @@ class InviteStackSpecTest {
                     chatId = "c",
                     chatKey = ByteArray(InviteToken.CHAT_KEY_BYTES) { 3 },
                     communityName = "n",
+                    access = ChatAccess.PRIVATE,
+                    signingPublicKey = identity.copySignPublic(),
+                    signature = ByteArray(InviteToken.SIGNATURE_BYTES),
                 )
+            val signingSecret = identity.copySignSecret()
+            val token =
+                try {
+                    codec.sign(unsigned, signingSecret)
+                } finally {
+                    signingSecret.fill(0)
+                }
 
             val encoded = codec.encode(token)
             assertTrue("encode must dispatch off the caller onto the IO dispatcher", tracker.dispatched.get())

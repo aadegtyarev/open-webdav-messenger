@@ -1,5 +1,8 @@
 package org.openwebdav.messenger.app
 
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +41,7 @@ import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
+import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.message.TextMessage
 import org.openwebdav.messenger.protocol.ChatPaths
@@ -105,6 +109,10 @@ class EngineWiringTest {
 
     @Before
     fun setUp() {
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            RuntimeEnvironment.getApplication(),
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build(),
+        )
         server = MockWebServer()
         // An empty in-memory disk: the real poll cycle reads an empty change index → clean, newCount 0.
         // Without a dispatcher MockWebServer blocks on the PROPFIND, hanging the real runner's runOnce.
@@ -128,6 +136,83 @@ class EngineWiringTest {
      * poll_before_any_config_is_benign_clean_cycle — with no config saved, initialize leaves the no-op
      * runner; running it is a clean cycle (no throw), and there is no runtime graph.
      */
+    @Test
+    fun onboarding_replacement_blocks_real_community_open_until_new_runtime_is_installed() =
+        runTest {
+            val fixture = OnboardingPrivateMembershipFixture(RuntimeEnvironment.getApplication())
+            val oldCommunity = "community-old"
+            val oldChatId = "old-anchor-0000001"
+            val oldKey = SyncTestSupport.fixedChatKey(99)
+            val oldIdentity = AppTestSupport.newIdentity()
+            val oldStored = StoredConnection(SyncTestSupport.config(server), oldChatId, "Old")
+            val stored = mutableMapOf(oldCommunity to oldStored)
+            val keys = mutableMapOf(oldChatId to oldKey)
+            EngineWiring.initialize(AppTestSupport.chatOpenTestDeps(server, db, oldCommunity, oldStored, oldIdentity, keys))
+            AppContainer.configureChatOpenTestSeam(
+                oldCommunity,
+                AppContainer.ChatOpenTestSeam(
+                    loadChatKey = { keys[it] },
+                    loadStored = { stored[it] },
+                    readDirectory = { DirectoryReadResult(emptyList(), 0) },
+                ),
+            )
+            val storesCommitted = CountDownLatch(1)
+            val installAllowed = CountDownLatch(1)
+            val installStarted = CountDownLatch(1)
+            val newConfig = AppTestSupport.httpsConfig()
+            fixture.deps.onStoreCommit = {
+                stored.clear()
+                stored[fixture.chatId] = StoredConnection(newConfig, fixture.chatId, "Private")
+                storesCommitted.countDown()
+                check(installAllowed.await(5, TimeUnit.SECONDS))
+            }
+            fixture.deps.onRuntimeInstall = {
+                installStarted.countDown()
+                keys.clear()
+                keys[fixture.chatId] = fixture.key
+                EngineWiring.reconfigure(
+                    newConfig,
+                    fixture.chatId,
+                    "Private",
+                    fixture.key,
+                    fixture.identity,
+                    communityId = fixture.chatId,
+                    roster = listOf(Hex.encode(fixture.identity.copySignPublic())),
+                    recipientReadiness = RecipientReadiness.Loading,
+                )
+            }
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val join = executor.submit<OnboardingService.JoinResult> { runBlocking { fixture.join() } }
+                assertTrue(storesCommitted.await(5, TimeUnit.SECONDS))
+                val oldGraph = checkNotNull(EngineWiring.current())
+                val open = async(start = CoroutineStart.UNDISPATCHED) { AppContainer.switchToCommunity(oldCommunity) }
+                assertFalse("open must suspend at the replacement gate", open.isCompleted)
+                assertSame(oldGraph, EngineWiring.current())
+
+                installAllowed.countDown()
+                assertTrue(installStarted.await(5, TimeUnit.SECONDS))
+                val joined = async(Dispatchers.IO) { join.get(10, TimeUnit.SECONDS) }.await()
+                assertTrue(joined is OnboardingService.JoinResult.Joined)
+                assertFalse("stale community open must not install mixed state", open.await())
+                val graph = checkNotNull(EngineWiring.current())
+                assertEquals(fixture.chatId, graph.communityId)
+                assertEquals(fixture.chatId, graph.chatId)
+                assertTrue(graph.chatKey.copyBytes().contentEquals(fixture.key.copyBytes()))
+                assertTrue(graph.identity.copySignPublic().contentEquals(fixture.identity.copySignPublic()))
+                assertTrue(fixture.deps.afterReplacementPassedStableGate)
+                assertEquals(PrivateClaimPublicationStatus.UPLOADED, fixture.deps.status)
+                val claim = fixture.service.read(fixture.chatId, fixture.key, null).members.single().claim
+                assertTrue(claim.copySigningPublicKey().contentEquals(graph.identity.copySignPublic()))
+            } finally {
+                installAllowed.countDown()
+                executor.shutdownNow()
+                fixture.close()
+                AppContainer.clearChatOpenTestSeam()
+                EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
+            }
+        }
+
     @Test
     fun poll_before_any_config_is_benign_clean_cycle() =
         runTest {

@@ -9,6 +9,7 @@ internal data class VerifiedParticipant(
     val displayName: String,
     val identityDigest: String,
     val isSelf: Boolean,
+    val provenance: ParticipantIdentityProvenance = ParticipantIdentityProvenance.COMMUNITY_DIRECTORY,
 )
 
 internal fun verifiedParticipants(
@@ -38,6 +39,7 @@ internal fun verifiedParticipants(
 internal fun withSelfParticipant(
     participants: List<VerifiedParticipant>,
     senderSigningPublicKey: ByteArray,
+    selfProvenance: ParticipantIdentityProvenance = ParticipantIdentityProvenance.COMMUNITY_DIRECTORY,
 ): List<VerifiedParticipant> =
     if (participants.any { it.isSelf }) {
         participants.toList()
@@ -47,6 +49,7 @@ internal fun withSelfParticipant(
                 displayName = "",
                 identityDigest = participantDigest(senderSigningPublicKey),
                 isSelf = true,
+                provenance = selfProvenance,
             )
     }
 

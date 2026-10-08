@@ -181,6 +181,7 @@ internal object EngineWiring {
                         communityId = built.communityId,
                         communityRuntimeKey = built.communityRuntimeKey,
                         initialRecipientReadiness = recipientReadiness ?: RecipientReadiness.Ready(roster),
+                        privateMembershipChat = built.privateMembershipChat,
                     ).also { it.memberNames = memberNames }
                 }
             graph = g
@@ -239,13 +240,14 @@ internal object EngineWiring {
         memberNames: Map<String, String>,
         isCommunitySelected: () -> Boolean,
         recipientReadiness: RecipientReadiness,
+        privateMembershipChat: Boolean? = null,
         beforeInstall: () -> Unit = {},
     ): Boolean =
         guard.runIfCurrent(expectedSelectionRevision) {
             synchronized(runtimeInstallLock) {
                 if (graph !== expectedGraph || !isCommunitySelected()) return@synchronized false
                 beforeInstall()
-                installChatLocked(expectedGraph, chatId, chatName, chatKey, roster, memberNames, recipientReadiness)
+                installChatLocked(expectedGraph, chatId, chatName, chatKey, roster, memberNames, recipientReadiness, privateMembershipChat)
                 true
             }
         }
@@ -257,10 +259,11 @@ internal object EngineWiring {
         roster: List<String>,
         memberNames: Map<String, String> = emptyMap(),
         recipientReadiness: RecipientReadiness,
+        privateMembershipChat: Boolean? = null,
     ) {
         synchronized(runtimeInstallLock) {
             val base = graph ?: return
-            installChatLocked(base, chatId, chatName, chatKey, roster, memberNames, recipientReadiness)
+            installChatLocked(base, chatId, chatName, chatKey, roster, memberNames, recipientReadiness, privateMembershipChat)
         }
     }
 
@@ -272,6 +275,7 @@ internal object EngineWiring {
         roster: List<String>,
         memberNames: Map<String, String>,
         recipientReadiness: RecipientReadiness,
+        privateMembershipChat: Boolean?,
     ) {
         val switched =
             RuntimeGraph(
@@ -288,6 +292,7 @@ internal object EngineWiring {
                 communityId = base.communityId,
                 communityRuntimeKey = base.communityRuntimeKey,
                 initialRecipientReadiness = recipientReadiness,
+                privateMembershipChat = privateMembershipChat ?: base.privateMembershipChat,
             )
         switched.memberNames = memberNames
         graph = switched
@@ -320,6 +325,7 @@ internal object EngineWiring {
                 val stored = deps.loadStoredConnection(joinedId) ?: continue
                 val key = deps.loadChatKey(stored.chatId) ?: continue
                 val graph = deps.buildGraph(stored.config, stored.chatId, stored.communityName, key, activeGraph.identity, joinedId)
+                deps.retryPrivateMembershipClaims(joinedId, activeGraph.identity)
                 val subscriptions =
                     (deps.communityChatIds(joinedId) + stored.chatId).distinct().map(::ChatSubscription)
                 val outcome = graph.engine.pollCycle(activeGraph.senderIdentifier, subscriptions, joinedId)
@@ -447,6 +453,7 @@ internal object EngineWiring {
 
                             val subscriptions =
                                 (deps.communityChatIds(ownerCommunityId) + g.chatId).distinct().map(::ChatSubscription)
+                            deps.retryPrivateMembershipClaims(ownerCommunityId, g.identity)
                             val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions, ownerCommunityId)
                             val otherCommunities = pollOtherCommunities(ownerCommunityId, g)
                             val combinedOutcome =
@@ -528,6 +535,11 @@ internal object EngineWiring {
         ) {
             // no-op default — JVM test doubles skip directory publishing
         }
+
+        suspend fun retryPrivateMembershipClaims(
+            communityId: String,
+            identity: Identity,
+        ) = Unit
     }
 }
 
@@ -559,6 +571,11 @@ internal class AndroidDeps(
     override fun loadStoredConnection(communityId: String): StoredConnection? = configStore.loadStored(communityId)
 
     override fun loadChatKey(chatId: String): ChatKey? = chatKeyStore.load(chatId)
+
+    override suspend fun retryPrivateMembershipClaims(
+        communityId: String,
+        identity: Identity,
+    ) = AppContainer.retryPrivateMembershipClaims(communityId, identity)
 
     override fun loadIdentity(): Identity? =
         when (val result = identityFactory.identityStore(appContext).load()) {
@@ -619,6 +636,16 @@ internal class AndroidDeps(
                 NotificationHelper.showCycleNotification(ctx, communityName, outcome.newCount)
             }
         }
+        val chatEntry = chatRegistry.all(communityId).firstOrNull { it.id == chatId }
+        val isPrivateMembershipChat = chatEntry?.kind == "group" && chatEntry.access == "private"
+        val initialReadiness =
+            when {
+                chatEntry?.kind == "group" && chatEntry.access != "public" -> RecipientReadiness.Loading
+                chatEntry?.kind == "general" && chatEntry.access == "unknown" -> RecipientReadiness.Loading
+                chatEntry?.access == "public" -> RecipientReadiness.Ready(listOf(Hex.encode(identity.copySignPublic())))
+                chatEntry?.kind == "dm" -> RecipientReadiness.Ready(listOf(Hex.encode(identity.copySignPublic())))
+                else -> RecipientReadiness.Unavailable("Verified roster context is unresolved")
+            }
         val engine =
             SyncEngine(
                 transport = transport,
@@ -641,6 +668,8 @@ internal class AndroidDeps(
             identity = identity,
             senderIdentifier = Hex.encode(identity.copySignPublic()),
             communityId = communityId,
+            privateMembershipChat = isPrivateMembershipChat,
+            initialRecipientReadiness = initialReadiness,
         )
     }
 

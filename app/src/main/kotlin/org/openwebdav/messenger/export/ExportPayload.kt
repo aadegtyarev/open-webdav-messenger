@@ -49,7 +49,7 @@ internal data class ExportPayload(
             if (payload.chatKeys.size > MAX_CHAT_KEYS) throw PayloadTooLargeException()
             val sb = StringBuilder(4096)
             sb.append('{')
-            sb.append("\"v\":${if (payload.accountBackupBase64 == null) 1 else 2}")
+            sb.append("\"v\":${if (payload.accountBackupBase64 == null) 1 else ACCOUNT_BACKUP_VERSION}")
 
             // connectionConfig
             sb.append(",\"cc\":")
@@ -129,7 +129,13 @@ internal data class ExportPayload(
                 }
                 p.exitObject()
 
-                if (v !in 1..2 || (v == 1 && accountBackup != null) || (v == 2 && accountBackup == null)) return null
+                if (v !in 1..ACCOUNT_BACKUP_VERSION ||
+                    (v == 1 && accountBackup != null) ||
+                    (v in 2..ACCOUNT_BACKUP_VERSION && accountBackup == null)
+                ) {
+                    return null
+                }
+                if (accountBackup != null && !matchesBackupVersion(v!!, accountBackup)) return null
                 ExportPayload(
                     connectionConfig = cc,
                     communityKeyBase64 = ck,
@@ -139,6 +145,22 @@ internal data class ExportPayload(
                 )
             } catch (_: Exception) {
                 null
+            }
+        }
+
+        private const val ACCOUNT_BACKUP_VERSION = 3
+
+        private fun matchesBackupVersion(
+            payloadVersion: Int,
+            encodedBackup: String,
+        ): Boolean {
+            val bytes = runCatching { decodeBase64(encodedBackup) }.getOrNull() ?: return false
+            if (bytes.size < Int.SIZE_BYTES) return false
+            val backupVersion = java.nio.ByteBuffer.wrap(bytes).int
+            return when (payloadVersion) {
+                2 -> backupVersion in 1..2
+                3 -> backupVersion == 3
+                else -> false
             }
         }
 

@@ -36,7 +36,8 @@ class JoinScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
 
-    private fun viewModel(deps: RecordingOnboardingDeps) = JoinViewModel(OnboardingService(deps, ioDispatcher = Dispatchers.Unconfined))
+    private fun viewModel(deps: RecordingOnboardingDeps) =
+        JoinViewModel(OnboardingService(deps, AppTestSupport.inviteCodec(), ioDispatcher = Dispatchers.Unconfined))
 
     /** No camera → only the paste field + Join button; the scan affordance is absent (paste is the fallback). */
     @Test

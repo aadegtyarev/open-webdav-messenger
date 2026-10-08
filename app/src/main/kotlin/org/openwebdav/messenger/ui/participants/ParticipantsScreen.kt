@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.ParticipantIdentityProvenance
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RuntimeGraph
 
@@ -64,6 +65,7 @@ internal fun ParticipantsScreen(
                                     row.participant.displayName,
                                     row.fingerprint,
                                     row.participant.isSelf,
+                                    row.participant.provenance == ParticipantIdentityProvenance.PRIVATE_CHAT_ONLY,
                                 )
                             }
                         }

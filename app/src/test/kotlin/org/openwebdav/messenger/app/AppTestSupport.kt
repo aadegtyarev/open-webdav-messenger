@@ -4,6 +4,7 @@ import com.goterl.lazysodium.LazySodiumJava
 import com.goterl.lazysodium.SodiumJava
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockWebServer
+import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
@@ -13,6 +14,7 @@ import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
+import org.openwebdav.messenger.identity.IdentityTestSupport
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
@@ -52,6 +54,7 @@ internal object AppTestSupport {
         config: ConnectionConfig = SyncTestSupport.config(server),
         key: ChatKey = SyncTestSupport.fixedChatKey(),
         identity: Identity = newIdentity(),
+        privateMembershipChat: Boolean = false,
     ): RuntimeGraph {
         val store = SyncTestSupport.store(database, communityId)
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(native())), identityCrypto())
@@ -59,6 +62,7 @@ internal object AppTestSupport {
         return RuntimeGraph(
             engine, store, envelope, config, chatId, communityName, key,
             identity, Hex.encode(identity.copySignPublic()), communityId = communityId,
+            privateMembershipChat = privateMembershipChat,
             initialRecipientReadiness = readiness,
         )
     }
@@ -71,6 +75,7 @@ internal object AppTestSupport {
         identity: Identity,
         chatKeys: Map<String, ChatKey>,
         rawFileRead: suspend () -> ByteArray? = { null },
+        privateMembershipChat: Boolean = false,
     ): EngineWiring.Deps {
         val testCommunityId = communityId
         return object : EngineWiring.Deps {
@@ -114,6 +119,7 @@ internal object AppTestSupport {
                     config = config,
                     key = chatKey,
                     identity = identity,
+                    privateMembershipChat = privateMembershipChat,
                 )
 
             override fun communityChatIds(communityId: String): List<String> = chatKeys.keys.toList()
@@ -167,13 +173,19 @@ internal object AppTestSupport {
             chatRoot = "owdm/root",
         )
 
+    fun inviteCodec(): InviteCodec = InviteCodec(IdentityTestSupport.identityCrypto())
+
     /** Build an owdm1: invite string from a config + random key + chat-id + name (for join tests). */
     suspend fun inviteString(
         config: ConnectionConfig,
         chatId: String,
         chatKey: ChatKey,
         communityName: String,
+        access: ChatAccess = ChatAccess.PUBLIC,
     ): String {
+        val idCrypto = IdentityTestSupport.identityCrypto()
+        val identity = idCrypto.generateIdentity()
+        val codec = InviteCodec(idCrypto)
         val token =
             InviteToken(
                 baseUrl = config.baseUrl,
@@ -183,8 +195,18 @@ internal object AppTestSupport {
                 chatId = chatId,
                 chatKey = chatKey.export(),
                 communityName = communityName,
+                access = access,
+                signingPublicKey = identity.copySignPublic(),
+                signature = ByteArray(InviteToken.SIGNATURE_BYTES),
             )
-        return InviteCodec().encode(token)
+        val secret = identity.copySignSecret()
+        val signed =
+            try {
+                codec.sign(token, secret)
+            } finally {
+                secret.fill(0)
+            }
+        return codec.encode(signed)
     }
 
     fun testClient(): OkHttpClient = OkHttpClient.Builder().build()
@@ -217,6 +239,7 @@ internal class RecordingOnboardingDeps(
         config: ConnectionConfig,
         chatId: String,
         communityName: String,
+        access: String,
     ) {
         savedConfig = config
         savedChatId = chatId

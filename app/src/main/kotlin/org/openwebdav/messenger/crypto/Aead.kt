@@ -48,17 +48,7 @@ class Aead(private val native: NativeCrypto) {
         plaintext: ByteArray,
     ): ByteArray {
         require(header8.size == HEADER_SIZE) { "header must be $HEADER_SIZE bytes (the envelope header)" }
-        val nonce = native.randomBytes(NONCE_BYTES)
-        val key = chatKey.copyBytes()
-        try {
-            val ciphertextWithTag = native.aeadEncrypt(plaintext, header8, nonce, key)
-            val blob = ByteArray(NONCE_BYTES + ciphertextWithTag.size)
-            nonce.copyInto(blob, 0)
-            ciphertextWithTag.copyInto(blob, NONCE_BYTES)
-            return blob
-        } finally {
-            key.fill(0)
-        }
+        return sealWithAssociatedData(chatKey, header8, plaintext)
     }
 
     /**
@@ -72,12 +62,38 @@ class Aead(private val native: NativeCrypto) {
         blob: ByteArray,
     ): OpenResult {
         if (header8.size != HEADER_SIZE) return OpenResult.Rejected
-        if (blob.size < MIN_BLOB_SIZE) return OpenResult.Rejected
+        return openWithAssociatedData(chatKey, header8, blob)
+    }
+
+    /** AEAD seam for non-envelope protocols; callers must supply canonical domain-separated AAD. */
+    fun sealWithAssociatedData(
+        chatKey: ChatKey,
+        associatedData: ByteArray,
+        plaintext: ByteArray,
+    ): ByteArray {
+        require(associatedData.isNotEmpty()) { "associated data must not be empty" }
+        val nonce = native.randomBytes(NONCE_BYTES)
+        val key = chatKey.copyBytes()
+        try {
+            val ciphertextWithTag = native.aeadEncrypt(plaintext, associatedData, nonce, key)
+            return nonce + ciphertextWithTag
+        } finally {
+            key.fill(0)
+        }
+    }
+
+    /** Opens a non-envelope AEAD blob using the exact supplied associated data. */
+    fun openWithAssociatedData(
+        chatKey: ChatKey,
+        associatedData: ByteArray,
+        blob: ByteArray,
+    ): OpenResult {
+        if (associatedData.isEmpty() || blob.size < MIN_BLOB_SIZE) return OpenResult.Rejected
         val nonce = blob.copyOfRange(0, NONCE_BYTES)
         val ciphertextWithTag = blob.copyOfRange(NONCE_BYTES, blob.size)
         val key = chatKey.copyBytes()
         try {
-            val plaintext = native.aeadDecrypt(ciphertextWithTag, header8, nonce, key) ?: return OpenResult.Rejected
+            val plaintext = native.aeadDecrypt(ciphertextWithTag, associatedData, nonce, key) ?: return OpenResult.Rejected
             return OpenResult.Opened(plaintext)
         } finally {
             key.fill(0)

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">DavChat</string>
+    <string name="join_legacy_invite">This invite is outdated. Ask the sender for a fresh invite to join safely.</string>
     <string name="fast_poll_channel_name">Message sync</string>
     <string name="fast_poll_channel_description">Shown when fast polling is active</string>
     <string name="fast_poll_notification_title">Open WebDAV Messenger</string>
@@ -10,6 +11,9 @@
     <string name="roster_loading_explanation">Reading participants from server. Sending will be available when complete.</string>
     <string name="participants_action">Participants</string>
     <string name="participants_title">Participants</string>
+    <string name="participants_private_chat_only">Identity verified only for this private chat</string>
+    <string name="private_claim_pending">Private-chat identity claim not uploaded yet. Other members may not see you.</string>
+    <string name="private_claim_uploaded">Identity claim uploaded; other members may not see you yet.</string>
     <string name="participants_back">Back to chat</string>
     <string name="participants_you">You</string>
     <string name="participants_unknown_name">Name unavailable</string>

@@ -134,6 +134,8 @@ class ExportRestoreActivity : Activity() {
                 activateRuntime = AppContainer::rebuildAfterRestore,
                 restorePreviousRuntime = AppContainer::restorePreviousRuntime,
                 invalidateLocalCaches = AppContainer::invalidateRosterCaches,
+                afterRuntimeActivated = { AppContainer.resumeRuntimeAfterAccountReplacement() },
+                afterRuntimeRestored = { AppContainer.resumeRuntimeAfterAccountReplacement() },
             )
     }
 

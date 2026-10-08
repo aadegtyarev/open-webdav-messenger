@@ -8,9 +8,11 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.transport.ConnectionConfig
 
 /**
@@ -29,8 +31,11 @@ class OnboardingServiceTest {
         var savedConfig: ConnectionConfig? = null
         var savedChatId: String? = null
         var savedCommunityName: String? = null
+        var savedAccess: String? = null
+        var invalidatedChatId: String? = null
         var reconfiguredChatId: String? = null
         var reconfiguredKey: ChatKey? = null
+        var generationAtReconfigure: Long? = null
 
         override fun keySources(): KeySources = AppTestSupport.keySources()
 
@@ -40,10 +45,19 @@ class OnboardingServiceTest {
             config: ConnectionConfig,
             chatId: String,
             communityName: String,
+            access: String,
         ) {
             savedConfig = config
             savedChatId = chatId
             savedCommunityName = communityName
+            savedAccess = access
+        }
+
+        override fun invalidateChatState(
+            chatId: String,
+            identity: Identity,
+        ) {
+            invalidatedChatId = chatId
         }
 
         override suspend fun ensureIdentity(): Identity = identity
@@ -60,6 +74,7 @@ class OnboardingServiceTest {
         ) {
             reconfiguredChatId = chatId
             reconfiguredKey = chatKey
+            generationAtReconfigure = AccountMutationBarrier.process.replacementGeneration()
         }
 
         override suspend fun checkFolder(
@@ -68,7 +83,8 @@ class OnboardingServiceTest {
         ): OnboardingService.FolderCheck = OnboardingService.FolderCheck.Ok
     }
 
-    private fun service(deps: OnboardingService.Deps) = OnboardingService(deps, ioDispatcher = Dispatchers.Unconfined)
+    private fun service(deps: OnboardingService.Deps) =
+        OnboardingService(deps, AppTestSupport.inviteCodec(), ioDispatcher = Dispatchers.Unconfined)
 
     /**
      * owner_create_community_persists_keystore_wrapped_auto_creates_chat_and_installs_runner — create
@@ -163,6 +179,47 @@ class OnboardingServiceTest {
             assertTrue(result is OnboardingService.JoinResult.Invalid)
             assertNull(deps.savedConfig)
             assertNull(deps.reconfiguredChatId)
+        }
+
+    @Test
+    fun private_invite_persists_private_access_metadata() =
+        runTest {
+            val config = AppTestSupport.httpsConfig()
+            val key = AppTestSupport.keySources().newRandomKey()
+            val invite =
+                AppTestSupport.inviteString(
+                    config,
+                    "private-chat-000000000001",
+                    key,
+                    "Private",
+                    org.openwebdav.messenger.chatdirectory.ChatAccess.PRIVATE,
+                )
+            val deps = RecordingDeps(AppTestSupport.newIdentity())
+            val generationBeforeJoin = AccountMutationBarrier.process.replacementGeneration()
+
+            assertTrue(service(deps).joinFromInvite(invite) is OnboardingService.JoinResult.Joined)
+            assertEquals("private", deps.savedAccess)
+            assertEquals(generationBeforeJoin + 1, deps.generationAtReconfigure)
+        }
+
+    @Test
+    fun legacy_invite_rejected_before_any_account_mutation() =
+        runTest {
+            val deps = RecordingDeps(AppTestSupport.newIdentity())
+            val json = "{\"v\":\"1\",\"c\":\"legacy-chat\"}"
+            val compressed =
+                java.io.ByteArrayOutputStream().also { out ->
+                    java.util.zip.DeflaterOutputStream(out).use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                }.toByteArray()
+            val invite = InviteCodec.PREFIX + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(compressed)
+
+            assertTrue(service(deps).joinFromInvite(invite) is OnboardingService.JoinResult.LegacyInvite)
+            assertNull(deps.savedConfig)
+            assertNull(deps.savedChatId)
+            assertNull(deps.savedAccess)
+            assertNull(deps.reconfiguredChatId)
+            assertFalse(deps.chatKeyStore.has("legacy-chat"))
+            assertNull(deps.invalidatedChatId)
         }
 
     private fun assertArrayEqualsKey(

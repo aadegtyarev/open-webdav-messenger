@@ -54,6 +54,22 @@ class WebDavVerbTest {
             assertEquals("\"etag-a\"", entries.first { it.name == "msg-a" }.etag)
         }
 
+    @Test
+    fun bounded_propfind_rejects_entry_overflow() =
+        runTest {
+            server.enqueue(MockResponse().setResponseCode(207).setBody(TestSupport.multistatus(inboxPath, "one" to "a", "two" to "b")))
+            val result = TestSupport.newTransport(server).listBounded(inboxPath, maxEntries = 1, maxResponseBytes = 16_384)
+            assertTrue(result is WebDavResult.TransportError)
+        }
+
+    @Test
+    fun bounded_content_read_rejects_oversized_file() =
+        runTest {
+            server.enqueue(MockResponse().setResponseCode(200).setBody("too large"))
+            val result = TestSupport.newTransport(server).readContentAddressedBounded("private-membership/chat/name", "name", 2)
+            assertTrue(result is WebDavResult.Success && result.value == ReadResult.NotReady)
+        }
+
     // plan: put_message_uses_content_addressed_name — target path is the message-id; repeat → same path.
     @Test
     fun put_message_uses_content_addressed_name() =

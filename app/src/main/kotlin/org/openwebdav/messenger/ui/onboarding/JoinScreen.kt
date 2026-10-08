@@ -34,12 +34,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import org.openwebdav.messenger.R
 import org.openwebdav.messenger.ui.OnboardingViewModelFactory
 import org.openwebdav.messenger.ui.scan.QrScannerView
 
@@ -58,6 +60,11 @@ internal fun JoinScreen(
     viewModel: JoinViewModel = viewModel(factory = OnboardingViewModelFactory),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val errorText =
+        when (state.error) {
+            JoinViewModel.LEGACY_INVITE_MESSAGE_KEY -> stringResource(R.string.join_legacy_invite)
+            else -> state.error
+        }
     val context = LocalContext.current
     val hasCamera = remember { context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
     var scanning by remember { mutableStateOf(false) }
@@ -108,7 +115,7 @@ internal fun JoinScreen(
                 onValueChange = viewModel::onPasted,
                 label = { Text("Invite") },
                 isError = state.error != null,
-                supportingText = state.error?.let { { Text(it) } },
+                supportingText = errorText?.let { { Text(it) } },
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Invite string" },
             )
             Button(
