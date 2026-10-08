@@ -93,6 +93,20 @@ its retryable envelope is durably persisted; the persistence callback and draft
 compare-and-clear run on the UI dispatcher with draft edits. The draft clears
 after persistence succeeds and is not erased by a stale completion.
 
+**Verified roster cache (3-roster-cache):** A bounded device-local cache stores only
+verified public participant entries, encrypted with the Android Keystore. Cache
+identity is exact community/chat scope and is bound to the community key, chat key,
+and account public identity. A valid hit installs Ready before the asynchronous
+WebDAV verification refresh; this cached Ready state is visually normal and keeps
+Send enabled. A verified refresh replaces the runtime roster and cache together;
+a refresh failure preserves cached Ready without a foreground error. Without a
+valid hit, Loading keeps Send disabled, shows localized input guidance and an
+accessible progress action, and transitions to Ready or Unavailable after remote
+verification. Cache data is strictly bounded and malformed data fails closed.
+Restore/replacement and a mismatched key or identity invalidate cached data; stale
+refresh work cannot commit after invalidation. This cache does not change the
+Ready-snapshot requirement for new sends or existing outbox retry behavior.
+
 **Send failure and retry (3-send-fail):** A failed or uncertain send remains in
 the feed with truthful local status. A transient error below the draft clears
 when the draft changes or a send succeeds. Automatic sync retry and explicit
