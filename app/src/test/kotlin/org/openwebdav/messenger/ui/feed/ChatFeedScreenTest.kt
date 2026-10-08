@@ -29,9 +29,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppTestSupport
+import org.openwebdav.messenger.app.CachedVerifiedRoster
 import org.openwebdav.messenger.app.EngineWiring
 import org.openwebdav.messenger.app.RecipientReadiness
+import org.openwebdav.messenger.app.RosterCacheProvenance
 import org.openwebdav.messenger.app.RuntimeGraph
+import org.openwebdav.messenger.app.VerifiedRosterCachePersistence
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
@@ -86,8 +89,31 @@ class ChatFeedScreenTest {
 
     @After
     fun tearDown() {
+        AppContainer.clearChatOpenTestSeam()
         server.shutdown()
         db.close()
+    }
+
+    private class MemoryRosterCache : VerifiedRosterCachePersistence {
+        private val records = mutableMapOf<Pair<String, String>, CachedVerifiedRoster>()
+
+        override fun load(
+            communityId: String,
+            chatId: String,
+        ) = records[communityId to chatId]
+
+        override fun put(entry: CachedVerifiedRoster) {
+            records[entry.communityId to entry.chatId] = entry
+        }
+
+        override fun remove(
+            communityId: String,
+            chatId: String,
+        ) {
+            records.remove(communityId to chatId)
+        }
+
+        override fun clear() = records.clear()
     }
 
     private fun graph(): RuntimeGraph {
@@ -187,8 +213,8 @@ class ChatFeedScreenTest {
             }
             val oldRead = reads.poll(5, TimeUnit.SECONDS) ?: error("group roster read did not start")
             assertEquals(RecipientReadiness.Loading, groupGraph.recipientSnapshot())
-            composeRule.onNodeWithContentDescription("Connecting — loading verified chat members").assertIsDisplayed()
-            composeRule.onNodeWithContentDescription("Message").performTextInput("hello")
+            composeRule.onNodeWithContentDescription("Reading participants from server").assertIsDisplayed()
+            composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
             composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
 
             val failedB = AppContainer.beginChatOpenRequest()
@@ -208,6 +234,7 @@ class ChatFeedScreenTest {
             retryRead.complete(DirectoryReadResult(listOf(verifiedPeer()), 0))
             runBlocking { withTimeout(5_000) { retryReadFinished.await() } }
             composeRule.waitUntil(5_000) { groupGraph.recipientSnapshot() is RecipientReadiness.Ready }
+            composeRule.onNodeWithContentDescription("Message").performTextInput("hello")
             composeRule.onNodeWithContentDescription("Send").assertIsEnabled()
 
             val dmGraph = openInstalledChat(dmId, "DM")
@@ -219,14 +246,15 @@ class ChatFeedScreenTest {
                 }.getOrDefault(false)
             }
             val dmRead = reads.poll(5, TimeUnit.SECONDS) ?: error("DM roster read did not start")
-            composeRule.onNodeWithContentDescription("Connecting — loading verified chat members").assertIsDisplayed()
-            composeRule.onNodeWithContentDescription("Message").performTextInput("dm send")
+            composeRule.onNodeWithContentDescription("Reading participants from server").assertIsDisplayed()
+            composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
             composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
             val dmReadFinished = CompletableDeferred<Unit>()
             enrichmentCompletions.put(dmReadFinished)
             dmRead.complete(DirectoryReadResult(listOf(verifiedPeer()), 0))
             runBlocking { withTimeout(5_000) { dmReadFinished.await() } }
             composeRule.waitUntil(5_000) { dmGraph.recipientSnapshot() is RecipientReadiness.Ready }
+            composeRule.onNodeWithContentDescription("Message").performTextInput("dm send")
             composeRule.onNodeWithContentDescription("Send").assertIsEnabled()
         } finally {
             releasePoll.complete(null)
@@ -260,19 +288,102 @@ class ChatFeedScreenTest {
     private fun verifiedPeer() = DirectoryEntry("Peer", ByteArray(32) { 1 }, ByteArray(32) { 2 })
 
     @Test
+    fun cached_general_is_ready_before_suspended_reader() {
+        val communityId = "default"
+        val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
+        EngineWiring.initialize(
+            AppTestSupport.chatOpenTestDeps(server, db, communityId, stored, identity, mapOf(chatId to chatKey)),
+        )
+        val persistence = MemoryRosterCache()
+        val read = CompletableDeferred<DirectoryReadResult>()
+        val completed = CompletableDeferred<Unit>()
+        val provenance = RosterCacheProvenance.digest(communityId, chatId, chatKey, chatKey, identity)
+        persistence.put(CachedVerifiedRoster(communityId, chatId, provenance, listOf(verifiedPeer())))
+        AppContainer.configureChatOpenTestSeam(
+            communityId,
+            AppContainer.ChatOpenTestSeam(
+                loadChatKey = { chatKey },
+                loadStored = { stored },
+                readDirectory = { read.await() },
+                cachePersistence = persistence,
+                onGeneralRosterCompleted = { completed.complete(Unit) },
+            ),
+        )
+        val graph = checkNotNull(AppContainer.runtimeGraph())
+        AppContainer.startIndependentGeneralRosterRefreshForStartupOrRestore(graph)
+        assertTrue(graph.recipientSnapshot() is RecipientReadiness.Ready)
+        assertEquals("Peer", graph.memberNames.values.single())
+        read.complete(DirectoryReadResult(emptyList(), 0, listingFailed = true))
+        runBlocking { withTimeout(5_000) { completed.await() } }
+        assertTrue(graph.recipientSnapshot() is RecipientReadiness.Ready)
+    }
+
+    @Test
+    fun cached_group_and_dm_open_ready_before_suspended_reader() {
+        val communityId = "default"
+        val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
+        val groupId = "cached-group"
+        val dmId = "cached-dm"
+        val keys = mapOf(chatId to chatKey, groupId to chatKey, dmId to chatKey)
+        EngineWiring.initialize(AppTestSupport.chatOpenTestDeps(server, db, communityId, stored, identity, keys))
+        val persistence = MemoryRosterCache()
+        val pendingReads = LinkedBlockingQueue<CompletableDeferred<DirectoryReadResult>>()
+        val completions = LinkedBlockingQueue<CompletableDeferred<Unit>>()
+        AppContainer.configureChatOpenTestSeam(
+            communityId,
+            AppContainer.ChatOpenTestSeam(
+                loadChatKey = keys::get,
+                loadStored = { stored },
+                readDirectory = { CompletableDeferred<DirectoryReadResult>().also(pendingReads::put).await() },
+                onRosterEnrichmentCompleted = { completions.poll()?.complete(Unit) },
+                cachePersistence = persistence,
+                chatKind = { _, id -> if (id == dmId) "dm" else "group" },
+            ),
+        )
+        listOf(groupId to "group", dmId to "dm").forEach { (id, kind) ->
+            val provenance = RosterCacheProvenance.digest(communityId, id, chatKey, chatKey, identity)
+            persistence.put(CachedVerifiedRoster(communityId, id, provenance, listOf(verifiedPeer())))
+            val completed = CompletableDeferred<Unit>()
+            completions.put(completed)
+            val request = AppContainer.beginChatOpenRequest()
+            assertTrue(runBlocking { AppContainer.openGroupChat(id, kind, communityId, requestToken = request) })
+            val installed = checkNotNull(AppContainer.runtimeGraph())
+            assertTrue(installed.recipientSnapshot() is RecipientReadiness.Ready)
+            pendingReads.poll(5, TimeUnit.SECONDS)!!.complete(DirectoryReadResult(emptyList(), 0, listingFailed = true))
+            runBlocking { withTimeout(5_000) { completed.await() } }
+        }
+    }
+
+    @Test
+    fun cached_ready_roster_has_no_loading_surface_and_keeps_send_enabled() {
+        val graph = graph().apply { updateRecipientReadiness(RecipientReadiness.Ready(listOf(senderIdentifier, "peer"))) }
+        composeRule.setContent {
+            ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph))
+        }
+        composeRule.onNodeWithContentDescription("Reading participants from server").assertDoesNotExist()
+        composeRule.onNodeWithText("Message").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Message").performTextInput("hello")
+        composeRule.onNodeWithContentDescription("Send").assertIsEnabled()
+    }
+
+    @Test
     fun group_send_waits_for_verified_roster_and_surfaces_retry_state_accessibly() {
         val graph = graph().apply { updateRecipientReadiness(RecipientReadiness.Loading) }
         composeRule.setContent {
             ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph))
         }
-        composeRule.onNodeWithContentDescription("Connecting — loading verified chat members").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Message").performTextInput("hello")
+        composeRule.onNodeWithContentDescription("Reading participants from server")
+            .assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+        composeRule.onNodeWithText("Reading participants from server…").assertIsDisplayed()
+        composeRule.onNodeWithText("Reading participants from server. Sending will be available when complete.").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
         composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
 
         graph.updateRecipientReadiness(
             RecipientReadiness.Ready(listOf(graph.senderIdentifier, "peer")),
         )
         composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("Message").performTextInput("hello")
         composeRule.onNodeWithContentDescription("Send").assertIsEnabled()
 
         graph.updateRecipientReadiness(

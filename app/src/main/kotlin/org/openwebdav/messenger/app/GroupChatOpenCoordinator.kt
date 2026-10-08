@@ -7,7 +7,7 @@ internal class GroupChatOpenCoordinator(
     private val requestCoordinator: ChatOpenRequestCoordinator,
     private val currentCommunityId: () -> String,
     private val loadChatKey: (String) -> ChatKey?,
-    private val activateCommunity: (String) -> Boolean,
+    private val activateCommunity: (String, ChatOpenRequestCoordinator.Token) -> Boolean,
     private val currentGraph: () -> RuntimeGraph?,
 ) {
     data class Plan(
@@ -31,13 +31,13 @@ internal class GroupChatOpenCoordinator(
         if (expectedSelectionRevision != null && !selectionGuard.isCurrent(expectedSelectionRevision)) return null
         val chatKey = loadChatKey(chatId) ?: return null
         if (currentCommunityId() != communityId &&
-            !requestCoordinator.runIfCurrent(requestToken) { activateCommunity(communityId) }
+            (!requestCoordinator.isCurrent(requestToken) || !activateCommunity(communityId, requestToken))
         ) {
             return null
         }
         var plan: Plan? = null
-        if (!requestCoordinator.runIfCurrent(requestToken) {
-                val graph = currentGraph()?.takeIf { it.communityId == communityId } ?: return@runIfCurrent false
+        if (!requestCoordinator.runIfCurrentSerialized(requestToken) {
+                val graph = currentGraph()?.takeIf { it.communityId == communityId } ?: return@runIfCurrentSerialized false
                 val revision = selectionGuard.begin()
                 plan = Plan(chatId, chatName, communityId, revision, requestToken, chatKey, graph)
                 true

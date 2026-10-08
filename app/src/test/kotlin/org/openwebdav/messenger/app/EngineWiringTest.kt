@@ -67,6 +67,36 @@ class EngineWiringTest {
     private val chatId = "wiring-chat-id-000000000001"
     private val chatKey: ChatKey = SyncTestSupport.fixedChatKey()
 
+    private class CountingRosterPersistence : VerifiedRosterCachePersistence {
+        private val records =
+            java.util.concurrent.ConcurrentHashMap<Pair<String, String>, CachedVerifiedRoster>()
+        val loads =
+            java.util.concurrent.ConcurrentHashMap<Pair<String, String>, java.util.concurrent.atomic.AtomicInteger>()
+
+        override fun load(
+            communityId: String,
+            chatId: String,
+        ): CachedVerifiedRoster? {
+            loads.computeIfAbsent(communityId to chatId) { java.util.concurrent.atomic.AtomicInteger() }.incrementAndGet()
+            return records[communityId to chatId]
+        }
+
+        override fun put(entry: CachedVerifiedRoster) {
+            records[entry.communityId to entry.chatId] = entry
+        }
+
+        override fun remove(
+            communityId: String,
+            chatId: String,
+        ) {
+            records.remove(communityId to chatId)
+        }
+
+        override fun clear() {
+            records.clear()
+        }
+    }
+
     @Before
     fun setUp() {
         server = MockWebServer()
@@ -237,10 +267,11 @@ class EngineWiringTest {
                     this,
                     oldGraph,
                     { update -> EngineWiring.updateGraphIfCurrent(oldGraph, { EngineWiring.current() === oldGraph }, update) },
-                ) {
-                    oldReadStarted.complete(Unit)
-                    oldRead.await()
-                }.start()
+                    read = {
+                        oldReadStarted.complete(Unit)
+                        oldRead.await()
+                    },
+                ).start()
             oldReadStarted.await()
 
             SyncRunner.current().runOnce()
@@ -391,6 +422,66 @@ class EngineWiringTest {
                 serverB.shutdown()
             }
         }
+
+    @Test
+    fun superseded_general_continuation_keeps_original_request_and_installed_graph() {
+        val generalId = "general-chat"
+        val dmId = "dm-chat"
+        val communityId = "community-a"
+        val stored = StoredConnection(SyncTestSupport.config(server), generalId, "Community")
+        val cachePersistence = CountingRosterPersistence()
+        EngineWiring.initialize(AppTestSupport.chatOpenTestDeps(server, db, communityId, stored, identity, mapOf(generalId to chatKey)))
+        val dmRoster = listOf(DirectoryEntry("DM peer", ByteArray(32) { 4 }, ByteArray(32) { 5 }))
+        val provenance = RosterCacheProvenance.digest(communityId, dmId, chatKey, chatKey, identity)
+        cachePersistence.put(CachedVerifiedRoster(communityId, dmId, provenance, dmRoster))
+        val installed = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        val directoryRead = CountDownLatch(1)
+        AppContainer.configureChatOpenTestSeam(
+            communityId,
+            AppContainer.ChatOpenTestSeam(
+                loadChatKey = { chatKey },
+                loadStored = { stored },
+                readDirectory = {
+                    directoryRead.countDown()
+                    CompletableDeferred<DirectoryReadResult>().await()
+                },
+                cachePersistence = cachePersistence,
+                chatKind = { _, id -> if (id == dmId) "dm" else "general" },
+                beforeGeneralRosterPreparation = {
+                    installed.countDown()
+                    check(resume.await(5, TimeUnit.SECONDS))
+                },
+            ),
+        )
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val t1 = AppContainer.beginChatOpenRequest()
+            val generalOpen =
+                executor.submit<Boolean> {
+                    kotlinx.coroutines.runBlocking { AppContainer.switchToCommunity(communityId, t1) }
+                }
+            assertTrue(installed.await(5, TimeUnit.SECONDS))
+            val t2 = AppContainer.beginChatOpenRequest()
+            assertTrue(kotlinx.coroutines.runBlocking { AppContainer.openGroupChat(dmId, "DM", communityId, requestToken = t2) })
+            val dmGraph = checkNotNull(EngineWiring.current())
+            assertEquals(dmId, dmGraph.chatId)
+            assertTrue(dmGraph.recipientSnapshot() is RecipientReadiness.Ready)
+            assertEquals("DM peer", dmGraph.memberNames.values.single())
+            assertTrue(directoryRead.await(5, TimeUnit.SECONDS))
+            resume.countDown()
+            assertTrue(generalOpen.get(5, TimeUnit.SECONDS))
+            assertSame(dmGraph, EngineWiring.current())
+            assertTrue(dmGraph.recipientSnapshot() is RecipientReadiness.Ready)
+            assertEquals("DM peer", dmGraph.memberNames.values.single())
+            assertEquals(1, cachePersistence.loads[communityId to dmId]?.get())
+        } finally {
+            resume.countDown()
+            executor.shutdownNow()
+            AppContainer.clearChatOpenTestSeam()
+            EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
+        }
+    }
 
     @Test
     fun concurrent_same_owner_host_rotations_publish_then_commit_in_serial_order() =
@@ -681,9 +772,9 @@ class EngineWiringTest {
                 requestCoordinator = requests,
                 currentCommunityId = { selectedCommunity },
                 loadChatKey = keyStore::load,
-                activateCommunity = {
+                activateCommunity = { communityId, _ ->
                     activations++
-                    selectedCommunity = it
+                    selectedCommunity = communityId
                     true
                 },
                 currentGraph = EngineWiring::current,
@@ -820,7 +911,7 @@ class EngineWiringTest {
                             EngineWiring.current() === context.graph
                     },
                     activateCommunity = { communityId ->
-                        requests.runIfCurrent(request) {
+                        requests.runIfCurrentSerialized(request) {
                             guard.begin()
                             selectedCommunity = communityId
                             EngineWiring.reconfigure(
@@ -906,7 +997,7 @@ class EngineWiringTest {
                                 EngineWiring.current() === context.graph
                         },
                         activateCommunity = { communityId ->
-                            requests.runIfCurrent(request) {
+                            requests.runIfCurrentSerialized(request) {
                                 guard.begin()
                                 selectedCommunity = communityId
                                 EngineWiring.reconfigure(
@@ -977,7 +1068,7 @@ class EngineWiringTest {
                 requests,
                 { selectedCommunity },
                 groupKey::load,
-                { communityId ->
+                { communityId, _ ->
                     selectedCommunity = communityId
                     guard.begin()
                     EngineWiring.reconfigure(
@@ -1012,7 +1103,7 @@ class EngineWiringTest {
         val installedRevision = guard.current()
 
         assertFalse(
-            requests.runIfCurrent(delayedGeneral) {
+            requests.runIfCurrentSerialized(delayedGeneral) {
                 selectedCommunity = "community-a"
                 guard.begin()
                 true
@@ -1037,7 +1128,7 @@ class EngineWiringTest {
         val delayedGroup = requests.begin()
         val latestGeneral = requests.begin()
         assertTrue(
-            requests.runIfCurrent(latestGeneral) {
+            requests.runIfCurrentSerialized(latestGeneral) {
                 guard.begin()
                 selectedCommunity = "community-b"
                 EngineWiring.reconfigure(
@@ -1061,7 +1152,7 @@ class EngineWiringTest {
                 requests,
                 { selectedCommunity },
                 groupKey::load,
-                {
+                { _, _ ->
                     obsoleteActivations++
                     true
                 },

@@ -32,6 +32,7 @@ class RestoreManager(
     private val accountBackupStore: ExportableAccountBackupStore? = null,
     private val activateRuntime: () -> Unit = {},
     private val restorePreviousRuntime: () -> Unit = activateRuntime,
+    private val invalidateLocalCaches: () -> Unit = {},
 ) {
     /**
      * Decrypt [blob] (base64-encoded export) with [passphrase] and populate all stores.
@@ -243,6 +244,11 @@ class RestoreManager(
     }
 
     private suspend fun writeWithRollback(staged: StagedRestore): RestoreResult {
+        try {
+            invalidateLocalCaches()
+        } catch (_: Exception) {
+            return RestoreResult.StoreFailure(rollbackSucceeded = true)
+        }
         val previous =
             try {
                 val configPresent = connectionConfigStore.hasStored()

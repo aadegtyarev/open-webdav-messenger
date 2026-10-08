@@ -13,16 +13,20 @@ internal class RecipientRosterEnricher(
     private val graph: RuntimeGraph,
     private val applyIfCurrent: (() -> Unit) -> Boolean,
     private val read: suspend () -> DirectoryReadResult,
+    private val preserveReadyOnFailure: Boolean = false,
+    private val commitVerified: ((DirectoryReadResult, () -> Boolean, () -> Boolean) -> Boolean)? = null,
 ) {
     fun start(): Job =
         scope.launch {
             if (!applyIfCurrent {}) return@launch
             try {
                 val result = read()
-                applyIfCurrent {
-                    if (result.listingFailed) {
-                        graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE))
-                    } else {
+                if (result.listingFailed) {
+                    if (!preserveReadyOnFailure) {
+                        applyIfCurrent { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE)) }
+                    }
+                } else {
+                    val update = {
                         graph.memberNames =
                             result.entries.associate {
                                 Hex.encode(it.copySigningPublicKey()) to it.displayName
@@ -32,11 +36,19 @@ internal class RecipientRosterEnricher(
                             RecipientReadiness.Ready(result.entries.map { Hex.encode(it.copySigningPublicKey()) }),
                         )
                     }
+                    val commit = commitVerified
+                    if (commit == null) {
+                        applyIfCurrent(update)
+                    } else {
+                        commit(result, { applyIfCurrent {} }, { applyIfCurrent(update) })
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                applyIfCurrent { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE)) }
+                if (!preserveReadyOnFailure) {
+                    applyIfCurrent { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE)) }
+                }
             }
         }
 

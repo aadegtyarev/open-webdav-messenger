@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.23.3] — 2026-10-08
+
+### Added
+
+- A bounded, encrypted device-local cache of verified chat participants makes
+  repeat chat opens immediately Ready while WebDAV refresh continues silently.
+  Cache provenance is account/community/chat-key scoped and restore invalidates it.
+- Loading rosters show an accessible progress action and a localized composer
+  hint; tapping progress explains that sending is enabled after verification.
+
 ## [0.23.2] — 2026-10-08
 
 ### Fixed

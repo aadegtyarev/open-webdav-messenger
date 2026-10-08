@@ -51,6 +51,15 @@ class RecipientRosterEnricherTest {
         }
 
     @Test
+    fun cached_ready_roster_survives_refresh_failure_silently() =
+        runTest {
+            val cached = RecipientReadiness.Ready(listOf(graph.senderIdentifier, "cached-peer"))
+            graph.updateRecipientReadiness(cached)
+            enricher(this, preserveReadyOnFailure = true) { error("offline") }.start().join()
+            assertEquals(cached, graph.recipientSnapshot())
+        }
+
+    @Test
     fun failed_and_stale_reads_never_publish_ready_recipients() =
         runTest {
             enricher(this) { error("offline") }.start().join()
@@ -73,6 +82,7 @@ class RecipientRosterEnricherTest {
     private fun enricher(
         scope: CoroutineScope,
         current: () -> Boolean = { true },
+        preserveReadyOnFailure: Boolean = false,
         read: suspend () -> DirectoryReadResult,
     ): RecipientRosterEnricher =
         RecipientRosterEnricher(
@@ -87,6 +97,7 @@ class RecipientRosterEnricherTest {
                 }
             },
             read,
+            preserveReadyOnFailure = preserveReadyOnFailure,
         )
 
     private fun entry(seed: String) = DirectoryEntry(seed, seed.toByteArray().copyOf(32), ByteArray(32))

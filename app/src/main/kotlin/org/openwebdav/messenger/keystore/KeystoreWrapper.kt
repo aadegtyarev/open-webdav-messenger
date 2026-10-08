@@ -22,9 +22,9 @@ import javax.crypto.spec.GCMParameterSpec
  *    (`androidx.security:security-crypto` is deprecated — not used; stack-notes);
  *  - the on-disk format `iv(12) ‖ ciphertext+tag` — only the wrapped blob ever touches disk, never the
  *    raw key/passphrase/identity (Security constraints), never logged;
- *  - an **atomic write** ([wrap]) — write to a temp file in the same dir, fsync, then atomically rename
- *    over the target, so a crash/kill mid-write leaves either the old intact file or the new one, never
- *    a partial/zero-length blob;
+ *  - temp-file writes in the same directory with fsync before replacement; [wrapStrictAtomic] requires
+ *    atomic `REPLACE_EXISTING` and preserves the old target on failure, while legacy [wrap] retains its
+ *    historical fallback for stores that have not adopted strict replacement;
  *  - a **typed unwrap** ([unwrap]) — a corrupt/partial blob, or a Keystore wrapping key invalidated by
  *    an OS/lockscreen change (`AEADBadTagException` / `KeyPermanentlyInvalidatedException` / any GCM
  *    failure) is mapped to [UnwrapResult.Unrecoverable], never an exception escaping to crash a caller.
@@ -37,21 +37,33 @@ import javax.crypto.spec.GCMParameterSpec
  * Android-only — Keystore is device-backed (TEE/StrongBox), so wrap/unwrap is exercised by
  * `connectedAndroidTest`, not the JVM (stack-notes → Android Keystore: instrumented-only).
  */
-class KeystoreWrapper(
+class KeystoreWrapper internal constructor(
     private val alias: String,
     private val file: File,
+    private val atomicReplace: (File, File) -> Unit,
 ) {
+    constructor(alias: String, file: File) : this(alias, file, { source, target -> StrictFileOperations.atomicReplace(source, target) })
+
     /**
-     * Encrypt [plaintext] under the Keystore wrapping key and persist the `iv ‖ ct+tag` blob
-     * **atomically**: temp file in the same directory → flush+fsync → atomic rename over [file]. The
-     * [plaintext] is the caller's buffer; the caller owns zeroizing it (this method does not).
+     * Encrypt [plaintext] under the Keystore wrapping key and persist the `iv ‖ ct+tag` blob using the
+     * legacy atomic-write fallback. Cache storage uses [wrapStrictAtomic] to reject a failed atomic replace
+     * without deleting the previous target. The [plaintext] buffer remains caller-owned.
      *
      * Throws [java.io.IOException] on any Keystore failure — [KeyStoreException], `ProviderException`,
      * `InvalidKeyException` etc. can surface from [wrappingKey] or [Cipher.init] under TEE pressure;
      * wrapping them as [IOException] gives callers a typed storage-layer signal (matches [unwrap] pattern).
      */
     @Suppress("TooGenericExceptionCaught") // varied Keystore/TEE runtime exceptions; all map to IOException
-    fun wrap(plaintext: ByteArray) {
+    fun wrap(plaintext: ByteArray) = wrap(plaintext, strictAtomic = false)
+
+    /** Atomically replace [file]; failure preserves the existing target and removes only the temp file. */
+    fun wrapStrictAtomic(plaintext: ByteArray) = wrap(plaintext, strictAtomic = true)
+
+    @Suppress("TooGenericExceptionCaught") // varied Keystore/TEE runtime exceptions map to IOException
+    private fun wrap(
+        plaintext: ByteArray,
+        strictAtomic: Boolean,
+    ) {
         try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, wrappingKey())
@@ -60,7 +72,7 @@ class KeystoreWrapper(
             val blob = ByteArray(iv.size + wrapped.size)
             iv.copyInto(blob, 0)
             wrapped.copyInto(blob, iv.size)
-            writeAtomically(blob)
+            writeAtomically(blob, strictAtomic)
         } catch (e: Exception) {
             throw IOException("Keystore wrap failed", e)
         }
@@ -105,10 +117,23 @@ class KeystoreWrapper(
     /** Delete the wrapped blob file and report failure to replacement/rollback callers. */
     fun delete() = StrictFileOperations.delete(file)
 
+    /** Destroy this wrapper's encryption key so undeletable stale ciphertext remains unreadable. */
+    fun destroyWrappingKey() {
+        try {
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
+        } catch (failure: Exception) {
+            throw IOException("Keystore key removal failed", failure)
+        }
+    }
+
     /** The raw wrapped-on-disk bytes, or `null` if absent — for tests asserting no plaintext leaks. */
     fun rawBlob(): ByteArray? = file.takeIf { it.exists() }?.readBytes()
 
-    private fun writeAtomically(blob: ByteArray) {
+    private fun writeAtomically(
+        blob: ByteArray,
+        strictAtomic: Boolean,
+    ) {
         val dir = file.parentFile ?: error("wrapped-blob file has no parent dir: $file")
         dir.mkdirs()
         val temp = File.createTempFile(file.name + ".", TEMP_SUFFIX, dir)
@@ -120,16 +145,16 @@ class KeystoreWrapper(
                 // file whose contents are still only in the page cache after a power loss.
                 out.fd.sync()
             }
-            // renameTo on the same filesystem is the atomic swap: a concurrent/crashing reader sees
-            // either the old [file] or the fully-written new one, never a half-written blob.
-            if (!temp.renameTo(file)) {
-                // Fallback: delete-then-rename (some filesystems reject rename-over-existing). This is
-                // the only non-atomic window; the temp still holds the new blob if it loses.
+            try {
+                atomicReplace(temp, file)
+            } catch (failure: Exception) {
+                if (strictAtomic) throw failure
+                // Legacy callers retain their historical fallback; cache writes never take this path.
                 file.delete()
-                if (!temp.renameTo(file)) error("atomic rename of $temp -> $file failed")
+                if (!temp.renameTo(file)) throw failure
             }
         } finally {
-            temp.delete() // no-op if the rename consumed it
+            if (temp.exists() && !temp.delete()) throw IOException("Could not remove temporary wrapped blob")
         }
     }
 

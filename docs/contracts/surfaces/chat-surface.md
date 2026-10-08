@@ -93,6 +93,30 @@ its retryable envelope is durably persisted; the persistence callback and draft
 compare-and-clear run on the UI dispatcher with draft edits. The draft clears
 after persistence succeeds and is not erased by a stale completion.
 
+**Verified roster cache (3-roster-cache):** A bounded device-local cache stores only
+verified public participant entries, encrypted with the Android Keystore. Cache
+identity is exact community/chat scope and is bound to the community key, chat key,
+and account public identity. A valid hit installs Ready before the asynchronous
+WebDAV verification refresh only if the lookup generation is still current at the
+exact-context apply; invalidation racing a cache hit rejects that apply. A General
+continuation retains its originating request token and exact installed runtime, so
+a newer open cannot redirect it to another chat. This cached Ready state is
+visually normal and keeps Send enabled. Cache application and cache-writing
+commits take locks in cache → shared commit coordinator → request/selection/runtime
+order. Invalidation advances the generation under cache state before removing data,
+fencing prior lookups. A current verified refresh replaces the runtime roster and
+durable cache under the shared commit coordinator; strict atomic replacement keeps
+the old encrypted cache if replacement fails, while the verified roster may still
+update the active runtime. A refresh failure preserves Ready only after cached
+application succeeded, without a foreground error.
+Without a valid hit, Loading keeps Send disabled, shows localized input guidance
+and an accessible progress action, and transitions to Ready or Unavailable after
+remote verification. Cache data is strictly bounded and malformed data fails
+closed. Restore/replacement and a mismatched key or identity invalidate cached
+data; stale or superseded refresh work cannot write or apply. This cache does not
+change the Ready-snapshot requirement for new sends or existing outbox retry
+behavior.
+
 **Send failure and retry (3-send-fail):** A failed or uncertain send remains in
 the feed with truthful local status. A transient error below the draft clears
 when the draft changes or a send succeeds. Automatic sync retry and explicit

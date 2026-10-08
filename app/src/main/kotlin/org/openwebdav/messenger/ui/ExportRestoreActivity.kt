@@ -133,6 +133,7 @@ class ExportRestoreActivity : Activity() {
                 accountBackupStore = accountBackupStore,
                 activateRuntime = AppContainer::rebuildAfterRestore,
                 restorePreviousRuntime = AppContainer::restorePreviousRuntime,
+                invalidateLocalCaches = AppContainer::invalidateRosterCaches,
             )
     }
 

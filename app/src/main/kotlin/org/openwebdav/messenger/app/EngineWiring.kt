@@ -86,6 +86,11 @@ internal object EngineWiring {
     fun current(): RuntimeGraph? = graph
 
     /** Apply asynchronous enrichment only while the exact captured graph is still installed. */
+    fun isGraphCurrent(
+        expectedGraph: RuntimeGraph,
+        isContextCurrent: () -> Boolean,
+    ): Boolean = synchronized(runtimeInstallLock) { graph === expectedGraph && isContextCurrent() }
+
     fun updateGraphIfCurrent(
         expectedGraph: RuntimeGraph,
         isContextCurrent: () -> Boolean,
@@ -107,7 +112,10 @@ internal object EngineWiring {
      * from its single shared factories; tests pass a JVM-backed seam. Called from the `Application` on a
      * background coroutine (Keystore/IO must not run on the main thread).
      */
-    fun initialize(injected: Deps) {
+    fun initialize(
+        injected: Deps,
+        afterGraphInstalled: (RuntimeGraph) -> Unit = {},
+    ) {
         SyncRunner.install(SyncRunner { CycleOutcome(0, 0, backedOff = false) })
         deps = injected
         communityId = deps.activeCommunityId()
@@ -121,6 +129,7 @@ internal object EngineWiring {
                 }
             }
             installAndSchedule(active, active.communityId)
+            afterGraphInstalled(active)
         }
         _ready.value = true
     }
