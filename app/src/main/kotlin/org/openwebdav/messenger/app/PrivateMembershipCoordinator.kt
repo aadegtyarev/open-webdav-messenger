@@ -2,6 +2,7 @@ package org.openwebdav.messenger.app
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.directory.DirectoryEntry
@@ -30,6 +31,7 @@ internal class PrivateMembershipCoordinator(
         isCurrent: () -> Boolean,
     ) {
         if (!isCurrent()) return
+        val accountGeneration = AccountMutationBarrier.process.replacementGeneration()
         graph.enablePrivateMembership()
         val lookup = cache.lookup(graph.communityId, graph.chatId, "private", graph.chatKey, graph.identity)
         val cached = lookup.record?.let { PrivateMembershipCacheProjection.members(graph.chatId, it.members) }
@@ -67,8 +69,14 @@ internal class PrivateMembershipCoordinator(
                     graph.identity,
                     graph.chatKey,
                     service,
+                    accountGeneration,
+                    isCurrent,
                 )
-            if (isCurrent()) graph.updatePrivateClaimStatus(status)
+            AccountMutationBarrier.process.withStableAccount {
+                if (AccountMutationBarrier.process.replacementGeneration() == accountGeneration && isCurrent()) {
+                    graph.updatePrivateClaimStatus(status)
+                }
+            }
         }
     }
 

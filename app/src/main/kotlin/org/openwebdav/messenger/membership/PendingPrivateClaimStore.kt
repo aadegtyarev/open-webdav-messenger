@@ -89,9 +89,14 @@ internal class PendingPrivateClaimStore(context: Context, native: NativeCrypto) 
         record: PendingPrivateClaim,
     ) {
         val target = context.file(community, chat, identity)
-        target.parentFile?.mkdirs()
-        val temp = File(target.parentFile, "${target.name}.tmp")
-        temp.writeBytes(PendingPrivateClaimCodec.encode(digest, record))
-        StrictFileOperations.atomicReplace(temp, target)
+        val parent = target.parentFile ?: error("pending claim directory is unavailable")
+        parent.mkdirs()
+        val temp = java.nio.file.Files.createTempFile(parent.toPath(), ".pending-", ".tmp").toFile()
+        try {
+            temp.writeBytes(PendingPrivateClaimCodec.encode(digest, record))
+            StrictFileOperations.atomicReplace(temp, target)
+        } finally {
+            if (temp.exists()) runCatching { StrictFileOperations.delete(temp) }
+        }
     }
 }

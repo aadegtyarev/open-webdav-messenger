@@ -11,8 +11,8 @@ import org.openwebdav.messenger.transport.WebDavTransport
 internal class PrivateMembershipService(
     private val transport: WebDavTransport,
     private val claims: PrivateMembershipClaimCrypto,
-) {
-    suspend fun publishSelf(
+) : PrivateClaimWriter {
+    override suspend fun publishSelf(
         fileBytes: ByteArray,
         chatId: String,
     ): MembershipPublishOutcome {

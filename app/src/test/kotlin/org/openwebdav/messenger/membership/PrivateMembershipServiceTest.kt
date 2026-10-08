@@ -9,7 +9,6 @@ import org.junit.Before
 import org.junit.Test
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
-import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.directory.DirectoryFakeDisk
 import org.openwebdav.messenger.directory.DirectoryTestSupport
 import org.openwebdav.messenger.identity.IdentityCrypto
@@ -30,7 +29,7 @@ class PrivateMembershipServiceTest {
         val native = DirectoryTestSupport.native()
         val idCrypto = IdentityCrypto(native)
         identity = idCrypto.generateIdentity()
-        val claimCrypto = PrivateMembershipClaimCrypto(MessageCrypto(Aead(native)), PrivateMembershipClaimCodec(idCrypto))
+        val claimCrypto = PrivateMembershipClaimCrypto(PrivateMembershipAead(Aead(native)), PrivateMembershipClaimCodec(idCrypto))
         service = PrivateMembershipService(DirectoryTestSupport.transport(server), claimCrypto)
     }
 
@@ -42,7 +41,7 @@ class PrivateMembershipServiceTest {
         runTest {
             val bytes =
                 PrivateMembershipClaimCrypto(
-                    MessageCrypto(Aead(DirectoryTestSupport.native())),
+                    PrivateMembershipAead(Aead(DirectoryTestSupport.native())),
                     PrivateMembershipClaimCodec(DirectoryTestSupport.identityCrypto()),
                 ).seal("chat_01", "Alice", identity, key)
             assertTrue(service.publishSelf(bytes, "chat_01") is MembershipPublishOutcome.Published)

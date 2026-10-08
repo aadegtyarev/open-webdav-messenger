@@ -82,7 +82,7 @@ internal object AccountBackupCodec {
             }
         }.getOrNull()
 
-    private const val VERSION = 2
+    private const val VERSION = 3
     private const val LEGACY_VERSION = 1
     private const val ACCESS_VERSION = 2
     private val ACCESS_VALUES = setOf("public", "private", "unknown")

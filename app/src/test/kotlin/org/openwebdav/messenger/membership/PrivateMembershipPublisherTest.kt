@@ -14,7 +14,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.Aead
-import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.directory.DirectoryTestSupport
 import org.openwebdav.messenger.identity.IdentityTestSupport
 import org.robolectric.RobolectricTestRunner
@@ -67,7 +66,10 @@ class PrivateMembershipPublisherTest {
         runTest {
             val idCrypto = IdentityTestSupport.identityCrypto()
             val claimCrypto =
-                PrivateMembershipClaimCrypto(MessageCrypto(Aead(DirectoryTestSupport.native())), PrivateMembershipClaimCodec(idCrypto))
+                PrivateMembershipClaimCrypto(
+                    PrivateMembershipAead(Aead(DirectoryTestSupport.native())),
+                    PrivateMembershipClaimCodec(idCrypto),
+                )
             val publisher = PrivateMembershipPublisher(store, claimCrypto)
             val service = PrivateMembershipService(DirectoryTestSupport.transport(server), claimCrypto)
             val first = publisher.publish(ChatAccess.PRIVATE, "community-a", "chat-a", "Alice", identity, key, service)

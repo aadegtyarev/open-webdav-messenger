@@ -3,27 +3,84 @@ package org.openwebdav.messenger.export
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.openwebdav.messenger.transport.ConnectionConfig
 import java.util.Base64
 
 class AccountBackupCodecTest {
     @Test
-    fun version_two_round_trips_multiple_communities_and_chats() {
+    fun version_three_round_trips_exact_access_metadata() {
         val backup =
             AccountBackup(
                 activeCommunityId = "community-b",
                 communities =
                     listOf(
-                        community("community-a", "General", "Group"),
-                        community("community-b", "General", "Private chat"),
+                        community("community-a", "General", "Group").copy(
+                            anchorChatId = "anchor-a",
+                            chats =
+                                listOf(
+                                    ChatBackup("anchor-a", "General", "general", "public"),
+                                    ChatBackup("group-a", "Group", "group", "private"),
+                                ),
+                        ),
+                        community("community-b", "General", "Private chat").copy(
+                            anchorChatId = "anchor-b",
+                            chats = listOf(ChatBackup("anchor-b", "General", "general", "unknown")),
+                        ),
                     ),
             )
         val json = ExportPayload.toJson(payload(backup))
         val restored = ExportPayload.fromJson(json)
         assertNotNull(restored)
         val bytes = Base64.getDecoder().decode(restored!!.accountBackupBase64)
+        assertEquals(3, java.nio.ByteBuffer.wrap(bytes).int)
         assertEquals(backup, AccountBackupCodec.decode(bytes))
+    }
+
+    @Test
+    fun version_two_payload_decodes_access_without_inference() {
+        val backup =
+            AccountBackup(
+                "community-a",
+                listOf(
+                    community("community-a", "General", "Private").copy(
+                        anchorChatId = "anchor-a",
+                        chats =
+                            listOf(
+                                ChatBackup("anchor-a", "General", "general", "public"),
+                                ChatBackup("group-a", "Private", "group", "private"),
+                            ),
+                    ),
+                ),
+            )
+        val bytes = AccountBackupCodec.encode(backup).also { java.nio.ByteBuffer.wrap(it).putInt(2) }
+
+        assertEquals(backup, AccountBackupCodec.decode(bytes))
+    }
+
+    @Test
+    fun unsupported_account_backup_versions_are_rejected() {
+        val bytes = AccountBackupCodec.encode(AccountBackup("community-a", listOf(community("community-a", "General"))))
+        java.nio.ByteBuffer.wrap(bytes).putInt(4)
+
+        assertNull(AccountBackupCodec.decode(bytes))
+    }
+
+    @Test
+    fun outer_backup_payload_v2_migrates_and_v3_is_current() {
+        val backup = AccountBackup("community-a", listOf(community("community-a", "General")))
+        val current = payload(backup)
+        val v3Json = ExportPayload.toJson(current)
+        val v2Bytes = AccountBackupCodec.encode(backup).also { java.nio.ByteBuffer.wrap(it).putInt(2) }
+        val v2Payload = current.copy(accountBackupBase64 = Base64.getEncoder().encodeToString(v2Bytes))
+        val v2Json = ExportPayload.toJson(v2Payload).replace("\"v\":3", "\"v\":2")
+
+        assertTrue(v3Json.contains("\"v\":3"))
+        assertNotNull(ExportPayload.fromJson(v3Json))
+        assertNotNull(ExportPayload.fromJson(v2Json))
+        assertNull(ExportPayload.fromJson(v3Json.replace("\"v\":3", "\"v\":4")))
+        assertNull(ExportPayload.fromJson(v2Json.replace("\"v\":2", "\"v\":3")))
     }
 
     @Test
