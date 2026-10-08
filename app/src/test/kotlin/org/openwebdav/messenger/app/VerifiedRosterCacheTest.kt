@@ -30,18 +30,20 @@ class VerifiedRosterCacheTest {
     }
 
     @Test
-    fun cache_write_failure_keeps_verified_runtime_update_but_removes_old_entry() {
-        persistence.put(roster("community", "chat"))
+    fun cache_write_failure_keeps_verified_runtime_update_and_old_entry() {
+        val old = roster("community", "chat")
+        val fresh = old.copy(entries = listOf(DirectoryEntry("Fresh", ByteArray(32) { 5 }, ByteArray(32) { 6 })))
+        persistence.put(old)
         persistence.failWrites = true
-        var applied = false
+        var runtimeRoster = old
         assertTrue(
-            cache.commit(cache.generation(), roster("community", "chat")) {
-                applied = true
+            cache.commit(cache.generation(), fresh) {
+                runtimeRoster = fresh
                 true
             },
         )
-        assertTrue(applied)
-        assertNull(persistence.load("community", "chat"))
+        assertEquals("Fresh", runtimeRoster.entries.single().displayName)
+        assertEquals("Peer", persistence.load("community", "chat")!!.entries.single().displayName)
     }
 
     @Test

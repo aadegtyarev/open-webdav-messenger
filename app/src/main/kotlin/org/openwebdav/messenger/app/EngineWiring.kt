@@ -86,6 +86,11 @@ internal object EngineWiring {
     fun current(): RuntimeGraph? = graph
 
     /** Apply asynchronous enrichment only while the exact captured graph is still installed. */
+    fun isGraphCurrent(
+        expectedGraph: RuntimeGraph,
+        isContextCurrent: () -> Boolean,
+    ): Boolean = synchronized(runtimeInstallLock) { graph === expectedGraph && isContextCurrent() }
+
     fun updateGraphIfCurrent(
         expectedGraph: RuntimeGraph,
         isContextCurrent: () -> Boolean,

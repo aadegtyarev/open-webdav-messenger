@@ -682,9 +682,9 @@ class EngineWiringTest {
                 requestCoordinator = requests,
                 currentCommunityId = { selectedCommunity },
                 loadChatKey = keyStore::load,
-                activateCommunity = {
+                activateCommunity = { communityId, _ ->
                     activations++
-                    selectedCommunity = it
+                    selectedCommunity = communityId
                     true
                 },
                 currentGraph = EngineWiring::current,
@@ -821,7 +821,7 @@ class EngineWiringTest {
                             EngineWiring.current() === context.graph
                     },
                     activateCommunity = { communityId ->
-                        requests.runIfCurrent(request) {
+                        requests.runIfCurrentSerialized(request) {
                             guard.begin()
                             selectedCommunity = communityId
                             EngineWiring.reconfigure(
@@ -907,7 +907,7 @@ class EngineWiringTest {
                                 EngineWiring.current() === context.graph
                         },
                         activateCommunity = { communityId ->
-                            requests.runIfCurrent(request) {
+                            requests.runIfCurrentSerialized(request) {
                                 guard.begin()
                                 selectedCommunity = communityId
                                 EngineWiring.reconfigure(
@@ -978,7 +978,7 @@ class EngineWiringTest {
                 requests,
                 { selectedCommunity },
                 groupKey::load,
-                { communityId ->
+                { communityId, _ ->
                     selectedCommunity = communityId
                     guard.begin()
                     EngineWiring.reconfigure(
@@ -1013,7 +1013,7 @@ class EngineWiringTest {
         val installedRevision = guard.current()
 
         assertFalse(
-            requests.runIfCurrent(delayedGeneral) {
+            requests.runIfCurrentSerialized(delayedGeneral) {
                 selectedCommunity = "community-a"
                 guard.begin()
                 true
@@ -1038,7 +1038,7 @@ class EngineWiringTest {
         val delayedGroup = requests.begin()
         val latestGeneral = requests.begin()
         assertTrue(
-            requests.runIfCurrent(latestGeneral) {
+            requests.runIfCurrentSerialized(latestGeneral) {
                 guard.begin()
                 selectedCommunity = "community-b"
                 EngineWiring.reconfigure(
@@ -1062,7 +1062,7 @@ class EngineWiringTest {
                 requests,
                 { selectedCommunity },
                 groupKey::load,
-                {
+                { _, _ ->
                     obsoleteActivations++
                     true
                 },

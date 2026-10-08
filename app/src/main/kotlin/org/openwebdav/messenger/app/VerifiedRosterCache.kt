@@ -3,39 +3,10 @@ package org.openwebdav.messenger.app
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.identity.Identity
 
-internal interface VerifiedRosterCachePersistence {
-    fun load(
-        communityId: String,
-        chatId: String,
-    ): CachedVerifiedRoster?
-
-    fun put(entry: CachedVerifiedRoster)
-
-    fun remove(
-        communityId: String,
-        chatId: String,
-    )
-
-    fun clear()
-}
-
-internal object EmptyRosterCachePersistence : VerifiedRosterCachePersistence {
-    override fun load(
-        communityId: String,
-        chatId: String,
-    ): CachedVerifiedRoster? = null
-
-    override fun put(entry: CachedVerifiedRoster) = Unit
-
-    override fun remove(
-        communityId: String,
-        chatId: String,
-    ) = Unit
-
-    override fun clear() = Unit
-}
-
-internal class VerifiedRosterCache(private val store: VerifiedRosterCachePersistence) {
+internal class VerifiedRosterCache(
+    private val store: VerifiedRosterCachePersistence,
+    private val commitCoordinator: RosterCommitCoordinator = RosterCommitCoordinator(),
+) {
     data class Lookup(val roster: CachedVerifiedRoster?, val generation: Long)
 
     private val lock = Any()
@@ -72,15 +43,35 @@ internal class VerifiedRosterCache(private val store: VerifiedRosterCachePersist
     fun commit(
         token: Long,
         roster: CachedVerifiedRoster,
+        isCurrent: () -> Boolean = { true },
         apply: () -> Boolean,
     ): Boolean =
         synchronized(lock) {
-            if (token != generation) return@synchronized false
-            runCatching { store.put(roster) }.onFailure {
-                runCatching { store.remove(roster.communityId, roster.chatId) }
+            commitCoordinator.serialized {
+                if (token != generation || !isCurrent()) return@serialized false
+                val previous = runCatching { store.load(roster.communityId, roster.chatId) }.getOrNull()
+                if (!isCurrent()) return@serialized false
+                val persisted = runCatching { store.put(roster) }.isSuccess
+                val applied =
+                    try {
+                        apply()
+                    } catch (failure: Throwable) {
+                        if (persisted) restorePrevious(roster, previous)
+                        throw failure
+                    }
+                if (!applied && persisted) restorePrevious(roster, previous)
+                applied
             }
-            apply()
         }
+
+    private fun restorePrevious(
+        roster: CachedVerifiedRoster,
+        previous: CachedVerifiedRoster?,
+    ) {
+        runCatching {
+            if (previous == null) store.remove(roster.communityId, roster.chatId) else store.put(previous)
+        }
+    }
 
     fun invalidate(
         communityId: String,

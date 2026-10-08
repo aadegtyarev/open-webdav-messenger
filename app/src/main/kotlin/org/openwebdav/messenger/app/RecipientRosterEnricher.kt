@@ -14,29 +14,33 @@ internal class RecipientRosterEnricher(
     private val applyIfCurrent: (() -> Unit) -> Boolean,
     private val read: suspend () -> DirectoryReadResult,
     private val preserveReadyOnFailure: Boolean = false,
-    private val commitVerified: ((DirectoryReadResult, () -> Boolean) -> Boolean)? = null,
+    private val commitVerified: ((DirectoryReadResult, () -> Boolean, () -> Boolean) -> Boolean)? = null,
 ) {
     fun start(): Job =
         scope.launch {
             if (!applyIfCurrent {}) return@launch
             try {
                 val result = read()
-                applyIfCurrent {
-                    if (result.listingFailed) {
-                        if (!preserveReadyOnFailure) graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE))
+                if (result.listingFailed) {
+                    if (!preserveReadyOnFailure) {
+                        applyIfCurrent { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE)) }
+                    }
+                } else {
+                    val update = {
+                        graph.memberNames =
+                            result.entries.associate {
+                                Hex.encode(it.copySigningPublicKey()) to it.displayName
+                            }
+                        graph.setMemberNamesError(null)
+                        graph.updateRecipientReadiness(
+                            RecipientReadiness.Ready(result.entries.map { Hex.encode(it.copySigningPublicKey()) }),
+                        )
+                    }
+                    val commit = commitVerified
+                    if (commit == null) {
+                        applyIfCurrent(update)
                     } else {
-                        val update = {
-                            graph.memberNames =
-                                result.entries.associate {
-                                    Hex.encode(it.copySigningPublicKey()) to it.displayName
-                                }
-                            graph.setMemberNamesError(null)
-                            graph.updateRecipientReadiness(
-                                RecipientReadiness.Ready(result.entries.map { Hex.encode(it.copySigningPublicKey()) }),
-                            )
-                        }
-                        val commit = commitVerified
-                        if (commit == null) applyIfCurrent(update) else commit(result, { applyIfCurrent(update) })
+                        commit(result, { applyIfCurrent {} }, { applyIfCurrent(update) })
                     }
                 }
             } catch (cancelled: CancellationException) {

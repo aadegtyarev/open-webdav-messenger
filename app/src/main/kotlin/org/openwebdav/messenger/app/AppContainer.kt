@@ -73,9 +73,12 @@ internal object AppContainer {
     private val chatDirectoryFactory by lazy { ChatDirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
     private val communityPolicyCoordinator = CommunityPolicyCoordinator()
-    private val runtimeSelectionGuard = RuntimeSelectionGuard()
-    private val chatOpenRequestCoordinator = ChatOpenRequestCoordinator()
-    private val productionRosterCache by lazy { VerifiedRosterCache(VerifiedRosterCacheStore(requireContext())) }
+    private val rosterCommitCoordinator = RosterCommitCoordinator()
+    private val runtimeSelectionGuard = RuntimeSelectionGuard(rosterCommitCoordinator)
+    private val chatOpenRequestCoordinator = ChatOpenRequestCoordinator(rosterCommitCoordinator)
+    private val productionRosterCache by lazy {
+        VerifiedRosterCache(VerifiedRosterCacheStore(requireContext()), rosterCommitCoordinator)
+    }
 
     @Volatile
     private var rosterCacheTestOverride: VerifiedRosterCache? = null
@@ -125,7 +128,9 @@ internal object AppContainer {
                 val seam = chatOpenTestSeam
                 if (seam != null) seam.loadChatKey(chatId) else crypto.chatKeyStore(requireContext()).load(chatId)
             },
-            activateCommunity = ::switchToCommunityExclusive,
+            activateCommunity = { communityId, requestToken ->
+                switchToCommunityExclusive(communityId, requestToken, refreshGeneralRoster = false)
+            },
             currentGraph = ::runtimeGraph,
         )
     }
@@ -147,7 +152,7 @@ internal object AppContainer {
     ) {
         currentCommunityId = communityId
         chatOpenTestSeam = seam
-        rosterCacheTestOverride = VerifiedRosterCache(seam.cachePersistence ?: EmptyRosterCachePersistence)
+        rosterCacheTestOverride = VerifiedRosterCache(seam.cachePersistence ?: EmptyRosterCachePersistence, rosterCommitCoordinator)
     }
 
     internal fun clearChatOpenTestSeam() {
@@ -261,8 +266,10 @@ internal object AppContainer {
             isSelectedContextCurrent = { context -> isCurrentGroupContext(context, requestToken) },
             activateCommunity = { selected ->
                 AccountMutationBarrier.process.withStableAccount {
-                    chatOpenRequestCoordinator.runIfCurrent(requestToken) {
-                        switchToCommunityExclusive(selected)
+                    if (!chatOpenRequestCoordinator.isCurrent(requestToken)) {
+                        false
+                    } else {
+                        switchToCommunityExclusive(selected, requestToken, refreshGeneralRoster = false)
                     }
                 }
             },
@@ -598,11 +605,11 @@ internal object AppContainer {
                     }
                 },
                 preserveReadyOnFailure = cachedReady,
-                commitVerified = { result, apply ->
+                commitVerified = { result, isCurrent, apply ->
                     val key = communityKey ?: return@RecipientRosterEnricher false
                     val provenance = RosterCacheProvenance.digest(communityId, chatId, key, graph.chatKey, graph.identity)
                     val cached = CachedVerifiedRoster(communityId, chatId, provenance, result.entries)
-                    rosterCache.commit(cacheGeneration, cached, apply)
+                    rosterCache.commit(cacheGeneration, cached, isCurrent, apply)
                 },
             ).start()
         testSeam?.onRosterEnrichmentCompleted?.let { callback -> enrichment.invokeOnCompletion { callback() } }
@@ -621,6 +628,23 @@ internal object AppContainer {
         graph.setMemberNamesError(null)
         graph.updateRecipientReadiness(RecipientReadiness.Ready(entries.map { Hex.encode(it.copySigningPublicKey()) }))
     }
+
+    private fun isRosterContextCurrent(
+        requestToken: ChatOpenRequestCoordinator.Token,
+        selectionRevision: Long,
+        graph: RuntimeGraph,
+        expectedRuntimeKey: String,
+        expectedCommunityId: String,
+        expectedChatId: String,
+    ): Boolean =
+        chatOpenRequestCoordinator.isCurrent(requestToken) &&
+            runtimeSelectionGuard.isCurrent(selectionRevision) &&
+            EngineWiring.isGraphCurrent(graph) {
+                graph.communityRuntimeKey == expectedRuntimeKey &&
+                    graph.communityId == expectedCommunityId &&
+                    graph.chatId == expectedChatId &&
+                    currentCommunityId == expectedCommunityId
+            }
 
     private fun updateRosterIfCurrent(
         requestToken: ChatOpenRequestCoordinator.Token,
@@ -762,16 +786,19 @@ internal object AppContainer {
         if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return false
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey
         return AccountMutationBarrier.process.withStableAccount {
-            chatOpenRequestCoordinator.runIfCurrent(requestToken) {
-                if (expectedRuntimeKey != null && runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) {
-                    return@runIfCurrent false
-                }
-                switchToCommunityExclusive(communityId)
+            if (expectedRuntimeKey != null && runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) {
+                false
+            } else {
+                switchToCommunityExclusive(communityId, requestToken)
             }
         }
     }
 
-    private fun switchToCommunityExclusive(communityId: String): Boolean {
+    private fun switchToCommunityExclusive(
+        communityId: String,
+        requestToken: ChatOpenRequestCoordinator.Token,
+        refreshGeneralRoster: Boolean = true,
+    ): Boolean {
         val rotationSeam = credentialRotationTestSeam
         val stored =
             if (rotationSeam != null) {
@@ -791,25 +818,30 @@ internal object AppContainer {
             } else {
                 runBlocking { identityFactory.identityStore(requireContext()).loadOrCreate() }
             }
-        runtimeSelectionGuard.begin()
-        currentCommunityId = communityId
-        if (rotationSeam != null) {
-            rotationSeam.onCommunitySelected(communityId)
-        } else {
-            UserSettings.selectCommunity(communityId)
-            activeCommunityStore.select(communityId)
-        }
-        EngineWiring.reconfigure(
-            config = stored.config,
-            chatId = stored.chatId,
-            communityName = stored.communityName,
-            chatKey = chatKey,
-            identity = identity,
-            communityId = communityId,
-            roster = listOf(Hex.encode(identity.copySignPublic())),
-            recipientReadiness = RecipientReadiness.Loading,
-        )
-        if (rotationSeam == null) runtimeGraph()?.let(::prepareGeneralRoster)
+        val switched =
+            chatOpenRequestCoordinator.runIfCurrentSerialized(requestToken) {
+                runtimeSelectionGuard.begin()
+                currentCommunityId = communityId
+                if (rotationSeam != null) {
+                    rotationSeam.onCommunitySelected(communityId)
+                } else {
+                    UserSettings.selectCommunity(communityId)
+                    activeCommunityStore.select(communityId)
+                }
+                EngineWiring.reconfigure(
+                    config = stored.config,
+                    chatId = stored.chatId,
+                    communityName = stored.communityName,
+                    chatKey = chatKey,
+                    identity = identity,
+                    communityId = communityId,
+                    roster = listOf(Hex.encode(identity.copySignPublic())),
+                    recipientReadiness = RecipientReadiness.Loading,
+                )
+                true
+            }
+        if (!switched) return false
+        if (refreshGeneralRoster && rotationSeam == null) runtimeGraph()?.let(::prepareGeneralRoster)
         return true
     }
 
@@ -873,6 +905,7 @@ internal object AppContainer {
         rosterCache.commit(
             rosterCache.generation(),
             CachedVerifiedRoster(graph.communityId, chatId, provenance, verifiedEntries),
+            isCurrent = { runtimeGraph() === dmGraph },
         ) { runtimeGraph() === dmGraph }
         return chatId
     }
@@ -984,6 +1017,7 @@ internal object AppContainer {
     }
 
     internal fun prepareGeneralRoster(graph: RuntimeGraph) {
+        val requestToken = chatOpenRequestCoordinator.begin()
         val seam = chatOpenTestSeam
         val stored = if (seam != null) seam.loadStored(graph.communityId) else configStore.loadStored(graph.communityId)
         stored ?: return
@@ -992,15 +1026,32 @@ internal object AppContainer {
         val lookup = communityKey?.let { rosterCache.lookup(graph.communityId, graph.chatId, it, graph.chatKey, graph.identity) }
         val cached = lookup?.roster
         val generation = lookup?.generation ?: rosterCache.generation()
-        val isCurrent = { currentCommunityId == graph.communityId && runtimeGraph() === graph }
-        EngineWiring.updateGraphIfCurrent(graph, isContextCurrent = isCurrent) {
-            if (cached == null) graph.updateRecipientReadiness(RecipientReadiness.Loading) else applyRoster(graph, cached.entries)
+        val isCurrent = {
+            isRosterContextCurrent(requestToken, revision, graph, graph.communityRuntimeKey, graph.communityId, graph.chatId)
+        }
+        if (!updateRosterIfCurrent(
+                requestToken,
+                revision,
+                graph,
+                graph.communityRuntimeKey,
+                graph.communityId,
+                graph.chatId,
+            ) {
+                if (cached == null) graph.updateRecipientReadiness(RecipientReadiness.Loading) else applyRoster(graph, cached.entries)
+            }
+        ) {
+            return
         }
         if (communityKey == null) {
             if (cached == null) {
-                EngineWiring.updateGraphIfCurrent(graph, isCurrent) {
-                    graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
-                }
+                updateRosterIfCurrent(
+                    requestToken,
+                    revision,
+                    graph,
+                    graph.communityRuntimeKey,
+                    graph.communityId,
+                    graph.chatId,
+                ) { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE)) }
             }
             return
         }
@@ -1029,27 +1080,39 @@ internal object AppContainer {
                                 graph.chatKey,
                                 graph.identity,
                             )
-                        rosterCache.commit(generation, CachedVerifiedRoster(graph.communityId, graph.chatId, provenance, result.entries)) {
-                            runtimeSelectionGuard.runIfCurrent(revision) {
-                                EngineWiring.updateGraphIfCurrent(graph, isCurrent) { applyRoster(graph, result.entries) }
-                            }
+                        val roster = CachedVerifiedRoster(graph.communityId, graph.chatId, provenance, result.entries)
+                        rosterCache.commit(generation, roster, isCurrent) {
+                            updateRosterIfCurrent(
+                                requestToken,
+                                revision,
+                                graph,
+                                graph.communityRuntimeKey,
+                                graph.communityId,
+                                graph.chatId,
+                            ) { applyRoster(graph, result.entries) }
                         }
                     } else if (cached == null) {
-                        runtimeSelectionGuard.runIfCurrent(revision) {
-                            EngineWiring.updateGraphIfCurrent(graph, isCurrent) {
-                                graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
-                            }
-                        }
+                        updateRosterIfCurrent(
+                            requestToken,
+                            revision,
+                            graph,
+                            graph.communityRuntimeKey,
+                            graph.communityId,
+                            graph.chatId,
+                        ) { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE)) }
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
                     if (cached == null) {
-                        runtimeSelectionGuard.runIfCurrent(revision) {
-                            EngineWiring.updateGraphIfCurrent(graph, isCurrent) {
-                                graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
-                            }
-                        }
+                        updateRosterIfCurrent(
+                            requestToken,
+                            revision,
+                            graph,
+                            graph.communityRuntimeKey,
+                            graph.communityId,
+                            graph.chatId,
+                        ) { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE)) }
                     }
                 }
             }

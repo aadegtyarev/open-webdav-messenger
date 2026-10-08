@@ -1,13 +1,15 @@
 package org.openwebdav.messenger.app
 
 /** Invalidates asynchronous chat opens when a newer community/runtime selection begins. */
-internal class RuntimeSelectionGuard {
+internal class RuntimeSelectionGuard(
+    private val commitCoordinator: RosterCommitCoordinator = RosterCommitCoordinator(),
+) {
     private val lock = Any()
     private var revision = 0L
 
     fun current(): Long = synchronized(lock) { revision }
 
-    fun begin(): Long = synchronized(lock) { ++revision }
+    fun begin(): Long = commitCoordinator.serialized { synchronized(lock) { ++revision } }
 
     fun isCurrent(expectedRevision: Long): Boolean = synchronized(lock) { revision == expectedRevision }
 
