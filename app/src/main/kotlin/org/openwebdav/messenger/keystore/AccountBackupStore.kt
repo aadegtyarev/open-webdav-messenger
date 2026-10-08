@@ -14,6 +14,7 @@ internal class AccountBackupStore(private val context: Context) : ExportableAcco
     private val chatRegistry = ChatRegistry(context)
     private val activeStore = ActiveCommunityStore(context)
     private val communityKeyStore = CommunityKeyStore(context)
+    private val snapshotWriter = AccountBackupSnapshotWriter(configStore, communityRegistry, chatRegistry, activeStore)
 
     override fun snapshot(): AccountBackup? {
         val entries = communityRegistry.all()
@@ -56,10 +57,10 @@ internal class AccountBackupStore(private val context: Context) : ExportableAcco
     override fun replace(backup: AccountBackup) {
         val previous = snapshot()
         try {
-            writeSnapshot(backup)
+            snapshotWriter.write(backup)
         } catch (failure: Exception) {
             try {
-                if (previous != null) writeSnapshot(previous) else clearSnapshot(backup)
+                if (previous != null) snapshotWriter.write(previous) else snapshotWriter.clear(backup)
             } catch (rollbackFailure: Exception) {
                 failure.addSuppressed(rollbackFailure)
             }
@@ -69,36 +70,6 @@ internal class AccountBackupStore(private val context: Context) : ExportableAcco
 
     override fun clear() {
         val ids = communityRegistry.all().map { it.id }
-        clearSnapshot(AccountBackup(ids.firstOrNull() ?: ConnectionConfigStore.DEFAULT_COMMUNITY_ID, emptyList()))
-    }
-
-    private fun clearSnapshot(backup: AccountBackup) {
-        val ids =
-            (communityRegistry.all().map { it.id } + backup.communities.map { it.id } + ConnectionConfigStore.DEFAULT_COMMUNITY_ID)
-                .distinct()
-        ids.forEach(configStore::clear)
-        ids.forEach(chatRegistry::clear)
-        ids.forEach(UserSettings::clearCommunitySettings)
-        communityRegistry.replace(emptyList())
-        activeStore.clear()
-        UserSettings.selectCommunity("default")
-    }
-
-    private fun writeSnapshot(backup: AccountBackup) {
-        val previousIds = (communityRegistry.all().map { it.id } + ConnectionConfigStore.DEFAULT_COMMUNITY_ID).distinct()
-        (previousIds + backup.communities.map { it.id }).distinct().forEach(UserSettings::clearCommunitySettings)
-        previousIds.forEach(configStore::clear)
-        (previousIds - backup.communities.map { it.id }.toSet()).forEach(chatRegistry::clear)
-        backup.communities.forEach { community ->
-            configStore.save(community.config, community.anchorChatId, community.name, community.id)
-            chatRegistry.replace(community.id, community.chats.map { ChatRegistry.Entry(it.id, it.name, it.kind) })
-        }
-        communityRegistry.replace(backup.communities.map { CommunityRegistry.Entry(it.id, it.name, it.anchorChatId) })
-        activeStore.select(backup.activeCommunityId)
-        UserSettings.selectCommunity(backup.activeCommunityId)
-        backup.communities.forEach { community ->
-            UserSettings.setHostFor(community.id, community.isHost)
-            UserSettings.setCommunityMetadata(community.id, community.pollFloorSeconds, community.retentionWindowDays)
-        }
+        snapshotWriter.clear(AccountBackup(ids.firstOrNull() ?: ConnectionConfigStore.DEFAULT_COMMUNITY_ID, emptyList()))
     }
 }
