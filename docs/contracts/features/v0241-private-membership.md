@@ -63,19 +63,19 @@ public behavior is unchanged; DM behavior is unchanged.
 
 ## Lifecycle, privacy, and limits
 
-Legacy private chats infer no invitees. Each upgraded client publishes self on
-open/background retry; the roster converges as members open. UI explains this
-transitional append-only state. Removal, revocation, roles/host authority, and
-removing downloaded history are a separate feature's non-goals here.
+Chat registry/backup stores durable access `public`/`private`; legacy missing
+access is `unknown` until a verified ChatDirectory descriptor resolves it. Unknown
+fails closed: no private claims, community-wide roster, or send; show retry status.
+Legacy private chats infer no invitees; upgraded clients publish self on open and
+background retry. Removal, revocation, roles/host authority, and downloaded-history
+erasure are separate work.
 
-Backup/restore does not export remote claims or cache as authoritative membership.
-A restored identity/key republishes its own claim and invalidates cache. These are
-best-effort operations with honest status, not remote-acknowledged or crash-atomic
-membership. Collection listing/read and claim sizes/counts are bounded with DoS
-limits. Never reveal raw chat keys, private keys, or credentials. The WebDAV disk
-operator may observe membership-collection traffic/existence consistent with
-current chat metadata; this is an explicit privacy limitation. A private-chat-only
-claim conveys no community membership, directory trust, or community access.
+Backup codec bumps version, keeps v2 decode, and exports access only—not claims or
+cache as membership authority. Restore preserves access, invalidates cache, and
+republishes self for known private chats. Best effort; no remote acknowledgement
+or crash atomicity. Bound lists/reads against DoS. Never reveal raw keys or
+credentials. Disk operators may observe collection traffic/existence; private
+claims grant neither community membership, directory trust, nor community access.
 
 ## Acceptance and validation
 
@@ -85,9 +85,8 @@ claim conveys no community membership, directory trust, or community access.
 - Tests cover create/import, offline/write failure and pending retry, reopen,
   legacy convergence without invitee inference, valid cache, cache miss/corruption,
   listing failure/retry, and cache invalidation.
-- Tests prove private recipient exactness and no community-wide bleed; General,
-  public, and DM behavior remains unchanged. Exercise stale account/chat/key/restore
-  races, send/notification snapshot consistency, and backup exclusion/republication.
+- Tests prove exact private recipients/no bleed and unchanged General/public/DM;
+  cover stale races and access backup migration/v2 decode/rollback/exclusion/republish.
 - UI tests/checks cover truthful pending/Ready/Unavailable status, retry, and
   accessibility. Run full project gates, including Gradle tests, ktlint, and
   Android lint. Luna implements; Sol reviews. Device validation is a separate
