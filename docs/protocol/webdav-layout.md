@@ -39,17 +39,20 @@ One chat == one shared chat-root folder, reachable by one credential (decision 2
 │   ├── <message-id>                     # one file per message, content-addressed (§2, §3) — ONE copy, not per-recipient
 │   ├── <message-id>
 │   └── <message-id>
-└── changes/                             # parent of all per-member change indices (see §9 / §1.2)
-    ├── <member-index-id>/               # one folder per member (see §1.2) — that member's change cursor(s)
-    │   └── <change-entry>               # small per-(member,chat-change) cursor marker (§9.2)
-    └── <member-index-id>/
-        └── <change-entry>
+├── changes/                             # parent of all per-member change indices (see §9 / §1.2)
+│   ├── <member-index-id>/               # one folder per member (see §1.2) — that member's change cursor(s)
+│   │   └── <change-entry>               # small per-(member,chat-change) cursor marker (§9.2)
+│   └── <member-index-id>/
+│       └── <change-entry>
+└── private-membership/                  # optional; private group claim collections (see §12)
+    └── <chat-id>/
+        └── <entry-name>                 # one encrypted signed claim, content-addressed (§12.3)
 ```
 
 ### 1.1 Chat-root
 
 - The **chat-root** is the folder the credential is scoped to. Its path is supplied in the connection config (base URL + app-password + chat-root path) and is **never** written to the disk (it is local config, decision 2 / Security constraints).
-- Directly under the chat-root live exactly three collections: **`meta/`**, **`log/`**, and **`changes/`**. The transport ensures all three exist with `MKCOL` (§6) before first use. No message files live directly under the chat-root.
+- The core chat-root collections are **`meta/`**, **`log/`**, and **`changes/`**; the transport ensures them with `MKCOL` (§6). Private group membership additionally uses the optional `private-membership/` collection (§12). No message files live directly under the chat-root.
 
 ### 1.2 Shared log + per-member change-index folders
 
@@ -624,6 +627,81 @@ A chat-directory read:
 A read writes **nothing** to disk (and, this feature, nothing to a local cache — verified descriptors are recomputed from the on-disk source of truth per read; the Room cache + observable `Flow` is the **UI feature's** to add). An entry written mid-read is picked up on the next read (each entry is one self-contained file — no torn state).
 
 > **Metadata exposed to the disk operator (named for the threat model, A5 class — not a new content leak).** The operator sees the `chat-directory/` collection's structure: the **entry count** (roughly how many chat-descriptor-versions exist), entry **sizes**, and **write timing** — even though chat-ids/titles are sealed. This is the same metadata class as the §9.2 `changes/` and the §10.6 `directory/` exposure (T17/T18/T22) — no chat-id, title, kind, or access content ever leaves the AEAD seal.
+
+---
+
+## 12. Private chat membership claims
+
+This additive per-chat wire format does not change protocol/layout version 2,
+message envelopes, or community-directory formats. It is used only for private
+`group` chats; public groups and DMs do not read or publish claims. The collection
+is rooted at the chat-root, `<chat-root>/private-membership/<chat-id>/`. Chat IDs
+are exactly `[A-Za-z0-9_-]{1,96}` UTF-8 bytes and are path-validated before use.
+The path reveals the chat ID and collection activity to the disk operator.
+
+### 12.1 Collection and bounds
+
+- A depth-1 PROPFIND lists the collection; a listing is bounded to 256 entries.
+  Each entry filename is exactly 32 lowercase Base32 characters from
+  `[a-z2-7]`, minted as `b32lower(SHA-256(exact-file-bytes))[0:32]`.
+  GET bytes whose recomputed name differs are rejected.
+- One stored file is at most 600 bytes. Invalid names are rejected before GET;
+  malformed, oversized, wrong-context, or unverifiable entries are dropped.
+  The collection is append-only: a retry reuses the exact encrypted bytes, so
+  an identical claim has the same name. No remote acknowledgement is implied.
+
+### 12.2 File framing and AEAD context
+
+Each file is the §5 eight-byte envelope header followed by the ciphertext blob.
+The header is `OWDM ‖ 0x01 ‖ codec-id 0x00 ‖ flags 0x00 ‖ reserved 0x00`;
+other or malformed frames are rejected. The blob is a fresh 24-byte nonce
+followed by XChaCha20-Poly1305 ciphertext and its 16-byte tag, using the exact
+private chat key. This format uses dedicated AAD (not the message-envelope AAD):
+
+```
+UTF8("owdm/private-membership/aead") ‖ 0x00 ‖ 0x01 ‖
+uint16be(chat-id-byte-length) ‖ UTF8(chat-id)
+```
+
+The `0x01` is the claim-wire version. The AAD binds the protocol domain and exact
+chat ID; the chat key plus AEAD tag authenticates possession of that key. The
+local community ID, WebDAV URL, and username are not wire context.
+
+### 12.3 Plaintext claim and signature
+
+After AEAD open, the plaintext is a canonical binary record (multi-byte lengths
+are unsigned big-endian):
+
+```
+"OWPM" ‖ version(0x01) ‖ chat-id-length(uint16) ‖ chat-id(UTF-8) ‖
+Ed25519-signing-public-key(32) ‖ X25519-box-public-key(32) ‖
+display-name-length(uint16) ‖ display-name(UTF-8) ‖ signature(64)
+```
+
+The chat ID must match the expected path/context ID and the ASCII grammar in §12.
+The display name is trimmed of surrounding Unicode whitespace before signing and
+on parse; blank names are valid. Each length is checked before reading; chat ID is
+bounded to 96 bytes, display name to 256 bytes, and the complete claim to 492 bytes.
+Malformed UTF-8, trailing bytes, wrong version, or any bound violation is rejected.
+
+The Ed25519 signature covers the complete unsigned record, including both public
+keys and display name, preceded by `UTF8("owdm/private-membership-claim") ‖ 0x00`.
+Signature failure is a hard reject. A valid record proves control of the signing
+key and, after AEAD open, knowledge of the chat key; it is self-asserted identity,
+not host authority or a community-access grant. A community-directory identity
+pair from the exact durable General anchor may strengthen displayed provenance,
+but directory absence does not invalidate a claim; conflicting signing/box-key
+pairs fail closed. The claim carries no community ID, role, membership removal, or
+revocation semantics.
+
+### 12.4 Read and publication behavior
+
+Only remotely listed, bounded, correctly named, decryptable, correctly scoped,
+well-formed, signature-verified claims may supply private-group recipients. Claims
+are deduplicated by signing key; conflicting box keys are rejected. Publication is
+for the local identity only and uses the exact encrypted bytes for retries. Public
+groups and DMs never publish private claims. No claim or invite alone establishes
+another member, chat ownership, or community authority.
 
 ---
 

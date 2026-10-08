@@ -42,6 +42,7 @@ Authoritative byte/path layout: **`docs/protocol/webdav-layout.md`**. This secti
 - **Chat taxonomy (kind × access):** `dm` (always private) or `group` (public/private). `public` = community-key-sealed, community-readable; `private` = per-chat key. Password optional.
 - **Reaction enum:** 5 fixed reactions, index 0..4; glyphs are UI concern.
 - **Shared-log + per-member change-index** (gen 2): one `log/<id>` write + (M−1) tiny `changes/<member>/` writes. Change index = read-efficiency not access-control — rebuild by listing `log/` (SC11). `webdav-layout.md` §1–§3, §9.
+- **Private membership:** private groups use only per-chat-key-authenticated, identity-signed claims in the separate `private-membership/<chat-id>/` collection; claims are not host authority or community access grants. Public groups and DMs do not publish them. `webdav-layout.md` §12 and the chat-surface contract.
 - **Append-only, content-addressed:** file name = content hash; writer only PUTs new files; reader recomputes hash. `webdav-layout.md` §2–§3.
 - **Ordering & causal tolerance:** best-effort `order-token`; dedup by message-id; `reply-to` may precede target. `webdav-layout.md` §4.
 - **Reject-don't-guess + bounded decompression:** unknown version/kind/codec = typed rejection; decompressed size capped (zip-bomb guard, bound `[?]`).
@@ -91,8 +92,26 @@ One line per decision. Detail in git history. OPEN items are flagged for resolut
 11. **Chat directory substrate:** group-only (DMs hard-rejected); self-signed/community-key-sealed; superseded per chat-id.
 12. **Codec dedup:** shared parse cursor + shared community-directory engine + single-source constant homes.
 13. **Local history encryption (Implemented — 2026-06-14):** Room DB encrypted at rest via SQLCipher + Keystore-wrapped AES-256 key; unencrypted→encrypted migration on first upgrade (ATTACH + sqlcipher_export).
-14. **Account export/restore:** versioned v2 password-encrypted backup includes registered community connection configs, community/chat registries and keys, active selection, and identity keypair via Argon2id→XChaCha20-Poly1305, base64 blob shareable through Android Share sheet. Password is mandatory — a device-bound Keystore key cannot carry cross-device. Identity keys and disk credentials are included; a cracked export password grants impersonation/access. A shared 4 MiB serialized-payload limit bounds both export and restore. Restore validates before writes and attempts each rollback action after store failure; it does not claim crash-atomicity across Keystore/filesystem. Legacy v1 is only mapped when an empty target and one-chat payload make the default-community mapping unambiguous.
-15. **Account mutation barrier:** restore holds a process-wide coroutine mutex across snapshot, store replacement, and runtime rebuild. Polls (including manual refresh), sends/outbox retries, credential rotation, onboarding, community/chat creation and selection, and remote policy mutations use the same barrier. Queued work tied to a replaced runtime is discarded rather than executed against the restored account.
+14. **Account export/restore:** Current external payload and binary codec are v3; strict v2
+    decode preserves explicit chat access, while v1 access remains unknown. Password-
+    encrypted backups include registered community configs, registries/keys, active
+    selection, and identity keypair. Argon2id→XChaCha20-Poly1305 produces a
+    base64 blob shareable through Android's Share sheet. Password is mandatory because
+    Keystore keys cannot transfer; disk credentials and identity keys are included, so
+    a cracked password enables impersonation/access. The shared 4 MiB serialized limit
+    bounds export and restore. Unknown access migrates to
+    public only for the exact General anchor matching durable registry and stored config;
+    no generic inference. Claims/cache are not exported. Restore validates before writes,
+    rolls back store/runtime activation under a non-cancellable transaction, and does not
+    claim crash-atomicity across Keystore/filesystem. Legacy v1 maps only for an empty
+    target and unambiguous one-chat default-community payload.
+15. **Account replacement gate:** Restore and onboarding share a replacement gate
+    for the local snapshot/store replacement, generation commit, and runtime install.
+    Rollback reacquires it in `NonCancellable` and best-effort restores stores and the
+    prior runtime before propagating failure/cancellation. Polls, sends/outbox retries,
+    credential rotation, and other account mutations serialize against replacement.
+    Network roster/claim work starts after release; account generation and runtime
+    identity fence stale work.
 
 ## Architectural constraints
 

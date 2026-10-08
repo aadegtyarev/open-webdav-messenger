@@ -97,7 +97,7 @@ Journeys 2 and 3 are the **two ways into Journey 1** — they differ only in how
 
 1. On Start, the user chooses **Restore account**, pastes the export, and enters its password. This path is available without first creating or joining a community.
 2. The app authenticates and validates the full backup before writing; malformed keys, identity, configuration, registries, or active selection are rejected. If a store write fails, the app attempts to restore its prior snapshot and reports whether rollback completed.
-3. A successful v2 restore rebuilds registered communities/chats, selects the backed-up active community, and schedules background delivery. A v1 legacy export can restore only the state it contains and may not provide enough registry data for a usable runtime. Local Room history from the old device is not exported.
+3. A successful current-format (v3) restore rebuilds registered communities/chats, selects the backed-up active community, and schedules background delivery. Strict v2 decode remains supported; a v1 legacy export can restore only the state it contains and may not provide enough registry data for a usable runtime. Local Room history from the old device is not exported.
 
 **Community settings:** Host role, retention, and community poll floor follow the selected community. A host policy change is considered committed only after WebDAV confirms the write; rejection is shown and the prior committed value remains. Personal theme/font/name and the member's preferred interval remain global.
 

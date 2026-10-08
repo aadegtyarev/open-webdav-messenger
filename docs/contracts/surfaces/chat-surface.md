@@ -19,8 +19,8 @@ with a user-visible error — never silently ignored, never a crash.
 **Onboarding and recovery entry:** The app starts at `StartScreen`, offering
 Create, Join, and Restore account. Create/join remains linear; no chat feed is
 reachable until a community runtime is configured. Restore is a separate path
-and is not blocked by create/join. After create, join, or a successful v2
-restore, the home screen is `UnifiedChatListScreen` — a flat list of chats across
+and is not blocked by create/join. After create, join, or a successful restore, the home screen is
+`UnifiedChatListScreen` — a flat list of chats across
 joined communities. Cold start restores the persisted active community without
 forcing a feed open. A successful restore launched from Settings returns to Chats
 and invalidates remembered account-scoped role/policy values, including when the
@@ -37,17 +37,22 @@ for persistence of community/chat data.
 ## Invite format
 
 **Token scheme (2-format):** Invite tokens use the `owdm1:` URI scheme with a
-`base64url(gzip(json($fields)))` payload. The JSON fields are: community name,
-community ID, WebDAV root URL, chat ID, raw chat key bytes (32 bytes), and a
-protocol version marker.
+`base64url(gzip(json($fields)))` payload. Format v2 has exactly the fields for
+version, WebDAV base URL, username, app password, chat root, chat ID, raw 32-byte
+chat key, community name, access, embedded Ed25519 signing public key, and
+signature. The signature covers deterministic flat-JSON encoding of all
+configuration fields including access, under `owdm/invite/access/v2`; it protects
+field integrity but adds no external trust anchor or community authority. These
+bearer-token secrets are plain encoded, not encrypted.
 
 **Reject-don't-guess (2-reject):** A wrong prefix (`http://`, a random QR code,
-noise), bad base64url, corrupt gzip, or any missing/invalid field produces a
-typed `Result.Rejected` — never a partial config, never a crash, never an
-exception propagated to the UI layer. New tokens carry signed strict
-`access=public|private`; missing, invalid, or tampered access (and legacy v1)
-is rejected before account mutation with localized guidance to request a fresh
-invite. Access selects roster behavior only and grants no community authority.
+noise), bad base64url, corrupt gzip, unknown/extra/missing fields, invalid
+signature, or invalid access produces a typed rejection — never a partial config,
+crash, or exception propagated to the UI layer. Legacy v1 decodes only to legacy
+status and is rejected by onboarding. New v2 tokens require signed strict
+`access=public|private`; legacy, missing, invalid, or tampered tokens are rejected
+before account mutation with localized guidance to request a fresh invite. Access
+selects roster behavior only and grants no community authority.
 
 **Bearer token, not encrypted:** The token carries plain (not encrypted) fields.
 Whoever holds it can join — this is by design. The on-screen warning at token
@@ -129,7 +134,10 @@ community capability from the exact durable public General anchor. A synthetic
 private anchor/chat key is never a community directory key. Directory absence still
 permits chat-only claims; conflicting pairs fail closed. Only verified claims join
 Ready; publication, invites, history, and local registration infer no invitees.
-Unknown access migrates to public only for the exact `kind=general` anchor matching
+The append-only wire collection and claim/AEAD byte format are specified in
+[WebDAV protocol §12](../../protocol/webdav-layout.md#12-private-chat-membership-claims).
+Private claims are never published for public groups or DMs. Unknown access migrates
+to public only for the exact `kind=general` anchor matching
 both community registry and stored-config anchor; other groups require a verified
 hex/Base32 descriptor. Cache stays encrypted/context-fenced. Same-key publication
 serializes pending→PUT→commit; generation fences before/after network prevent stale
