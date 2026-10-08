@@ -25,6 +25,23 @@ class AccountMutationBarrierTest {
         }
 
     @Test
+    fun explicit_generation_commit_is_visible_during_activation_and_not_advanced_twice() =
+        runTest {
+            val barrier = AccountMutationBarrier()
+            val before = barrier.replacementGeneration()
+            var visibleDuringActivation = -1L
+            barrier.withAccountReplacement {
+                assertEquals(before + 1, commitGeneration())
+                visibleDuringActivation = barrier.replacementGeneration()
+            }
+            assertEquals(before + 1, visibleDuringActivation)
+            assertEquals(before + 1, barrier.replacementGeneration())
+
+            runCatching { barrier.withAccountReplacement { error("store failure") } }
+            assertEquals(before + 2, barrier.replacementGeneration())
+        }
+
+    @Test
     fun local_open_is_not_blocked_by_poll_but_does_not_overlap_account_replacement() =
         runTest {
             val barrier = AccountMutationBarrier()

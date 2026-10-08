@@ -1,7 +1,11 @@
 package org.openwebdav.messenger.export
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
@@ -33,6 +37,8 @@ class RestoreManager(
     private val activateRuntime: () -> Unit = {},
     private val restorePreviousRuntime: () -> Unit = activateRuntime,
     private val invalidateLocalCaches: () -> Unit = {},
+    private val afterRuntimeActivated: suspend () -> Unit = {},
+    private val afterRuntimeRestored: suspend () -> Unit = afterRuntimeActivated,
 ) {
     /**
      * Decrypt [blob] (base64-encoded export) with [passphrase] and populate all stores.
@@ -109,27 +115,37 @@ class RestoreManager(
                                     ?: return@withContext RestoreResult.CorruptPayload
                             val staged = stage(payload) ?: return@withContext RestoreResult.CorruptPayload
                             return@withContext AccountMutationBarrier.process.withExclusive {
-                                val preparation = AccountMutationBarrier.process.withAccountReplacement { prepareRestore(staged) }
-                                when (preparation) {
-                                    is RestorePreparation.Failed -> preparation.result
-                                    is RestorePreparation.Ready -> {
-                                        try {
-                                            activateRuntime()
-                                            RestoreResult.Restored
-                                        } catch (_: Exception) {
-                                            var rolledBack =
-                                                AccountMutationBarrier.process.withAccountReplacement {
-                                                    rollbackStores(staged, preparation.previous)
+                                var previous: RestoreSnapshot? = null
+                                val result =
+                                    try {
+                                        AccountMutationBarrier.process.withAccountReplacement {
+                                            when (val preparation = prepareRestore(staged)) {
+                                                is RestorePreparation.Failed -> preparation.result
+                                                is RestorePreparation.Ready -> {
+                                                    previous = preparation.previous
+                                                    commitGeneration()
+                                                    activateRuntime()
+                                                    RestoreResult.Restored
                                                 }
-                                            try {
-                                                restorePreviousRuntime()
-                                            } catch (_: Exception) {
-                                                rolledBack = false
                                             }
-                                            RestoreResult.StoreFailure(rollbackSucceeded = rolledBack)
                                         }
+                                    } catch (failure: Exception) {
+                                        val prior = previous ?: throw failure
+                                        val rollbackSucceeded = rollbackAfterActivationFailure(staged, prior)
+                                        if (failure is CancellationException) throw failure
+                                        currentCoroutineContext().ensureActive()
+                                        return@withExclusive RestoreResult.StoreFailure(rollbackSucceeded)
+                                    }
+                                if (result == RestoreResult.Restored) {
+                                    try {
+                                        afterRuntimeActivated()
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (_: Exception) {
+                                        // Local restore is committed; roster/network refresh is best-effort.
                                     }
                                 }
+                                result
                             }
                         } finally {
                             plaintext.fill(0)
@@ -316,6 +332,41 @@ class RestoreManager(
             RestorePreparation.Failed(RestoreResult.StoreFailure(rollbackStores(staged, previous)))
         }
     }
+
+    private suspend fun rollbackAfterActivationFailure(
+        staged: StagedRestore,
+        previous: RestoreSnapshot,
+    ): Boolean =
+        withContext(NonCancellable) {
+            var succeeded = true
+            try {
+                AccountMutationBarrier.process.withAccountReplacement {
+                    try {
+                        if (!rollbackStores(staged, previous)) succeeded = false
+                    } catch (_: Exception) {
+                        succeeded = false
+                    }
+                    try {
+                        commitGeneration()
+                    } catch (_: Exception) {
+                        succeeded = false
+                    }
+                    try {
+                        restorePreviousRuntime()
+                    } catch (_: Exception) {
+                        succeeded = false
+                    }
+                }
+            } catch (_: Exception) {
+                succeeded = false
+            }
+            try {
+                afterRuntimeRestored()
+            } catch (_: Exception) {
+                succeeded = false
+            }
+            succeeded
+        }
 
     private fun rollbackStores(
         staged: StagedRestore,

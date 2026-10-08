@@ -20,6 +20,7 @@ class OnboardingPrivateMembershipIntegrationTest {
                 val generation = org.openwebdav.messenger.account.AccountMutationBarrier.process.replacementGeneration()
                 assertTrue(fixture.join() is OnboardingService.JoinResult.Joined)
                 assertEquals(generation + 1, fixture.deps.generationAtReconfigure)
+                assertEquals(generation + 1, fixture.deps.generationAtAfterReplacement)
                 assertEquals(PrivateClaimPublicationStatus.UPLOADED, fixture.deps.status)
                 val roster = fixture.service.read(fixture.chatId, fixture.deps.chatKeyStore.load(fixture.chatId)!!, null)
                 assertFalse(roster.listingFailed)

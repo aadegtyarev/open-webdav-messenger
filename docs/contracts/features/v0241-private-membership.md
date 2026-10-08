@@ -44,9 +44,10 @@ Only remotely listed/read verified claims supply private recipients; invite or
 publication attempts never infer a peer. Import stores the key, registers the chat,
 and publishes self with truthful pending/uploaded status. A keyed account/community/
 chat mutex serializes pending creation, PUT, and local commit. Stable-account checks
-fence before remote start and after PUT; onboarding publishes only after replacement
-completes, while restore activation follows replacement and rollback restores the prior
-runtime. Pending and fresh queues have independent persisted cursors; a repeatedly
+fence before remote start and after PUT; store replacement, generation commit, and local
+runtime install share one gate for onboarding/restore; roster/claim WebDAV starts after
+release. Rollback is non-cancellable. Pending and fresh queues have independent persisted
+cursors; a repeatedly
 failing fresh claim cannot reset pending progress. Each queue is bounded per cycle and
 uploaded claims are skipped. No remote acknowledgement or atomic invite is implied.
 Private-only names stay labelled.

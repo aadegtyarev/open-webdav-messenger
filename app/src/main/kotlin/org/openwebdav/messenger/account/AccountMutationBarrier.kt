@@ -22,15 +22,27 @@ internal class AccountMutationBarrier {
     /** Serializes local account reads/writes and open/install with replacement, but never gates network I/O. */
     suspend fun <T> withStableAccount(block: suspend () -> T): T = accountReplacementMutex.withLock { block() }
 
-    /** Serializes account-wide replacement and invalidates snapshots captured before it. */
-    suspend fun <T> withAccountReplacement(block: suspend () -> T): T =
+    /** Serializes store replacement and runtime installation against all stable-account operations. */
+    suspend fun <T> withAccountReplacement(block: suspend AccountReplacementScope.() -> T): T =
         accountReplacementMutex.withLock {
+            val transaction = AccountReplacementScope(accountReplacementGeneration)
             try {
-                block()
+                transaction.block()
             } finally {
-                accountReplacementGeneration.incrementAndGet()
+                transaction.finish()
             }
         }
+
+    /** Makes the new account generation visible to local runtime installation before releasing the gate. */
+    internal class AccountReplacementScope internal constructor(private val generation: AtomicLong) {
+        private var committedGeneration: Long? = null
+
+        fun commitGeneration(): Long = committedGeneration ?: generation.incrementAndGet().also { committedGeneration = it }
+
+        internal fun finish() {
+            if (committedGeneration == null) commitGeneration()
+        }
+    }
 
     fun replacementGeneration(): Long = accountReplacementGeneration.get()
 

@@ -293,6 +293,11 @@ internal object AppContainer {
         rebuildStoredRuntime(requireGraph = true)
     }
 
+    /** Resume roster/network preparation only after the restore replacement gate has released. */
+    fun resumeRuntimeAfterAccountReplacement() {
+        runtimeGraph()?.let(::startIndependentGeneralRosterRefreshForStartupOrRestore)
+    }
+
     /** Reinstall the previous runtime after rollback; the cache stays cleared across replacement. */
     fun restorePreviousRuntime() {
         rosterCache.invalidateAll()
@@ -307,10 +312,7 @@ internal object AppContainer {
         val fallback = communityRegistry.all().firstOrNull()?.id ?: "default"
         currentCommunityId = activeCommunityStore.load(fallback)
         UserSettings.selectCommunity(currentCommunityId)
-        EngineWiring.initialize(
-            AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory),
-            afterGraphInstalled = ::startIndependentGeneralRosterRefreshForStartupOrRestore,
-        )
+        EngineWiring.initialize(AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory))
         if (requireGraph) check(runtimeGraph() != null) { "Backup contains no usable community" }
     }
 
@@ -1878,6 +1880,8 @@ internal object AppContainer {
     /** Production [OnboardingService.Deps] — native crypto + Keystore-wrapped stores + the engine wiring. */
     private fun productionOnboardingDeps(): OnboardingService.Deps =
         object : OnboardingService.Deps {
+            private var afterReplacementWork: (() -> Unit)? = null
+
             override fun keySources(): KeySources = crypto.keySources()
 
             override fun chatKeyStore(): ChatKeyStorePort = crypto.chatKeyStore(requireContext())
@@ -1952,53 +1956,62 @@ internal object AppContainer {
                 )
                 val installedGraph = EngineWiring.current()?.takeIf { it.communityId == chatId }
                 val refreshContext = onboardingRosterRefreshContext
-                if (installedGraph != null && refreshContext != null) {
-                    prepareGeneralRoster(installedGraph, refreshContext.requestToken, refreshContext.selectionRevision)
-                } else if (installedGraph?.privateMembershipChat == true) {
-                    val requestToken = chatOpenRequestCoordinator.begin()
-                    val revision = runtimeSelectionGuard.current()
-                    val stored = configStore.loadStored(chatId)
-                    if (stored != null) {
-                        preparePrivateRoster(
-                            installedGraph,
-                            requestToken,
-                            revision,
-                            stored,
-                            loadCommunityDirectoryKey(installedGraph.communityId),
-                        )
-                    }
-                }
                 onboardingRosterRefreshContext = null
-                val runtimeGeneration = installedGraph?.communityRuntimeKey ?: return
-                val initialPolicy = if (isHost) communityPolicyCoordinator.defaults(chatId) else null
-                appScope.launch {
-                    try {
-                        val transport = TransportFactory.create(config)
-                        communityPolicyCoordinator.runInitialWrites(
-                            request = initialPolicy,
-                            expectedRuntimeGeneration = runtimeGeneration,
-                            currentRuntimeGeneration = { runtimeGraph()?.communityRuntimeKey },
-                            writeRoster = {
-                                RosterService(transport).addMyself(
-                                    org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
-                                )
-                            },
-                            writePolicy = { policy ->
-                                CommunityMetadata.write(
-                                    transport = transport,
-                                    metadata = CommunityMetadata(policy.pollFloorSeconds, policy.retentionDays),
-                                    hostIdentity = identity,
-                                    identityCrypto = identityFactory.identityCrypto(),
-                                ) is WebDavResult.Success
-                            },
-                            commitPolicy = { policy ->
-                                UserSettings.setCommunityMetadata(chatId, policy.pollFloorSeconds, policy.retentionDays)
-                            },
-                        )
-                    } catch (_: Exception) {
-                        initialPolicy?.let(communityPolicyCoordinator::complete)
+                if (installedGraph == null) return
+                afterReplacementWork = {
+                    if (refreshContext != null) {
+                        prepareGeneralRoster(installedGraph, refreshContext.requestToken, refreshContext.selectionRevision)
+                    } else if (installedGraph.privateMembershipChat) {
+                        val requestToken = chatOpenRequestCoordinator.begin()
+                        val revision = runtimeSelectionGuard.current()
+                        val stored = configStore.loadStored(chatId)
+                        if (stored != null) {
+                            preparePrivateRoster(
+                                installedGraph,
+                                requestToken,
+                                revision,
+                                stored,
+                                loadCommunityDirectoryKey(installedGraph.communityId),
+                            )
+                        }
+                    }
+                    val runtimeGeneration = installedGraph.communityRuntimeKey
+                    val initialPolicy = if (isHost) communityPolicyCoordinator.defaults(chatId) else null
+                    appScope.launch {
+                        try {
+                            val transport = TransportFactory.create(config)
+                            communityPolicyCoordinator.runInitialWrites(
+                                request = initialPolicy,
+                                expectedRuntimeGeneration = runtimeGeneration,
+                                currentRuntimeGeneration = { runtimeGraph()?.communityRuntimeKey },
+                                writeRoster = {
+                                    RosterService(transport).addMyself(
+                                        org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
+                                    )
+                                },
+                                writePolicy = { policy ->
+                                    CommunityMetadata.write(
+                                        transport = transport,
+                                        metadata = CommunityMetadata(policy.pollFloorSeconds, policy.retentionDays),
+                                        hostIdentity = identity,
+                                        identityCrypto = identityFactory.identityCrypto(),
+                                    ) is WebDavResult.Success
+                                },
+                                commitPolicy = { policy ->
+                                    UserSettings.setCommunityMetadata(chatId, policy.pollFloorSeconds, policy.retentionDays)
+                                },
+                            )
+                        } catch (_: Exception) {
+                            initialPolicy?.let(communityPolicyCoordinator::complete)
+                        }
                     }
                 }
+            }
+
+            override suspend fun afterAccountReplacement() {
+                val work = afterReplacementWork
+                afterReplacementWork = null
+                work?.invoke()
             }
 
             override suspend fun checkFolder(

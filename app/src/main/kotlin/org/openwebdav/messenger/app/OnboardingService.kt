@@ -138,8 +138,10 @@ internal class OnboardingService(
             deps.chatKeyStore().store(chatId, chatKey)
             if (access == org.openwebdav.messenger.chatdirectory.ChatAccess.PUBLIC) deps.storeCommunityKey(chatId, chatKey)
             deps.saveConfig(config, chatId, communityName, access.name.lowercase())
+            commitGeneration()
+            deps.reconfigure(config, chatId, communityName, chatKey, identity, isHost)
         }
-        deps.reconfigure(config, chatId, communityName, chatKey, identity, isHost)
+        deps.afterAccountReplacement()
     }
 
     private fun isHttps(url: String): Boolean = url.trim().lowercase().startsWith("https://")
@@ -178,6 +180,7 @@ internal class OnboardingService(
 
         fun newChatId(): String
 
+        /** Install the local runtime only; do not start network work while replacement is gated. */
         fun reconfigure(
             config: ConnectionConfig,
             chatId: String,
@@ -186,6 +189,9 @@ internal class OnboardingService(
             identity: Identity,
             isHost: Boolean = false,
         )
+
+        /** Start roster reads/publication after the stable-account gate has been released. */
+        suspend fun afterAccountReplacement() = Unit
     }
 
     sealed interface FolderCheck {
