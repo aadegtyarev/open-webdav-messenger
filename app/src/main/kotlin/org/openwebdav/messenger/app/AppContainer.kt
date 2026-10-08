@@ -72,6 +72,15 @@ internal object AppContainer {
     private val warmStarted = AtomicBoolean(false)
     private val communityPolicyCoordinator = CommunityPolicyCoordinator()
     private val runtimeSelectionGuard = RuntimeSelectionGuard()
+    private val groupChatOpenCoordinator by lazy {
+        GroupChatOpenCoordinator(
+            selectionGuard = runtimeSelectionGuard,
+            currentCommunityId = { currentCommunityId },
+            loadChatKey = { chatId -> crypto.chatKeyStore(requireContext()).load(chatId) },
+            activateCommunity = ::switchToCommunityExclusive,
+            currentGraph = ::runtimeGraph,
+        )
+    }
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -270,12 +279,7 @@ internal object AppContainer {
             ?: false
 
     private data class PreparedGroupChatOpen(
-        val chatId: String,
-        val chatName: String,
-        val communityId: String,
-        val selectionRevision: Long,
-        val chatKey: ChatKey,
-        val graph: RuntimeGraph,
+        val selection: GroupChatOpenCoordinator.Plan,
         val stored: StoredConnection?,
     )
 
@@ -285,23 +289,14 @@ internal object AppContainer {
         communityId: String,
         expectedSelectionRevision: Long?,
     ): PreparedGroupChatOpen? {
-        if (expectedSelectionRevision != null && !runtimeSelectionGuard.isCurrent(expectedSelectionRevision)) return null
-        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return null
-        if (currentCommunityId != communityId && !switchToCommunityExclusive(communityId)) return null
-        val graph = runtimeGraph()?.takeIf { it.communityId == communityId } ?: return null
-        return PreparedGroupChatOpen(
-            chatId = chatId,
-            chatName = chatName,
-            communityId = communityId,
-            selectionRevision = runtimeSelectionGuard.begin(),
-            chatKey = chatKey,
-            graph = graph,
-            stored = configStore.loadStored(communityId),
-        )
+        val selection =
+            groupChatOpenCoordinator.prepare(chatId, chatName, communityId, expectedSelectionRevision) ?: return null
+        return PreparedGroupChatOpen(selection, configStore.loadStored(communityId))
     }
 
     private suspend fun installPreparedGroupChat(plan: PreparedGroupChatOpen): Boolean {
-        val roster = mutableListOf(plan.graph.senderIdentifier)
+        val selection = plan.selection
+        val roster = mutableListOf(selection.graph.senderIdentifier)
         val memberNames = mutableMapOf<String, String>()
         val stored = plan.stored
         if (stored != null) {
@@ -317,7 +312,7 @@ internal object AppContainer {
                         )
                     for (entry in service.readDirectory(chatKeyForDir).entries) {
                         val memberHex = Hex.encode(entry.copySigningPublicKey())
-                        if (memberHex != plan.graph.senderIdentifier) roster.add(memberHex)
+                        if (memberHex != selection.graph.senderIdentifier) roster.add(memberHex)
                         memberNames[memberHex] = entry.displayName
                     }
                 }
@@ -327,14 +322,14 @@ internal object AppContainer {
         }
         return EngineWiring.switchToChatIfCurrent(
             guard = runtimeSelectionGuard,
-            expectedSelectionRevision = plan.selectionRevision,
-            expectedGraph = plan.graph,
-            chatId = plan.chatId,
-            chatName = plan.chatName,
-            chatKey = plan.chatKey,
+            expectedSelectionRevision = selection.selectionRevision,
+            expectedGraph = selection.graph,
+            chatId = selection.chatId,
+            chatName = selection.chatName,
+            chatKey = selection.chatKey,
             roster = roster,
             memberNames = memberNames,
-            isCommunitySelected = { currentCommunityId == plan.communityId },
+            isCommunitySelected = { currentCommunityId == selection.communityId },
         )
     }
 

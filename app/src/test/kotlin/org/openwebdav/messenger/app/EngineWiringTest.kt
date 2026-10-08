@@ -281,6 +281,70 @@ class EngineWiringTest {
     }
 
     @Test
+    fun missing_group_key_then_general_and_another_group_use_the_production_open_coordinator() {
+        val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
+        EngineWiring.initialize(JvmDeps(stored = stored, activeCommunity = "community-a"))
+        val initialGraph = EngineWiring.current()!!
+        val guard = RuntimeSelectionGuard()
+        val keyStore = InMemoryChatKeyStore()
+        var selectedCommunity = "community-a"
+        var activations = 0
+        val coordinator =
+            GroupChatOpenCoordinator(
+                selectionGuard = guard,
+                currentCommunityId = { selectedCommunity },
+                loadChatKey = keyStore::load,
+                activateCommunity = {
+                    activations++
+                    selectedCommunity = it
+                    true
+                },
+                currentGraph = EngineWiring::current,
+            )
+        val initialRevision = guard.current()
+
+        assertNull(coordinator.prepare("missing-key-group", "Broken", "community-a", null))
+        assertEquals(initialRevision, guard.current())
+        assertEquals("community-a", selectedCommunity)
+        assertEquals(0, activations)
+        assertEquals(initialGraph, EngineWiring.current())
+
+        val generalRevision = guard.begin()
+        assertTrue(
+            EngineWiring.switchToChatIfCurrent(
+                guard,
+                generalRevision,
+                initialGraph,
+                chatId,
+                "General",
+                chatKey,
+                listOf(initialGraph.senderIdentifier),
+                emptyMap(),
+                { selectedCommunity == "community-a" },
+            ),
+        )
+        val generalGraph = EngineWiring.current()!!
+        keyStore.store("valid-group", chatKey)
+        val validPlan = coordinator.prepare("valid-group", "Valid group", "community-a", null)!!
+
+        assertTrue(
+            EngineWiring.switchToChatIfCurrent(
+                guard,
+                validPlan.selectionRevision,
+                validPlan.graph,
+                validPlan.chatId,
+                validPlan.chatName,
+                validPlan.chatKey,
+                listOf(validPlan.graph.senderIdentifier),
+                emptyMap(),
+                { selectedCommunity == validPlan.communityId },
+            ),
+        )
+        assertEquals(generalGraph.communityId, EngineWiring.current()?.communityId)
+        assertEquals("valid-group", EngineWiring.current()?.chatId)
+    }
+
+    @Test
     fun stale_delayed_group_open_cannot_prevent_a_later_valid_general_open() {
         val deps = JvmDeps(stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community"))
         EngineWiring.initialize(deps)

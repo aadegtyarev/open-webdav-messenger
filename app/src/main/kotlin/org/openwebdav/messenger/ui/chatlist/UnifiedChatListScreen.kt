@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -42,6 +43,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
@@ -70,6 +72,7 @@ internal fun UnifiedChatListScreen(
     var fabExpanded by remember { mutableStateOf(false) }
     var showCreateChatDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    var openRequestGeneration by remember { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
 
     if (showCreateChatDialog) {
@@ -157,12 +160,23 @@ internal fun UnifiedChatListScreen(
                         chat = chat,
                         observeUnreadCount = observeUnreadCount,
                         onClick = {
+                            val request = ++openRequestGeneration
+                            snackbarHostState.currentSnackbarData?.dismiss()
                             scope.launch {
-                                val chatReady = withContext(Dispatchers.IO) { openChat(chat) }
-                                if (chatReady) {
-                                    onOpenFeed()
-                                } else {
-                                    snackbarHostState.showSnackbar("Could not open this chat. It may no longer be available.")
+                                try {
+                                    val chatReady = withContext(Dispatchers.IO) { openChat(chat) }
+                                    if (request != openRequestGeneration) return@launch
+                                    if (chatReady) {
+                                        onOpenFeed()
+                                    } else {
+                                        snackbarHostState.showSnackbar("Could not open this chat. It may no longer be available.")
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    if (request == openRequestGeneration) {
+                                        snackbarHostState.showSnackbar("Could not open this chat. Please try again.")
+                                    }
                                 }
                             }
                         },

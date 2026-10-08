@@ -5,6 +5,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -77,6 +79,113 @@ class UnifiedChatListScreenTest {
         composeRule.waitForIdle()
         assertEquals(listOf("group-id"), attempts)
         assertEquals(0, feedOpens.get())
+    }
+
+    @Test
+    fun stale_success_cannot_navigate_or_cancel_the_latest_open() {
+        val opens = CopyOnWriteArrayList<CompletableDeferred<Boolean>>()
+        val feedOpens = AtomicInteger()
+        val chats =
+            listOf(
+                AppContainer.UnifiedChat("group-id", "Болталка", "group", "community-a", "A"),
+                AppContainer.UnifiedChat("general-id", "General", "general", "community-a", "A"),
+            )
+        composeRule.setContent {
+            UnifiedChatListScreen(
+                onCreateCommunity = {},
+                onJoin = {},
+                onOpenFeed = { feedOpens.incrementAndGet() },
+                onSettings = {},
+                chatItems = chats,
+                openChat = {
+                    val deferred = CompletableDeferred<Boolean>()
+                    opens.add(deferred)
+                    deferred.await()
+                },
+                observeUnreadCount = { _, _ -> flowOf(0) },
+            )
+        }
+
+        composeRule.onNodeWithContentDescription("A · Болталка").performClick()
+        composeRule.waitUntil(5_000) { opens.size == 1 }
+        composeRule.onNodeWithContentDescription("A · General").performClick()
+        composeRule.waitUntil(5_000) { opens.size == 2 }
+        opens[0].complete(true)
+        composeRule.waitForIdle()
+        assertEquals(0, feedOpens.get())
+        opens[1].complete(true)
+        composeRule.waitUntil(5_000) { feedOpens.get() == 1 }
+    }
+
+    @Test
+    fun stale_failure_shows_no_error_while_latest_success_navigates() {
+        val opens = CopyOnWriteArrayList<CompletableDeferred<Boolean>>()
+        val feedOpens = AtomicInteger()
+        val chats =
+            listOf(
+                AppContainer.UnifiedChat("group-id", "Болталка", "group", "community-a", "A"),
+                AppContainer.UnifiedChat("general-id", "General", "general", "community-a", "A"),
+            )
+        composeRule.setContent {
+            UnifiedChatListScreen(
+                onCreateCommunity = {},
+                onJoin = {},
+                onOpenFeed = { feedOpens.incrementAndGet() },
+                onSettings = {},
+                chatItems = chats,
+                openChat = {
+                    val deferred = CompletableDeferred<Boolean>()
+                    opens.add(deferred)
+                    deferred.await()
+                },
+                observeUnreadCount = { _, _ -> flowOf(0) },
+            )
+        }
+
+        composeRule.onNodeWithContentDescription("A · Болталка").performClick()
+        composeRule.waitUntil(5_000) { opens.size == 1 }
+        composeRule.onNodeWithContentDescription("A · General").performClick()
+        composeRule.waitUntil(5_000) { opens.size == 2 }
+        opens[0].completeExceptionally(IllegalStateException("stale open failed"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Could not open this chat. Please try again.").assertDoesNotExist()
+        opens[1].complete(true)
+        composeRule.waitUntil(5_000) { feedOpens.get() == 1 }
+    }
+
+    @Test
+    fun stale_cancellation_does_not_show_error_or_cancel_latest_open() {
+        val opens = CopyOnWriteArrayList<CompletableDeferred<Boolean>>()
+        val feedOpens = AtomicInteger()
+        val chats =
+            listOf(
+                AppContainer.UnifiedChat("group-id", "Болталка", "group", "community-a", "A"),
+                AppContainer.UnifiedChat("general-id", "General", "general", "community-a", "A"),
+            )
+        composeRule.setContent {
+            UnifiedChatListScreen(
+                onCreateCommunity = {},
+                onJoin = {},
+                onOpenFeed = { feedOpens.incrementAndGet() },
+                onSettings = {},
+                chatItems = chats,
+                openChat = {
+                    val deferred = CompletableDeferred<Boolean>()
+                    opens.add(deferred)
+                    deferred.await()
+                },
+                observeUnreadCount = { _, _ -> flowOf(0) },
+            )
+        }
+        composeRule.onNodeWithContentDescription("A · Болталка").performClick()
+        composeRule.waitUntil(5_000) { opens.size == 1 }
+        composeRule.onNodeWithContentDescription("A · General").performClick()
+        composeRule.waitUntil(5_000) { opens.size == 2 }
+        opens[0].completeExceptionally(CancellationException("stale request cancelled"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Could not open this chat. Please try again.").assertDoesNotExist()
+        opens[1].complete(true)
+        composeRule.waitUntil(5_000) { feedOpens.get() == 1 }
     }
 
     @Test
