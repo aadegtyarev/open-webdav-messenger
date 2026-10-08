@@ -17,14 +17,21 @@ recipient or cryptographic safety.
 
 - First and repeated opens render available local history promptly for General,
   group, and DM chats, including with a slow or unavailable network.
-- Roster/metadata enrichment may continue asynchronously after the local feed is
-  visible. Its success updates enrichment; its failure leaves the feed usable.
+- The Room-backed Feed appears immediately, while verified roster loading
+  continues asynchronously. A group/DM top bar shows an indeterminate
+  connecting spinner during Loading. Send is disabled during Loading and
+  Unavailable; General may be Ready immediately when its existing verified
+  recipient/key state is sufficient.
+- When roster verification succeeds, the matching chat becomes Ready and Send
+  is enabled. On failure, the Feed/history/navigation remain usable, Send stays
+  disabled, and a compact truthful status provides the supported retry or
+  reconnect route without introducing a new UI design.
 - Rapid chat switching preserves production request-token/runtime selection
-  ordering: stale work cannot install into or poison another chat or close its
-  feed.
-- If safe sending depends on pending or unverified recipient/key state, sending
-  remains truthfully disabled/deferred or visibly pending until safety is
-  established; no stale or unverified recipient may be used.
+  ordering. Background success applies only to the same request token, graph,
+  community, chat, and selection revision; stale results and errors are
+  discarded and cannot poison another chat or close its feed.
+- No envelope or retry payload is built from an incomplete roster, and no stale
+  or unverified recipient/key may be used.
 
 ## Non-goals
 
@@ -34,7 +41,8 @@ recipient or cryptographic safety.
 
 ## Affected surfaces
 
-- [Chat surface](../surfaces/chat-surface.md) (exact affected surface).
+- [Chat surface](../surfaces/chat-surface.md).
+- [Background delivery](../surfaces/background-delivery.md).
 
 ## Interfaces and constraints
 
@@ -43,17 +51,34 @@ recipient or cryptographic safety.
 - Preserve v0.23.1 production request-token/runtime-selection ordering.
 - Background enrichment errors must not close the feed or mutate another chat.
 - Preserve crypto/key validation and recipient ownership/verification rules.
+- Represent recipient readiness as Loading, Ready, or Unavailable. Group/DM
+  readiness requires verified roster data; do not enable Send or build an
+  envelope/retry payload before that requirement is met. General may be Ready
+  immediately only when its existing verified recipient/key state is sufficient.
+- Show indeterminate top-bar progress for group/DM roster Loading and disable
+  Send for Loading/Unavailable. Expose progress and disabled state accessibly.
+  On Unavailable, use only compact truthful status and an existing supported
+  retry/reconnect route; do not invent a broader UI.
+- Apply successful background results only when request token, graph,
+  community, chat, and selection revision still match. Discard stale results
+  and errors; failure leaves Feed/history/navigation available.
 
 ## Acceptance criteria
 
 - No chat-open path awaits WebDAV before showing the local feed; General, group,
   and DM opens have comparable local-history latency.
-- A deterministic regression test suspends a remote read and proves local feed
-  visibility before that read completes.
-- Tests prove key/recipient safety while enrichment is pending, including
-  truthful send disable/defer where verification is required.
-- Tests cover enrichment success and failure, rapid switching, and isolation of
-  feeds/state across chats.
+- A deterministic test suspends the remote roster reader and proves the Room
+  Feed is visible, group/DM progress is exposed, and Send is disabled before
+  that reader completes.
+- Verified roster success enables Send only for the still-current request
+  token, graph, community, chat, and selection revision. Failure and stale
+  success/error cannot enable Send or poison another chat; failure preserves
+  Feed/history/navigation and offers the truthful supported retry/reconnect
+  route.
+- Tests prove no envelope or retry payload is built from an incomplete roster
+  and cover General readiness, rapid switching, and isolation across chats.
+- Accessibility checks verify progress semantics and that disabled Send is
+  exposed as disabled.
 - Release v0.23.2 passes Debug, Release, and full project gates. Review with
   GPT-6.1 Sol.
 
