@@ -5,6 +5,9 @@
     <string name="fast_poll_channel_description">Shown when fast polling is active</string>
     <string name="fast_poll_notification_title">Open WebDAV Messenger</string>
     <string name="fast_poll_notification_text">Checking for messages every %s</string>
+    <string name="roster_loading_placeholder">Reading participants from server…</string>
+    <string name="roster_loading_accessibility">Reading participants from server</string>
+    <string name="roster_loading_explanation">Reading participants from server. Sending will be available when complete.</string>
 
     <!-- Export / Restore -->
     <string name="export_restore_title">Backup &amp; Restore</string>

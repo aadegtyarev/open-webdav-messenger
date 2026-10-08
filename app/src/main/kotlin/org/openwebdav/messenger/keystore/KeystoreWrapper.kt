@@ -105,6 +105,16 @@ class KeystoreWrapper(
     /** Delete the wrapped blob file and report failure to replacement/rollback callers. */
     fun delete() = StrictFileOperations.delete(file)
 
+    /** Destroy this wrapper's encryption key so undeletable stale ciphertext remains unreadable. */
+    fun destroyWrappingKey() {
+        try {
+            val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
+        } catch (failure: Exception) {
+            throw IOException("Keystore key removal failed", failure)
+        }
+    }
+
     /** The raw wrapped-on-disk bytes, or `null` if absent — for tests asserting no plaintext leaks. */
     fun rawBlob(): ByteArray? = file.takeIf { it.exists() }?.readBytes()
 

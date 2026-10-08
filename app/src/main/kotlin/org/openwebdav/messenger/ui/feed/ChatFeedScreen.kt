@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -43,12 +44,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -60,6 +63,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
+import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.ui.FeedViewModelFactory
@@ -91,7 +96,10 @@ internal fun ChatFeedScreen(
     val recipientReadiness by viewModel.recipientReadiness.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val rosterLoadingLabel = stringResource(R.string.roster_loading_accessibility)
+    val rosterLoadingExplanation = stringResource(R.string.roster_loading_explanation)
 
     // Show member-names error as a one-shot snackbar, then clear.
     LaunchedEffect(memberNamesError) {
@@ -199,14 +207,21 @@ internal fun ChatFeedScreen(
                     }
                     when (recipientReadiness) {
                         RecipientReadiness.Loading ->
-                            CircularProgressIndicator(
+                            IconButton(
+                                onClick = { coroutineScope.launch { snackbarHostState.showSnackbar(rosterLoadingExplanation) } },
                                 modifier =
-                                    Modifier.size(24.dp).semantics {
-                                        contentDescription = "Connecting — loading verified chat members"
-                                        progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+                                    Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics {
+                                        contentDescription = rosterLoadingLabel
                                     },
-                                strokeWidth = 2.dp,
-                            )
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier =
+                                        Modifier.size(24.dp).semantics {
+                                            progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+                                        },
+                                    strokeWidth = 2.dp,
+                                )
+                            }
                         is RecipientReadiness.Ready -> Unit
                         is RecipientReadiness.Unavailable -> Unit
                     }
@@ -224,6 +239,7 @@ internal fun ChatFeedScreen(
                 onSend = viewModel::send,
                 sendEnabled = recipientReadiness is RecipientReadiness.Ready,
                 rosterUnavailable = recipientReadiness as? RecipientReadiness.Unavailable,
+                rosterLoading = recipientReadiness is RecipientReadiness.Loading,
                 onRetryRoster = viewModel::retryRecipientRoster,
             )
         },
@@ -398,6 +414,7 @@ private fun Composer(
     onSend: () -> Unit,
     sendEnabled: Boolean,
     rosterUnavailable: RecipientReadiness.Unavailable?,
+    rosterLoading: Boolean,
     onRetryRoster: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
@@ -425,7 +442,10 @@ private fun Composer(
             OutlinedTextField(
                 value = draft,
                 onValueChange = onDraft,
-                placeholder = { Text("Message") },
+                enabled = !rosterLoading,
+                placeholder = {
+                    Text(if (rosterLoading) stringResource(R.string.roster_loading_placeholder) else "Message")
+                },
                 keyboardOptions =
                     KeyboardOptions(
                         capitalization = KeyboardCapitalization.Sentences,

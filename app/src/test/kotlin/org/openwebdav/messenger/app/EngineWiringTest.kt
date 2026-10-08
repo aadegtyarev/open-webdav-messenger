@@ -237,10 +237,11 @@ class EngineWiringTest {
                     this,
                     oldGraph,
                     { update -> EngineWiring.updateGraphIfCurrent(oldGraph, { EngineWiring.current() === oldGraph }, update) },
-                ) {
-                    oldReadStarted.complete(Unit)
-                    oldRead.await()
-                }.start()
+                    read = {
+                        oldReadStarted.complete(Unit)
+                        oldRead.await()
+                    },
+                ).start()
             oldReadStarted.await()
 
             SyncRunner.current().runOnce()

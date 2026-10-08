@@ -13,6 +13,8 @@ internal class RecipientRosterEnricher(
     private val graph: RuntimeGraph,
     private val applyIfCurrent: (() -> Unit) -> Boolean,
     private val read: suspend () -> DirectoryReadResult,
+    private val preserveReadyOnFailure: Boolean = false,
+    private val commitVerified: ((DirectoryReadResult, () -> Boolean) -> Boolean)? = null,
 ) {
     fun start(): Job =
         scope.launch {
@@ -21,22 +23,28 @@ internal class RecipientRosterEnricher(
                 val result = read()
                 applyIfCurrent {
                     if (result.listingFailed) {
-                        graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE))
+                        if (!preserveReadyOnFailure) graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE))
                     } else {
-                        graph.memberNames =
-                            result.entries.associate {
-                                Hex.encode(it.copySigningPublicKey()) to it.displayName
-                            }
-                        graph.setMemberNamesError(null)
-                        graph.updateRecipientReadiness(
-                            RecipientReadiness.Ready(result.entries.map { Hex.encode(it.copySigningPublicKey()) }),
-                        )
+                        val update = {
+                            graph.memberNames =
+                                result.entries.associate {
+                                    Hex.encode(it.copySigningPublicKey()) to it.displayName
+                                }
+                            graph.setMemberNamesError(null)
+                            graph.updateRecipientReadiness(
+                                RecipientReadiness.Ready(result.entries.map { Hex.encode(it.copySigningPublicKey()) }),
+                            )
+                        }
+                        val commit = commitVerified
+                        if (commit == null) applyIfCurrent(update) else commit(result, { applyIfCurrent(update) })
                     }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                applyIfCurrent { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE)) }
+                if (!preserveReadyOnFailure) {
+                    applyIfCurrent { graph.updateRecipientReadiness(RecipientReadiness.Unavailable(UNAVAILABLE)) }
+                }
             }
         }
 
