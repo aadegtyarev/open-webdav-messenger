@@ -7,6 +7,8 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import net.sqlcipher.database.SupportFactory
+import org.openwebdav.messenger.keystore.CommunityRegistry
+import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.HistoryKeyStore
 import java.io.File
 import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
@@ -66,7 +68,7 @@ abstract class MessengerDatabase : RoomDatabase() {
                 }
             }
 
-        /** Existing rows are retained in a hidden, unscoped namespace; ownership is never guessed. */
+        /** Legacy rows remain unscoped during schema migration; startup repair scopes them only for one registered community. */
         val MIGRATION_4_5 =
             object : Migration(4, 5) {
                 override fun migrate(db: SupportSQLiteDatabase) {
@@ -136,6 +138,7 @@ abstract class MessengerDatabase : RoomDatabase() {
                 return Room.databaseBuilder(context, MessengerDatabase::class.java, DB_NAME)
                     .openHelperFactory(factory)
                     .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addCallback(legacyHistoryRepairCallback(context))
                     // No allowMainThreadQueries() — DAOs are suspend/Flow (stack-notes Room).
                     // No fallbackToDestructiveMigration() — a schema bump must ship a Migration so local
                     // history is never silently dropped (stack-notes Room migrations).
@@ -144,6 +147,26 @@ abstract class MessengerDatabase : RoomDatabase() {
                 key.fill(0)
             }
         }
+
+        internal fun legacyHistoryRepairCallback(context: Context): RoomDatabase.Callback =
+            object : RoomDatabase.Callback() {
+                override fun onOpen(db: SupportSQLiteDatabase) {
+                    LegacyHistoryRepair.repair(db, joinedCommunityIds(context))
+                }
+            }
+
+        private fun joinedCommunityIds(context: Context): List<String> =
+            try {
+                val registered = CommunityRegistry(context).all().map { it.id }
+                if (registered.isNotEmpty()) {
+                    registered
+                } else {
+                    val store = ConnectionConfigStore(context)
+                    store.listCommunityIds().filter { id -> store.loadStored(id)?.chatId?.isNotBlank() == true }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
 
         /**
          * If [DB_NAME] exists as an unencrypted database (pre-SQLCipher), migrate it to an encrypted
