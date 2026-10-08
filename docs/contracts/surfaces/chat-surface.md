@@ -98,14 +98,17 @@ verified public participant entries, encrypted with the Android Keystore. Cache
 identity is exact community/chat scope and is bound to the community key, chat key,
 and account public identity. A valid hit installs Ready before the asynchronous
 WebDAV verification refresh; this cached Ready state is visually normal and keeps
-Send enabled. A verified refresh replaces the runtime roster and cache together;
-a refresh failure preserves cached Ready without a foreground error. Without a
-valid hit, Loading keeps Send disabled, shows localized input guidance and an
-accessible progress action, and transitions to Ready or Unavailable after remote
-verification. Cache data is strictly bounded and malformed data fails closed.
-Restore/replacement and a mismatched key or identity invalidate cached data; stale
-refresh work cannot commit after invalidation. This cache does not change the
-Ready-snapshot requirement for new sends or existing outbox retry behavior.
+Send enabled. A current verified refresh replaces the runtime roster and durable
+cache under the shared commit coordinator; if atomic cache replacement fails, the
+old encrypted cache remains while the verified roster may still update the active
+runtime. A refresh failure preserves cached Ready without a foreground error.
+Without a valid hit, Loading keeps Send disabled, shows localized input guidance
+and an accessible progress action, and transitions to Ready or Unavailable after
+remote verification. Cache data is strictly bounded and malformed data fails
+closed. Restore/replacement and a mismatched key or identity invalidate cached
+data; stale or superseded refresh work cannot write or apply. This cache does not
+change the Ready-snapshot requirement for new sends or existing outbox retry
+behavior.
 
 **Send failure and retry (3-send-fail):** A failed or uncertain send remains in
 the feed with truthful local status. A transient error below the draft clears

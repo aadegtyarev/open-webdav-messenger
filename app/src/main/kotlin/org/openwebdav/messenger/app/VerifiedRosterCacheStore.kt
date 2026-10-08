@@ -2,12 +2,18 @@ package org.openwebdav.messenger.app
 
 import android.content.Context
 import org.openwebdav.messenger.keystore.KeystoreWrapper
+import org.openwebdav.messenger.keystore.StrictFileOperations
 import org.openwebdav.messenger.keystore.UnwrapResult
 import java.io.File
 
-internal class VerifiedRosterCacheStore(context: Context) : VerifiedRosterCachePersistence {
+internal class VerifiedRosterCacheStore(
+    context: Context,
+    private val atomicReplace: (File, File) -> Unit = { source, target ->
+        StrictFileOperations.atomicReplace(source, target)
+    },
+) : VerifiedRosterCachePersistence {
     private val file = File(context.filesDir, "verified_roster/rosters.bin")
-    private val wrapper get() = KeystoreWrapper(KEY_ALIAS, file)
+    private val wrapper get() = KeystoreWrapper(KEY_ALIAS, file, atomicReplace)
 
     override fun load(
         communityId: String,
@@ -20,12 +26,7 @@ internal class VerifiedRosterCacheStore(context: Context) : VerifiedRosterCacheP
     override fun put(entry: CachedVerifiedRoster) =
         synchronized(LOCK) {
             val entries = readAll().orEmpty().filterNot { it.communityId == entry.communityId && it.chatId == entry.chatId }
-            try {
-                wrapper.wrap(RosterCacheCodec.encode(entries + entry))
-            } catch (failure: Exception) {
-                runCatching { clearLocked() }.exceptionOrNull()?.let(failure::addSuppressed)
-                throw failure
-            }
+            wrapper.wrapStrictAtomic(RosterCacheCodec.encode(entries + entry))
         }
 
     override fun remove(
@@ -35,7 +36,7 @@ internal class VerifiedRosterCacheStore(context: Context) : VerifiedRosterCacheP
         val entries = readAll() ?: return@synchronized clearLocked()
         val remaining = entries.filterNot { it.communityId == communityId && it.chatId == chatId }
         if (remaining.size == entries.size) return@synchronized
-        if (remaining.isEmpty()) clearLocked() else wrapper.wrap(RosterCacheCodec.encode(remaining))
+        if (remaining.isEmpty()) clearLocked() else wrapper.wrapStrictAtomic(RosterCacheCodec.encode(remaining))
     }
 
     override fun clear() = synchronized(LOCK) { clearLocked() }
