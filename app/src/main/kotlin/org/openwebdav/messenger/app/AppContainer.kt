@@ -79,6 +79,27 @@ internal object AppContainer {
     @Volatile
     private var chatOpenTestSeam: ChatOpenTestSeam? = null
 
+    @Volatile
+    private var credentialRotationTestSeam: CredentialRotationTestSeam? = null
+
+    internal data class CredentialRotationTestSeam(
+        val loadStored: (String) -> StoredConnection?,
+        val loadChatKey: (String) -> ChatKey?,
+        val readDirectory: suspend (StoredConnection, ChatKey) -> List<DirectoryEntry>,
+        val writeCredential: suspend (String, ConnectionConfig, String, ByteArray) -> Boolean,
+        val saveStored: (String, StoredConnection) -> Boolean,
+        val onCommunitySelected: (String) -> Unit = {},
+    )
+
+    private data class CredentialRotationSnapshot(
+        val ownerCommunityId: String,
+        val graph: RuntimeGraph,
+        val stored: StoredConnection,
+        val communityKey: ChatKey,
+        val replacementGeneration: Long,
+        val testSeam: CredentialRotationTestSeam?,
+    )
+
     internal data class ChatOpenTestSeam(
         val loadChatKey: (String) -> ChatKey?,
         val loadStored: (String) -> StoredConnection?,
@@ -121,6 +142,19 @@ internal object AppContainer {
 
     internal fun clearChatOpenTestSeam() {
         chatOpenTestSeam = null
+        currentCommunityId = "default"
+    }
+
+    internal fun configureCredentialRotationTestSeam(
+        communityId: String,
+        seam: CredentialRotationTestSeam,
+    ) {
+        currentCommunityId = communityId
+        credentialRotationTestSeam = seam
+    }
+
+    internal fun clearCredentialRotationTestSeam() {
+        credentialRotationTestSeam = null
         currentCommunityId = "default"
     }
 
@@ -642,14 +676,33 @@ internal object AppContainer {
     }
 
     private fun switchToCommunityExclusive(communityId: String): Boolean {
-        val stored = configStore.loadStored(communityId) ?: return false
-        val chatKeyStore = crypto.chatKeyStore(requireContext())
-        val chatKey = chatKeyStore.load(stored.chatId) ?: return false
-        val identity = runBlocking { identityFactory.identityStore(requireContext()).loadOrCreate() }
+        val rotationSeam = credentialRotationTestSeam
+        val stored =
+            if (rotationSeam != null) {
+                rotationSeam.loadStored(communityId)
+            } else {
+                configStore.loadStored(communityId)
+            } ?: return false
+        val chatKey =
+            if (rotationSeam != null) {
+                rotationSeam.loadChatKey(stored.chatId)
+            } else {
+                crypto.chatKeyStore(requireContext()).load(stored.chatId)
+            } ?: return false
+        val identity =
+            if (rotationSeam != null) {
+                runtimeGraph()?.identity ?: return false
+            } else {
+                runBlocking { identityFactory.identityStore(requireContext()).loadOrCreate() }
+            }
         runtimeSelectionGuard.begin()
         currentCommunityId = communityId
-        UserSettings.selectCommunity(communityId)
-        activeCommunityStore.select(communityId)
+        if (rotationSeam != null) {
+            rotationSeam.onCommunitySelected(communityId)
+        } else {
+            UserSettings.selectCommunity(communityId)
+            activeCommunityStore.select(communityId)
+        }
         EngineWiring.reconfigure(
             config = stored.config,
             chatId = stored.chatId,
@@ -658,7 +711,7 @@ internal object AppContainer {
             identity = identity,
             communityId = communityId,
         )
-        refreshMemberNames()
+        if (rotationSeam == null) refreshMemberNames()
         return true
     }
 
@@ -939,97 +992,168 @@ internal object AppContainer {
         newPassword: String,
         excludeMemberSignPub: String,
     ): Boolean {
-        val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return false
-        return AccountMutationBarrier.process.withExclusive {
-            if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) {
-                false
-            } else {
-                rotateCredentialExclusive(newUrl, newUsername, newPassword, excludeMemberSignPub)
-            }
-        }
-    }
+        val snapshot =
+            AccountMutationBarrier.process.withStableAccount {
+                val graph = runtimeGraph() ?: return@withStableAccount null
+                val ownerCommunityId = graph.communityId
+                if (currentCommunityId != ownerCommunityId) return@withStableAccount null
+                val seam = credentialRotationTestSeam
+                val stored =
+                    if (seam != null) {
+                        seam.loadStored(ownerCommunityId)
+                    } else {
+                        configStore.loadStored(ownerCommunityId)
+                    } ?: return@withStableAccount null
+                if (stored.config != graph.config) return@withStableAccount null
+                val communityKey =
+                    if (seam != null) {
+                        seam.loadChatKey(stored.chatId)
+                    } else {
+                        crypto.chatKeyStore(requireContext()).load(stored.chatId)
+                    } ?: return@withStableAccount null
+                CredentialRotationSnapshot(
+                    ownerCommunityId = ownerCommunityId,
+                    graph = graph,
+                    stored = stored,
+                    communityKey = communityKey,
+                    replacementGeneration = AccountMutationBarrier.process.replacementGeneration(),
+                    testSeam = seam,
+                )
+            } ?: return false
 
-    private suspend fun rotateCredentialExclusive(
-        newUrl: String,
-        newUsername: String,
-        newPassword: String,
-        excludeMemberSignPub: String,
-    ): Boolean {
-        val graph = runtimeGraph() ?: return false
-        val stored = configStore.loadStored(activeCommunityId) ?: return false
-        val chatKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return false
-
-        // Read verified members from the directory.
-        val service =
-            directoryFactory.directoryService(
-                baseUrl = stored.config.baseUrl,
-                username = stored.config.username,
-                appPassword = stored.config.appPassword,
-                communityRoot = stored.config.chatRoot,
-            )
+        val seam = snapshot.testSeam
         val members =
             try {
-                service.readDirectory(chatKey).entries
+                if (seam != null) {
+                    seam.readDirectory(snapshot.stored, snapshot.communityKey)
+                } else {
+                    directoryFactory
+                        .directoryService(
+                            baseUrl = snapshot.stored.config.baseUrl,
+                            username = snapshot.stored.config.username,
+                            appPassword = snapshot.stored.config.appPassword,
+                            communityRoot = snapshot.stored.config.chatRoot,
+                        ).readDirectory(snapshot.communityKey).entries
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 return false
             }
 
-        val idCrypto = identityFactory.identityCrypto()
-        val hostIdentity = graph.identity
         val newConfig =
             ConnectionConfig(
                 baseUrl = newUrl,
                 username = newUsername,
                 appPassword = newPassword,
-                chatRoot = stored.config.chatRoot,
+                chatRoot = snapshot.stored.config.chatRoot,
             )
-        val transport = TransportFactory.create(graph.config)
-
-        // Ensure meta/credentials/ exists.
-        transport.ensureCollection("meta/credentials")
+        val idCrypto = identityFactory.identityCrypto()
+        val transport = if (seam == null) TransportFactory.create(snapshot.stored.config) else null
+        transport?.ensureCollection("meta/credentials")
 
         var allOk = true
         for (member in members) {
             val memberHex = Hex.encode(member.copySigningPublicKey())
             if (memberHex == excludeMemberSignPub) continue
-
             try {
                 val blob =
                     CredentialRotation.sealForMember(
                         config = newConfig,
                         memberBoxPublicKey = member.copyBoxPublicKey(),
                         identityCrypto = idCrypto,
-                        hostIdentity = hostIdentity,
+                        hostIdentity = snapshot.graph.identity,
                     )
                 val path = "meta/credentials/$memberHex"
-                val result = transport.write(path, blob)
-                if (result !is WebDavResult.Success) {
-                    allOk = false
-                }
+                val written =
+                    if (seam != null) {
+                        seam.writeCredential(snapshot.ownerCommunityId, snapshot.stored.config, path, blob)
+                    } else {
+                        transport!!.write(path, blob) is WebDavResult.Success
+                    }
+                if (!written) allOk = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 allOk = false
             }
         }
+        if (!allOk) return false
 
-        // Update local config so the host uses the new credential.
-        if (allOk) {
-            configStore.save(
-                newConfig,
-                stored.chatId,
-                stored.communityName,
-                communityId = activeCommunityId,
-            )
-            EngineWiring.reconfigure(
-                config = newConfig,
-                chatId = stored.chatId,
-                communityName = stored.communityName,
-                chatKey = chatKey,
-                identity = hostIdentity,
-                communityId = activeCommunityId,
-            )
+        return AccountMutationBarrier.process.withExclusive {
+            AccountMutationBarrier.process.withAccountReplacement {
+                if (
+                    snapshot.replacementGeneration != AccountMutationBarrier.process.replacementGeneration()
+                ) {
+                    return@withAccountReplacement false
+                }
+                val currentStored =
+                    loadRotationStored(snapshot.ownerCommunityId, seam) ?: return@withAccountReplacement false
+                if (currentStored != snapshot.stored) return@withAccountReplacement false
+                val currentKey =
+                    loadRotationChatKey(snapshot.stored.chatId, seam) ?: return@withAccountReplacement false
+                val currentKeyBytes = currentKey.export()
+                val capturedKeyBytes = snapshot.communityKey.export()
+                val keyStillCurrent =
+                    try {
+                        currentKeyBytes.contentEquals(capturedKeyBytes)
+                    } finally {
+                        currentKeyBytes.fill(0)
+                        capturedKeyBytes.fill(0)
+                    }
+                if (!keyStillCurrent) return@withAccountReplacement false
+
+                // A community switch during WebDAV I/O may commit only to the captured owner, never reinstall over B.
+                val ownerStillSelected = currentCommunityId == snapshot.ownerCommunityId
+                val activeGraph = runtimeGraph()
+                if (
+                    ownerStillSelected &&
+                    (
+                        activeGraph?.communityId != snapshot.ownerCommunityId ||
+                            activeGraph.communityRuntimeKey != snapshot.graph.communityRuntimeKey
+                    )
+                ) {
+                    return@withAccountReplacement false
+                }
+
+                val rotated = snapshot.stored.copy(config = newConfig)
+                val saved =
+                    if (seam != null) {
+                        seam.saveStored(snapshot.ownerCommunityId, rotated)
+                    } else {
+                        configStore.save(
+                            rotated.config,
+                            rotated.chatId,
+                            rotated.communityName,
+                            communityId = snapshot.ownerCommunityId,
+                        )
+                        true
+                    }
+                if (!saved) return@withAccountReplacement false
+                if (
+                    ownerStillSelected &&
+                    !EngineWiring.reconfigureIfCurrent(
+                        expectedCommunityRuntimeKey = snapshot.graph.communityRuntimeKey,
+                        config = newConfig,
+                        communityId = snapshot.ownerCommunityId,
+                    )
+                ) {
+                    return@withAccountReplacement false
+                }
+                true
+            }
         }
-        return allOk
     }
+
+    private fun loadRotationStored(
+        communityId: String,
+        seam: CredentialRotationTestSeam?,
+    ): StoredConnection? = if (seam != null) seam.loadStored(communityId) else configStore.loadStored(communityId)
+
+    private fun loadRotationChatKey(
+        chatId: String,
+        seam: CredentialRotationTestSeam?,
+    ): ChatKey? = if (seam != null) seam.loadChatKey(chatId) else crypto.chatKeyStore(requireContext()).load(chatId)
 
     /**
      * Build the `owdm1:` invite for the [graph]'s joined chat (the owner shares it). Role-agnostic at the

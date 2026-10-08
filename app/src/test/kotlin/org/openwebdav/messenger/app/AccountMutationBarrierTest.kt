@@ -4,12 +4,24 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.openwebdav.messenger.account.AccountMutationBarrier
 
 class AccountMutationBarrierTest {
+    @Test
+    fun account_replacement_generation_invalidates_prior_snapshots() =
+        runTest {
+            val barrier = AccountMutationBarrier()
+            val captured = barrier.replacementGeneration()
+            barrier.withStableAccount { }
+            assertEquals(captured, barrier.replacementGeneration())
+            barrier.withAccountReplacement { }
+            assertTrue(barrier.replacementGeneration() > captured)
+        }
+
     @Test
     fun local_open_is_not_blocked_by_poll_but_does_not_overlap_account_replacement() =
         runTest {

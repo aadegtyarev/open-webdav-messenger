@@ -178,7 +178,7 @@ internal object EngineWiring {
     }
 
     /** Install a credential-updated runtime only if the community runtime that read it is still current. */
-    private fun reconfigureIfCurrent(
+    fun reconfigureIfCurrent(
         expectedCommunityRuntimeKey: String,
         config: ConnectionConfig,
         communityId: String,
@@ -344,7 +344,7 @@ internal object EngineWiring {
 
     private fun installAndSchedule(
         g: RuntimeGraph,
-        selectedCommunityId: String,
+        ownerCommunityId: String,
     ) {
         SyncRunner.install(
             object : SyncRunner {
@@ -374,13 +374,13 @@ internal object EngineWiring {
                                     // the poll cycle below (and all future cycles) use the new URL.
                                     val saved =
                                         AccountMutationBarrier.process.withAccountReplacement {
-                                            if (!deps.saveRotatedConfig(newConfig, selectedCommunityId)) {
+                                            if (!deps.saveRotatedConfig(newConfig, ownerCommunityId)) {
                                                 false
                                             } else {
                                                 reconfigureIfCurrent(
                                                     expectedCommunityRuntimeKey = g.communityRuntimeKey,
                                                     config = newConfig,
-                                                    communityId = selectedCommunityId,
+                                                    communityId = ownerCommunityId,
                                                 )
                                                 true
                                             }
@@ -428,9 +428,9 @@ internal object EngineWiring {
                         }
 
                         val subscriptions =
-                            (deps.communityChatIds(selectedCommunityId) + g.chatId).distinct().map(::ChatSubscription)
-                        val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions, selectedCommunityId)
-                        val otherCommunities = pollOtherCommunities(selectedCommunityId, g)
+                            (deps.communityChatIds(ownerCommunityId) + g.chatId).distinct().map(::ChatSubscription)
+                        val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions, ownerCommunityId)
+                        val otherCommunities = pollOtherCommunities(ownerCommunityId, g)
                         val combinedOutcome =
                             outcome.copy(
                                 newCount = outcome.newCount + otherCommunities.newCount,

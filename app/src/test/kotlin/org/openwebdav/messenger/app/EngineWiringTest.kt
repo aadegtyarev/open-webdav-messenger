@@ -11,10 +11,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
@@ -146,6 +148,7 @@ class EngineWiringTest {
                     stored = stored,
                     activeCommunity = "community-a",
                     joinedCommunities = listOf("community-a", "community-b"),
+                    storedByCommunity = mapOf("community-b" to stored),
                 )
             EngineWiring.initialize(deps)
             val runnerA = SyncRunner.current()
@@ -258,6 +261,235 @@ class EngineWiringTest {
             EngineWiring.initialize(deps)
             assertEquals(chatId, EngineWiring.current()?.chatId)
             assertEquals("Community anchor", EngineWiring.current()?.communityName)
+        }
+
+    @Test
+    fun host_rotation_a_finishes_after_open_b_without_touching_b_runtime_or_storage() =
+        runTest {
+            val anchorA = StoredConnection(SyncTestSupport.config(server), chatId, "Community A")
+            val serverB =
+                MockWebServer().apply {
+                    dispatcher = FakeDisk()
+                    start()
+                }
+            try {
+                val anchorB = StoredConnection(SyncTestSupport.config(serverB), "anchor-b", "Community B")
+                val storedByCommunity = mutableMapOf("community-a" to anchorA, "community-b" to anchorB)
+                val keys = mapOf(anchorA.chatId to chatKey, anchorB.chatId to chatKey)
+                val deps =
+                    JvmDeps(
+                        stored = anchorA,
+                        activeCommunity = "community-a",
+                        storedByCommunity = mapOf("community-b" to anchorB),
+                    )
+                EngineWiring.initialize(deps)
+                val readStarted = CompletableDeferred<Unit>()
+                val releaseDirectory = CompletableDeferred<List<DirectoryEntry>>()
+                val publishStarted = CompletableDeferred<Unit>()
+                val releasePublish = CompletableDeferred<Boolean>()
+                val peer = AppTestSupport.newIdentity()
+                val publishedOwners = mutableListOf<String>()
+                val memberReads = mutableListOf<String>()
+                val selectedOwners = mutableListOf<String>()
+                AppContainer.configureCredentialRotationTestSeam(
+                    "community-a",
+                    AppContainer.CredentialRotationTestSeam(
+                        loadStored = storedByCommunity::get,
+                        loadChatKey = keys::get,
+                        readDirectory = { stored, _ ->
+                            memberReads += if (stored == anchorA) "community-a" else "community-b"
+                            readStarted.complete(Unit)
+                            releaseDirectory.await()
+                        },
+                        writeCredential = { owner, config, _, blob ->
+                            publishedOwners += owner
+                            assertEquals(anchorA.config, config)
+                            publishStarted.complete(Unit)
+                            releasePublish.await() && blob.isNotEmpty()
+                        },
+                        saveStored = { owner, stored ->
+                            storedByCommunity[owner] = stored
+                            true
+                        },
+                        onCommunitySelected = selectedOwners::add,
+                    ),
+                )
+
+                val rotation =
+                    async {
+                        AppContainer.rotateCredential(
+                            newUrl = "https://rotated-a.example.test",
+                            newUsername = "rotated-a",
+                            newPassword = "secret-a",
+                            excludeMemberSignPub = "excluded-member",
+                        )
+                    }
+                readStarted.await()
+                assertTrue(AppContainer.switchToCommunity("community-b"))
+                releaseDirectory.complete(listOf(DirectoryEntry("Peer", peer.copySignPublic(), peer.copyBoxPublic())))
+                publishStarted.await()
+                assertTrue(AppContainer.switchToCommunity("community-a"))
+                assertTrue(AppContainer.switchToCommunity("community-b"))
+                val graphB = EngineWiring.current()!!
+                graphB.updateRecipientReadiness(RecipientReadiness.Unavailable("community B readiness sentinel"))
+                val graphBReadiness = graphB.recipientSnapshot()
+                releasePublish.complete(true)
+
+                assertTrue(rotation.await())
+                assertEquals(
+                    anchorA.copy(
+                        config =
+                            anchorA.config.copy(
+                                baseUrl = "https://rotated-a.example.test",
+                                username = "rotated-a",
+                                appPassword = "secret-a",
+                            ),
+                    ),
+                    storedByCommunity["community-a"],
+                )
+                assertEquals(anchorB, storedByCommunity["community-b"])
+                assertEquals(listOf("community-a"), memberReads)
+                assertEquals(listOf("community-a"), publishedOwners)
+                assertEquals(listOf("community-b", "community-a", "community-b"), selectedOwners)
+                assertEquals("community-b", AppContainer.activeCommunityId)
+                assertSame(graphB, EngineWiring.current())
+                assertEquals(anchorB.chatId, graphB.chatId)
+                assertEquals(anchorB.communityName, graphB.communityName)
+                assertEquals(anchorB.config, graphB.config)
+                assertEquals(graphBReadiness, graphB.recipientSnapshot())
+            } finally {
+                AppContainer.clearCredentialRotationTestSeam()
+                EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
+                serverB.shutdown()
+            }
+        }
+
+    @Test
+    fun host_rotation_aborts_after_restore_replaces_captured_account_during_network_read() =
+        runTest {
+            val anchor = StoredConnection(SyncTestSupport.config(server), chatId, "Community A")
+            val durable = mutableMapOf("community-a" to anchor)
+            val deps = JvmDeps(stored = anchor, activeCommunity = "community-a")
+            EngineWiring.initialize(deps)
+            val readStarted = CompletableDeferred<Unit>()
+            val releaseDirectory = CompletableDeferred<List<DirectoryEntry>>()
+            val peer = AppTestSupport.newIdentity()
+            var saveAttempts = 0
+            AppContainer.configureCredentialRotationTestSeam(
+                "community-a",
+                AppContainer.CredentialRotationTestSeam(
+                    loadStored = durable::get,
+                    loadChatKey = { chatKey },
+                    readDirectory = { _, _ ->
+                        readStarted.complete(Unit)
+                        releaseDirectory.await()
+                    },
+                    writeCredential = { _, _, _, blob -> blob.isNotEmpty() },
+                    saveStored = { owner, stored ->
+                        saveAttempts++
+                        durable[owner] = stored
+                        true
+                    },
+                ),
+            )
+            try {
+                val rotation =
+                    async {
+                        AppContainer.rotateCredential(
+                            newUrl = "https://stale-rotation.example.test",
+                            newUsername = "stale-rotation",
+                            newPassword = "stale-secret",
+                            excludeMemberSignPub = "excluded-member",
+                        )
+                    }
+                readStarted.await()
+                val restored = anchor.copy(config = anchor.config.copy(username = "restored-account"), chatId = "restored-anchor")
+                AccountMutationBarrier.process.withExclusive {
+                    AccountMutationBarrier.process.withAccountReplacement {
+                        durable["community-a"] = restored
+                        EngineWiring.reconfigure(
+                            config = restored.config,
+                            chatId = restored.chatId,
+                            communityName = restored.communityName,
+                            chatKey = chatKey,
+                            identity = identity,
+                            communityId = "community-a",
+                        )
+                    }
+                }
+                val restoredGraph = EngineWiring.current()!!
+                releaseDirectory.complete(listOf(DirectoryEntry("Peer", peer.copySignPublic(), peer.copyBoxPublic())))
+
+                assertFalse(rotation.await())
+                assertEquals(0, saveAttempts)
+                assertEquals(restored, durable["community-a"])
+                assertSame(restoredGraph, EngineWiring.current())
+                assertEquals(restored.chatId, EngineWiring.current()?.chatId)
+                assertEquals(restored.config, EngineWiring.current()?.config)
+            } finally {
+                AppContainer.clearCredentialRotationTestSeam()
+                EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
+            }
+        }
+
+    @Test
+    fun non_host_rotation_after_switch_to_b_updates_only_captured_community_a() =
+        runTest {
+            val anchorA = StoredConnection(SyncTestSupport.config(server), chatId, "Community A")
+            val serverB =
+                MockWebServer().apply {
+                    dispatcher = FakeDisk()
+                    start()
+                }
+            try {
+                val anchorB = StoredConnection(SyncTestSupport.config(serverB), "anchor-b", "Community B")
+                val host = AppTestSupport.newIdentity()
+                val rotated = anchorA.config.copy(username = "rotated-a", appPassword = "secret-a")
+                val deps =
+                    JvmDeps(
+                        stored = anchorA,
+                        activeCommunity = "community-a",
+                        joinedCommunities = listOf("community-a", "community-b"),
+                        storedByCommunity = mapOf("community-b" to anchorB),
+                    )
+                deps.credentialBlob =
+                    CredentialRotation.sealForMember(
+                        rotated, identity.copyBoxPublic(), AppTestSupport.identityCrypto(), host,
+                    )
+                EngineWiring.initialize(deps)
+                val capturedRunnerA = SyncRunner.current()
+                val readStarted = CompletableDeferred<Unit>()
+                val releaseRead = CompletableDeferred<ByteArray?>()
+                deps.credentialReadStarted = readStarted
+                deps.releaseCredentialRead = releaseRead
+
+                val rotation = async { capturedRunnerA.runOnce() }
+                readStarted.await()
+                EngineWiring.reconfigure(
+                    anchorB.config,
+                    anchorB.chatId,
+                    anchorB.communityName,
+                    chatKey,
+                    identity,
+                    communityId = "community-b",
+                )
+                val graphB = EngineWiring.current()!!
+                val bSnapshot = graphB.recipientSnapshot()
+                releaseRead.complete(deps.credentialBlob)
+                rotation.await()
+
+                assertEquals(anchorA.copy(config = rotated), deps.savedRotatedConnections["community-a"])
+                assertEquals(anchorB, deps.loadStoredConnection("community-b"))
+                assertNull(deps.savedRotatedConnections["community-b"])
+                assertSame(graphB, EngineWiring.current())
+                assertEquals("community-b", EngineWiring.current()?.communityId)
+                assertEquals(anchorB.chatId, EngineWiring.current()?.chatId)
+                assertEquals(anchorB.config, EngineWiring.current()?.config)
+                assertEquals(bSnapshot, EngineWiring.current()?.recipientSnapshot())
+            } finally {
+                EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
+                serverB.shutdown()
+            }
         }
 
     @Test
@@ -817,7 +1049,10 @@ class EngineWiringTest {
         var scheduled = false
         var onSchedule: (() -> Unit)? = null
         var credentialBlob: ByteArray? = null
+        var credentialReadStarted: CompletableDeferred<Unit>? = null
+        var releaseCredentialRead: CompletableDeferred<ByteArray?>? = null
         var savedRotatedConnection: StoredConnection? = null
+        val savedRotatedConnections = mutableMapOf<String, StoredConnection>()
         var loadedCommunity: String? = null
         var discoveryComplete = false
         var newChatSeenAfterDiscovery = false
@@ -833,7 +1068,9 @@ class EngineWiringTest {
 
         override fun loadStoredConnection(communityId: String): StoredConnection? {
             loadedCommunity = communityId
-            return savedRotatedConnection?.takeIf { communityId == activeCommunity } ?: storedByCommunity[communityId] ?: stored
+            return savedRotatedConnections[communityId]
+                ?: storedByCommunity[communityId]
+                ?: stored?.takeIf { communityId == activeCommunity }
         }
 
         override fun loadChatKey(chatId: String): ChatKey = chatKey
@@ -893,14 +1130,19 @@ class EngineWiringTest {
         override suspend fun readRawFile(
             config: ConnectionConfig,
             path: String,
-        ): ByteArray? = credentialBlob // null unless a test exercises credential rotation
+        ): ByteArray? {
+            credentialReadStarted?.complete(Unit)
+            return releaseCredentialRead?.await() ?: credentialBlob
+        }
 
         override fun saveRotatedConfig(
             newConfig: ConnectionConfig,
             communityId: String,
         ): Boolean {
             val anchor = loadStoredConnection(communityId) ?: return false
-            savedRotatedConnection = ConnectionConfigStore.rotatedConnection(anchor, newConfig)
+            val rotated = ConnectionConfigStore.rotatedConnection(anchor, newConfig)
+            savedRotatedConnections[communityId] = rotated
+            if (communityId == activeCommunity) savedRotatedConnection = rotated
             return true
         }
     }

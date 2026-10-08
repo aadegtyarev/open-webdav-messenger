@@ -132,8 +132,12 @@ creation intentionally activates a different community, it captures and validate
 the new selected graph/revision; an unrelated intervening context change aborts
 creation/opening. Cancellation of a public-group publication propagates instead
 of being reported as success.
-Credential rotation changes the stored connection credentials while retaining
-the persisted community anchor chat ID and name, even while a group or DM is open.
+Credential rotation captures its owning community, stored anchor/key, and runtime
+context before remote reads/writes. The local update retains that captured anchor
+and is committed only to that owner after account-generation and durable-state
+validation; changing the selected community cannot redirect the write. Runtime
+reinstallation occurs only while the captured owner remains selected and its
+runtime key is current. The active group/DM remains intact.
 
 **Accessible retry control:** Failed-message retry is a labelled button with a
 minimum 48×48dp target. It invokes the existing retry operation for the original
