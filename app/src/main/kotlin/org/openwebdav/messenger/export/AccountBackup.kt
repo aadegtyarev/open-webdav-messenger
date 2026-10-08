@@ -24,4 +24,5 @@ data class ChatBackup(
     val id: String,
     val name: String,
     val kind: String,
+    val access: String = "unknown",
 )

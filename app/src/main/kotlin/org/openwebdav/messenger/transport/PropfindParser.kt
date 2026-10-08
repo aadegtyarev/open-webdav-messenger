@@ -58,6 +58,18 @@ internal object PropfindParser {
         return responses.mapNotNull { it as? Element }.map { toEntry(it, basePath) }
     }
 
+    /** Strict sibling for security-sensitive bounded listings: malformed XML is not an empty roster. */
+    fun parseStrict(
+        xml: ByteArray,
+        basePath: String,
+    ): List<InboxEntry>? {
+        val doc = newDocument(xml) ?: return null
+        if (localName(doc.documentElement) != "multistatus") return null
+        val responses = doc.getElementsByTagNameLocal("response").mapNotNull { it as? Element }
+        if (responses.isEmpty()) return null
+        return responses.map { toEntry(it, basePath) }
+    }
+
     private fun toEntry(
         response: Element,
         basePath: String,

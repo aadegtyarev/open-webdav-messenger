@@ -3,6 +3,7 @@ package org.openwebdav.messenger.invite
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.openwebdav.messenger.identity.IdentityTestSupport
 import java.io.ByteArrayOutputStream
 import java.util.Base64
 import java.util.zip.DeflaterOutputStream
@@ -15,7 +16,7 @@ import java.util.zip.DeflaterOutputStream
  * is a typed [InviteCodec.Result.Rejected], never an OOM. All NEW; no existing test touched.
  */
 class InviteCodecBombTest {
-    private val codec = InviteCodec()
+    private val codec = InviteCodec(IdentityTestSupport.identityCrypto())
 
     /**
      * A highly-compressible payload that inflates to well past the cap (a classic zip-bomb shape: a long run

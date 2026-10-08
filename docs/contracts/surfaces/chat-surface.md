@@ -44,7 +44,10 @@ protocol version marker.
 **Reject-don't-guess (2-reject):** A wrong prefix (`http://`, a random QR code,
 noise), bad base64url, corrupt gzip, or any missing/invalid field produces a
 typed `Result.Rejected` — never a partial config, never a crash, never an
-exception propagated to the UI layer.
+exception propagated to the UI layer. New tokens carry signed strict
+`access=public|private`; missing, invalid, or tampered access (and legacy v1)
+is rejected before account mutation with localized guidance to request a fresh
+invite. Access selects roster behavior only and grants no community authority.
 
 **Bearer token, not encrypted:** The token carries plain (not encrypted) fields.
 Whoever holds it can join — this is by design. The on-screen warning at token
@@ -116,6 +119,19 @@ closed. Restore/replacement and a mismatched key or identity invalidate cached
 data; stale or superseded refresh work cannot write or apply. This cache does not
 change the Ready-snapshot requirement for new sends or existing outbox retry
 behavior.
+
+**Private membership (3-private-membership):** A private group roster is built
+only from remotely listed, bounded, chat-key-authenticated and identity-signed
+claims scoped to the exact chat ID. An accessible exact directory identity pair
+strengthens display-name provenance; directory absence or inaccessibility does
+not reject a valid chat-only claim. Conflicting identities fail closed. Private
+opens never substitute the full community directory for this roster. Only verified
+claims join the Ready recipient snapshot; attempts to publish, invites, history,
+and local registration never infer invitees. The local self stays present. A
+Keystore-encrypted, bounded cache is fenced by account/chat/key/identity/kind and
+invalidated on replacement or restore. Pending self claims reuse the exact
+ciphertext across retry; UI distinguishes not uploaded from uploaded and says
+other members may not see the user yet. Private-only names are explicitly labelled.
 
 **Verified participants (3-participants):** A separately accessible, labelled People
 icon in the top bar (minimum 48×48dp target) opens a read-only list for the exact

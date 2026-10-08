@@ -27,6 +27,35 @@ class AccountBackupCodecTest {
     }
 
     @Test
+    fun version_one_chat_access_decodes_to_unknown_instead_of_inferred_privilege() {
+        val bytes =
+            java.io.ByteArrayOutputStream().also { stream ->
+                java.io.DataOutputStream(stream).use { out ->
+                    out.writeInt(1)
+                    out.writeUTF("community-a")
+                    out.writeInt(1)
+                    out.writeUTF("community-a")
+                    out.writeUTF("A")
+                    out.writeUTF("chat-a")
+                    out.writeUTF("https://a.example")
+                    out.writeUTF("user")
+                    out.writeUTF("password")
+                    out.writeUTF("root")
+                    out.writeBoolean(false)
+                    out.writeBoolean(false)
+                    out.writeInt(60)
+                    out.writeInt(14)
+                    out.writeInt(1)
+                    out.writeUTF("chat-a")
+                    out.writeUTF("General")
+                    out.writeUTF("general")
+                }
+            }.toByteArray()
+
+        assertEquals("unknown", AccountBackupCodec.decode(bytes)?.communities?.single()?.chats?.single()?.access)
+    }
+
+    @Test
     fun payload_encoder_and_decoder_share_exact_size_limit() {
         val empty = ExportPayload(null, null, emptyMap(), "")
         val base = ExportPayload.toJson(empty).length

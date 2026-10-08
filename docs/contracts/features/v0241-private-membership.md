@@ -1,6 +1,6 @@
 # v0.24.1 private membership protocol
 
-> Status: **Approved** — 2026-10-08
+> Status: **Implementation complete; review and device validation pending** — 2026-10-08
 
 ## Goal
 

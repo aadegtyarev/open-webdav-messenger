@@ -20,7 +20,9 @@ internal class ChatRegistry(private val context: Context) {
         val json = JSONArray(f.readText())
         return (0 until json.length()).map { i ->
             val o = json.getJSONObject(i)
-            Entry(o.getString("id"), o.getString("name"), o.getString("kind"))
+            val access = o.optString("access", ACCESS_UNKNOWN)
+            require(access in ACCESS_VALUES) { "Invalid chat access metadata" }
+            Entry(o.getString("id"), o.getString("name"), o.getString("kind"), access)
         }
     }
 
@@ -57,7 +59,9 @@ internal class ChatRegistry(private val context: Context) {
                 JSONObject().apply {
                     put("id", e.id)
                     put("name", e.name)
+                    require(e.access in ACCESS_VALUES) { "Invalid chat access metadata" }
                     put("kind", e.kind)
+                    put("access", e.access)
                 },
             )
         }
@@ -70,5 +74,13 @@ internal class ChatRegistry(private val context: Context) {
         val id: String,
         val name: String,
         val kind: String = "general",
+        val access: String = ACCESS_UNKNOWN,
     )
+
+    private companion object {
+        const val ACCESS_PUBLIC = "public"
+        const val ACCESS_PRIVATE = "private"
+        const val ACCESS_UNKNOWN = "unknown"
+        val ACCESS_VALUES = setOf(ACCESS_PUBLIC, ACCESS_PRIVATE, ACCESS_UNKNOWN)
+    }
 }

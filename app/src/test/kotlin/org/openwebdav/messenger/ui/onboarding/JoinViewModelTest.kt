@@ -40,7 +40,8 @@ class JoinViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun service(deps: RecordingOnboardingDeps) = OnboardingService(deps, ioDispatcher = Dispatchers.Unconfined)
+    private fun service(deps: RecordingOnboardingDeps) =
+        OnboardingService(deps, AppTestSupport.inviteCodec(), ioDispatcher = Dispatchers.Unconfined)
 
     /**
      * camera_denied_falls_back_to_paste — with the camera unavailable/denied (the scan path never fires), a

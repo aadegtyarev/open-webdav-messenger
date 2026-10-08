@@ -47,7 +47,7 @@ class JoinViewModelFailureTest {
         runTest(mainDispatcher) {
             val key = AppTestSupport.keySources().newRandomKey()
             val invite = AppTestSupport.inviteString(AppTestSupport.httpsConfig(), "fail-chat-0000000000000001", key, "Will Fail")
-            val service = OnboardingService(ThrowingDeps(), ioDispatcher = Dispatchers.Unconfined)
+            val service = OnboardingService(ThrowingDeps(), AppTestSupport.inviteCodec(), ioDispatcher = Dispatchers.Unconfined)
             val vm = JoinViewModel(service)
 
             vm.onPasted(invite)
@@ -71,6 +71,7 @@ class JoinViewModelFailureTest {
             config: ConnectionConfig,
             chatId: String,
             communityName: String,
+            access: String,
         ) = error("not reached")
 
         override suspend fun ensureIdentity(): Identity = throw IllegalStateException("disk unreachable / Keystore failure")

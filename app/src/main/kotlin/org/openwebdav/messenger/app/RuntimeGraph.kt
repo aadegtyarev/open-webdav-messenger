@@ -6,6 +6,7 @@ import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.sync.ChatSubscription
 import org.openwebdav.messenger.sync.SyncEngine
@@ -45,7 +46,15 @@ internal class RuntimeGraph(
     roster: List<String> = listOf(senderIdentifier),
     val communityId: String = "default",
     val communityRuntimeKey: String = UUID.randomUUID().toString(),
-    initialRecipientReadiness: RecipientReadiness = RecipientReadiness.Ready(roster),
+    var privateMembershipChat: Boolean = false,
+    initialRecipientReadiness: RecipientReadiness =
+        if (privateMembershipChat) {
+            RecipientReadiness.Loading
+        } else {
+            RecipientReadiness.Ready(
+                roster,
+            )
+        },
 ) {
     private val recipientRoster =
         VerifiedRecipientRoster(
@@ -64,11 +73,35 @@ internal class RuntimeGraph(
         recipientRoster.update(readiness.withLocalSelf(identity.copySignPublic()))
     }
 
-    private fun RecipientReadiness.withLocalSelf(signingPublicKey: ByteArray): RecipientReadiness =
-        when (this) {
-            is RecipientReadiness.Ready -> copy(participants = withSelfParticipant(participants, signingPublicKey))
+    private fun RecipientReadiness.withLocalSelf(signingPublicKey: ByteArray): RecipientReadiness {
+        val provenance =
+            if (privateMembershipChat) {
+                ParticipantIdentityProvenance.PRIVATE_CHAT_ONLY
+            } else {
+                ParticipantIdentityProvenance.COMMUNITY_DIRECTORY
+            }
+        return when (this) {
+            is RecipientReadiness.Ready ->
+                copy(participants = withSelfParticipant(participants, signingPublicKey, provenance))
             RecipientReadiness.Loading, is RecipientReadiness.Unavailable -> this
         }
+    }
+
+    private val _privateClaimStatus =
+        MutableStateFlow(
+            if (privateMembershipChat) PrivateClaimPublicationStatus.PENDING else PrivateClaimPublicationStatus.NOT_PRIVATE,
+        )
+    val privateClaimStatus: StateFlow<PrivateClaimPublicationStatus> = _privateClaimStatus
+
+    fun enablePrivateMembership() {
+        privateMembershipChat = true
+        _privateClaimStatus.value = PrivateClaimPublicationStatus.PENDING
+        updateRecipientReadiness(recipientSnapshot())
+    }
+
+    fun updatePrivateClaimStatus(status: PrivateClaimPublicationStatus) {
+        _privateClaimStatus.value = if (privateMembershipChat) status else PrivateClaimPublicationStatus.NOT_PRIVATE
+    }
 
     /** Signing-pubkey-hex → display name (from directory). Updated asynchronously. */
     private val _memberNames = MutableStateFlow<Map<String, String>>(emptyMap())

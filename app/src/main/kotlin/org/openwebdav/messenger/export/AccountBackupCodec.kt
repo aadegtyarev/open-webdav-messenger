@@ -35,6 +35,8 @@ internal object AccountBackupCodec {
                         out.writeUTF(chat.id)
                         out.writeUTF(chat.name)
                         out.writeUTF(chat.kind)
+                        require(chat.access in ACCESS_VALUES)
+                        out.writeUTF(chat.access)
                         if (bytes.size() > MAX_BYTES) throw PayloadTooLargeException()
                     }
                     if (bytes.size() > MAX_BYTES) throw PayloadTooLargeException()
@@ -50,7 +52,7 @@ internal object AccountBackupCodec {
         runCatching {
             require(bytes.size <= MAX_BYTES)
             DataInputStream(ByteArrayInputStream(bytes)).use { input ->
-                require(input.readInt() == VERSION)
+                val version = input.readInt().also { require(it in LEGACY_VERSION..VERSION) }
                 val activeId = input.readUTF()
                 val count = input.readInt().also { require(it in 1..MAX_COMMUNITIES) }
                 val communities =
@@ -66,7 +68,12 @@ internal object AccountBackupCodec {
                         val chatCount = input.readInt().also { require(it in 1..MAX_CHATS) }
                         val chats =
                             List(chatCount) {
-                                ChatBackup(input.readUTF(), input.readUTF(), input.readUTF())
+                                val chatId = input.readUTF()
+                                val chatName = input.readUTF()
+                                val kind = input.readUTF()
+                                val access = if (version >= ACCESS_VERSION) input.readUTF() else legacyAccess()
+                                require(access in ACCESS_VALUES)
+                                ChatBackup(chatId, chatName, kind, access)
                             }
                         CommunityBackup(id, name, anchor, config, chats, communityKey, isHost, pollFloor, retentionDays)
                     }
@@ -75,7 +82,13 @@ internal object AccountBackupCodec {
             }
         }.getOrNull()
 
-    private const val VERSION = 1
+    private const val VERSION = 2
+    private const val LEGACY_VERSION = 1
+    private const val ACCESS_VERSION = 2
+    private val ACCESS_VALUES = setOf("public", "private", "unknown")
+
+    private fun legacyAccess(): String = "unknown"
+
     private const val MAX_COMMUNITIES = 100
     private const val MAX_CHATS = 1000
     private const val MAX_BYTES = 1_000_000

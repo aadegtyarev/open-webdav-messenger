@@ -73,6 +73,7 @@ class CreateCommunityViewModelFailureTest {
             config: ConnectionConfig,
             chatId: String,
             communityName: String,
+            access: String,
         ) = error("not reached")
 
         override suspend fun ensureIdentity(): Identity = throw IllegalStateException("Keystore / transport failure")

@@ -32,7 +32,7 @@ import java.security.MessageDigest
  */
 internal class OnboardingService(
     private val deps: Deps,
-    private val codec: InviteCodec = InviteCodec(),
+    private val codec: InviteCodec? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /**
@@ -72,7 +72,15 @@ internal class OnboardingService(
                 val identity = deps.ensureIdentity()
                 val chatId = deps.newChatId()
                 val chatKey = deps.keySources().newRandomKey()
-                persistAndReconfigure(config, chatId, communityName.trim(), chatKey, identity, isHost = true)
+                persistAndReconfigure(
+                    config,
+                    chatId,
+                    communityName.trim(),
+                    chatKey,
+                    identity,
+                    org.openwebdav.messenger.chatdirectory.ChatAccess.PUBLIC,
+                    isHost = true,
+                )
                 CreateResult.Created(chatId, communityName.trim(), fullRoot)
             }
         }
@@ -86,8 +94,9 @@ internal class OnboardingService(
     suspend fun joinFromInvite(inviteString: String): JoinResult =
         AccountMutationBarrier.process.withExclusive {
             withContext(ioDispatcher) {
-                when (val decoded = codec.decodeBlocking(inviteString)) {
+                when (val decoded = codec?.decodeBlocking(inviteString) ?: return@withContext JoinResult.Invalid) {
                     is InviteCodec.Result.Rejected -> JoinResult.Invalid
+                    InviteCodec.Result.Legacy -> JoinResult.LegacyInvite
                     is InviteCodec.Result.Decoded -> joinFromToken(decoded.token)
                 }
             }
@@ -105,8 +114,13 @@ internal class OnboardingService(
         if (!isHttps(config.baseUrl)) return JoinResult.Invalid
         val identity = deps.ensureIdentity()
         val rawKey = token.chatKey
-        val chatKey = deps.keySources().importRawKey(rawKey)
-        persistAndReconfigure(config, token.chatId, token.communityName, chatKey, identity)
+        val chatKey =
+            try {
+                deps.keySources().importRawKey(rawKey)
+            } finally {
+                rawKey.fill(0)
+            }
+        persistAndReconfigure(config, token.chatId, token.communityName, chatKey, identity, token.access)
         return JoinResult.Joined(token.chatId, token.communityName)
     }
 
@@ -116,11 +130,14 @@ internal class OnboardingService(
         communityName: String,
         chatKey: ChatKey,
         identity: Identity,
+        access: org.openwebdav.messenger.chatdirectory.ChatAccess,
         isHost: Boolean = false,
     ) {
         AccountMutationBarrier.process.withAccountReplacement {
+            deps.invalidateChatState(chatId, identity)
             deps.chatKeyStore().store(chatId, chatKey)
-            deps.saveConfig(config, chatId, communityName)
+            if (access == org.openwebdav.messenger.chatdirectory.ChatAccess.PUBLIC) deps.storeCommunityKey(chatId, chatKey)
+            deps.saveConfig(config, chatId, communityName, access.name.lowercase())
             deps.reconfigure(config, chatId, communityName, chatKey, identity, isHost)
         }
     }
@@ -144,7 +161,18 @@ internal class OnboardingService(
             config: ConnectionConfig,
             chatId: String,
             communityName: String,
+            access: String,
         )
+
+        fun storeCommunityKey(
+            communityId: String,
+            key: ChatKey,
+        ) = Unit
+
+        fun invalidateChatState(
+            chatId: String,
+            identity: Identity,
+        ) = Unit
 
         suspend fun ensureIdentity(): Identity
 
@@ -205,6 +233,9 @@ internal class OnboardingService(
 
         /** The invite was not a valid `owdm1:` token (foreign QR / garbled / cleartext disk) — clean error. */
         data object Invalid : JoinResult
+
+        /** A v1 invite has no authenticated access discriminator; reject before any account mutation. */
+        data object LegacyInvite : JoinResult
     }
 
     private companion object {

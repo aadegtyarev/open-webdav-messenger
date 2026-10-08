@@ -68,6 +68,7 @@ import kotlinx.coroutines.launch
 import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.data.MessageEntity
+import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
 import org.openwebdav.messenger.ui.FeedViewModelFactory
 import org.openwebdav.messenger.ui.runtimeScopeKey
 
@@ -96,6 +97,7 @@ internal fun ChatFeedScreen(
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     val memberNamesError by viewModel.memberNamesError.collectAsStateWithLifecycle()
     val recipientReadiness by viewModel.recipientReadiness.collectAsStateWithLifecycle()
+    val privateClaimStatus by viewModel.privateClaimStatus.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
@@ -193,6 +195,19 @@ internal fun ChatFeedScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline,
                         )
+                        when (privateClaimStatus) {
+                            PrivateClaimPublicationStatus.NOT_PRIVATE -> Unit
+                            PrivateClaimPublicationStatus.PENDING ->
+                                Text(
+                                    stringResource(R.string.private_claim_pending),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            PrivateClaimPublicationStatus.UPLOADED ->
+                                Text(
+                                    stringResource(R.string.private_claim_uploaded),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                        }
                     }
                 },
                 navigationIcon = {

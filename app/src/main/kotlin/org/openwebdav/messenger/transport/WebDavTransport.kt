@@ -38,6 +38,34 @@ internal class WebDavTransport(
         }
     }
 
+    /** Bounded PROPFIND for attacker-writable collections; overflow fails closed before any GET. */
+    suspend fun listBounded(
+        path: String,
+        maxEntries: Int,
+        maxResponseBytes: Int,
+    ): WebDavResult<List<InboxEntry>> {
+        require(maxEntries > 0 && maxResponseBytes > 0)
+        gate(path)?.let { return it }
+        val selfName = path.trimEnd('/').substringAfterLast('/')
+        return executor.execute(requests.propfind(path)) { response ->
+            if (response.code != HTTP_MULTI_STATUS) return@execute httpError(response)
+            val bytes =
+                when (val body = readCapped(response, maxResponseBytes.toLong())) {
+                    is CappedRead.Bytes -> body.value
+                    else -> return@execute malformed("membership listing exceeds bounds")
+                }
+            val parsed =
+                PropfindParser.parseStrict(bytes, requests.url(path))
+                    ?: return@execute malformed("malformed membership listing")
+            val members = parsed.filter { it.name != selfName }
+            if (members.size > maxEntries) {
+                malformed("membership listing exceeds entry limit")
+            } else {
+                WebDavResult.Success(members)
+            }
+        }
+    }
+
     /**
      * GET a message file and verify the reader integrity check (§3): the recomputed
      * `content-hash` of the file bytes must match the suffix of [name]. On mismatch/truncation
@@ -104,6 +132,21 @@ internal class WebDavTransport(
         gate(path)?.let { return it }
         return executor.execute(requests.get(path)) { response ->
             mapContentAddressedRead(response, expectedHash)
+        }
+    }
+
+    /** Content-addressed GET with a collection-specific hard body bound. */
+    suspend fun readContentAddressedBounded(
+        path: String,
+        expectedHash: String,
+        maxFileBytes: Int,
+    ): WebDavResult<ReadResult> {
+        require(maxFileBytes > 0)
+        gate(path)?.let { return it }
+        return executor.execute(requests.get(path)) { response ->
+            mapVerifiedRead(response, maxFileBytes.toLong()) { bytes ->
+                MessageId.contentHash(bytes).take(expectedHash.length) == expectedHash
+            }
         }
     }
 
@@ -222,6 +265,7 @@ internal class WebDavTransport(
      */
     private inline fun mapVerifiedRead(
         response: Response,
+        maxBytes: Long = MAX_MESSAGE_FILE_BYTES,
         hashOk: (ByteArray) -> Boolean,
     ): WebDavResult<ReadResult> {
         // A 404 GET is a benign race (a concurrent processor deleted the file, or eventual-
@@ -230,7 +274,7 @@ internal class WebDavTransport(
         if (response.code == HTTP_NOT_FOUND) return WebDavResult.Success(ReadResult.NotReady)
         if (!response.isSuccessful) return httpError(response)
         val bytes =
-            when (val read = readCapped(response)) {
+            when (val read = readCapped(response, maxBytes)) {
                 is CappedRead.Oversize -> return WebDavResult.Success(ReadResult.NotReady)
                 is CappedRead.Empty -> return WebDavResult.Success(ReadResult.NotReady)
                 is CappedRead.Bytes -> read.value
@@ -251,14 +295,15 @@ internal class WebDavTransport(
      * the cap (review finding 1). Oversize is treated as not-ready (skip), never surfaced as a
      * valid message.
      */
-    private fun readCapped(response: Response): CappedRead {
+    private fun readCapped(
+        response: Response,
+        maxBytes: Long = MAX_MESSAGE_FILE_BYTES,
+    ): CappedRead {
         val source = response.body?.source() ?: return CappedRead.Empty
-        // request() pulls from the network into the buffer up to the requested byte count; if the
-        // body has more than the cap, the buffer holds cap+1 here and we reject without buffering
-        // the (potentially multi-GB) remainder.
-        val limit = MAX_MESSAGE_FILE_BYTES + 1
+        // request() reads only cap+1 bytes; a lying server cannot make this unbounded.
+        val limit = maxBytes + 1
         source.request(limit)
-        if (source.buffer.size > MAX_MESSAGE_FILE_BYTES) return CappedRead.Oversize
+        if (source.buffer.size > maxBytes) return CappedRead.Oversize
         val bytes = source.readByteArray()
         return if (bytes.isEmpty()) CappedRead.Empty else CappedRead.Bytes(bytes)
     }

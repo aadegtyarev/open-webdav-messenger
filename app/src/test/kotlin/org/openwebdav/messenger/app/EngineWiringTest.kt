@@ -1,5 +1,8 @@
 package org.openwebdav.messenger.app
 
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +108,10 @@ class EngineWiringTest {
 
     @Before
     fun setUp() {
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            RuntimeEnvironment.getApplication(),
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build(),
+        )
         server = MockWebServer()
         // An empty in-memory disk: the real poll cycle reads an empty change index → clean, newCount 0.
         // Without a dispatcher MockWebServer blocks on the PROPFIND, hanging the real runner's runOnce.

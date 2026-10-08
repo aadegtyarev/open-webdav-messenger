@@ -39,6 +39,7 @@ internal fun ParticipantRow(
     name: String,
     fingerprint: String,
     isSelf: Boolean,
+    isPrivateChatOnly: Boolean = false,
 ) {
     val hasVerifiedName = name.isNotBlank()
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
@@ -47,6 +48,9 @@ internal fun ParticipantRow(
                 ?: stringResource(if (isSelf) R.string.participants_you else R.string.participants_unknown_name),
             style = MaterialTheme.typography.titleMedium,
         )
+        if (isPrivateChatOnly) {
+            Text(stringResource(R.string.participants_private_chat_only), style = MaterialTheme.typography.bodySmall)
+        }
         if (isSelf && hasVerifiedName) {
             Text(
                 stringResource(R.string.participants_you),

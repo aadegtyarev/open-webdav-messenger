@@ -15,6 +15,7 @@ import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
 import org.openwebdav.messenger.data.MessageEntity
+import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
 import org.openwebdav.messenger.transport.TransportFactory
 
 /**
@@ -35,6 +36,7 @@ internal class ChatFeedViewModel(
 ) : ViewModel() {
     val communityName: String = graph.communityName
     val recipientReadiness = graph.recipientReadiness
+    val privateClaimStatus: StateFlow<PrivateClaimPublicationStatus> = graph.privateClaimStatus
 
     /** Error from the last member-name load — observed from the shared RuntimeGraph. */
     val memberNamesError: StateFlow<String?> = graph.memberNamesError
