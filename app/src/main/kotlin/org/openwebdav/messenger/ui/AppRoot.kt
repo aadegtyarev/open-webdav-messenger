@@ -83,12 +83,12 @@ internal fun AppRoot() {
 
 /** The post-readiness navigation graph — the start destination is resolved from the warmed-up graph. */
 @Composable
-private fun AppNav() {
+internal fun AppNav(initialScreen: Screen? = null) {
     val startAlreadyJoined = remember { AppContainer.runtimeGraph() != null }
     val hasCommunities = remember { AppContainer.communities().isNotEmpty() }
     var screen: Screen by rememberSaveable(stateSaver = ScreenSaver) {
         mutableStateOf(
-            when {
+            initialScreen ?: when {
                 startAlreadyJoined -> Screen.CommunityList
                 hasCommunities -> Screen.CommunityList
                 else -> Screen.Start

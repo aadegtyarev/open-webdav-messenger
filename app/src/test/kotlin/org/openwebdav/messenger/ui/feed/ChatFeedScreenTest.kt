@@ -370,7 +370,7 @@ class ChatFeedScreenTest {
                 updateRecipientReadiness(
                     RecipientReadiness.Ready(
                         listOf(senderIdentifier, "peer"),
-                        listOf(VerifiedParticipant("Alex", "a1b2c3d4e5", false)),
+                        listOf(VerifiedParticipant("Alex", "a1b2c3d4e5" + "0".repeat(54), false)),
                     ),
                 )
             }
@@ -382,6 +382,22 @@ class ChatFeedScreenTest {
         composeRule.onNodeWithText("Remove").assertDoesNotExist()
         composeRule.onNodeWithText("Ban").assertDoesNotExist()
         composeRule.onNodeWithText("Change role").assertDoesNotExist()
+    }
+
+    @Test
+    fun participants_screen_expands_colliding_fingerprint_prefixes_without_duplicate_row_keys() {
+        val first = "a".repeat(10) + "1" + "0".repeat(53)
+        val second = "a".repeat(10) + "2" + "0".repeat(53)
+        val graph = graph()
+        graph.updateRecipientReadiness(
+            RecipientReadiness.Ready(
+                listOf(graph.senderIdentifier, "peer-1", "peer-2"),
+                listOf(VerifiedParticipant("Alex", first, false), VerifiedParticipant("Alex", second, false)),
+            ),
+        )
+        composeRule.setContent { ParticipantsScreen(graph, onBack = {}) }
+        composeRule.onNodeWithText("Identity · ${first.take(11)}").assertIsDisplayed()
+        composeRule.onNodeWithText("Identity · ${second.take(11)}").assertIsDisplayed()
     }
 
     @Test

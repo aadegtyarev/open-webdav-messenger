@@ -124,6 +124,7 @@ internal object AppContainer {
         val onRosterEnrichmentCompleted: (() -> Unit)? = null,
         val cachePersistence: VerifiedRosterCachePersistence? = null,
         val chatKind: ((String, String) -> String?)? = null,
+        val provisionDm: ((Identity, DirectoryEntry, String) -> Boolean)? = null,
         val onGeneralRosterCompleted: (() -> Unit)? = null,
         val beforeGeneralRosterPreparation: (() -> Unit)? = null,
     )
@@ -927,14 +928,18 @@ internal object AppContainer {
 
         // Re-provisioning may replace a chat key, so invalidate before the key-store mutation.
         rosterCache.invalidate(graph.communityId, chatId)
-        val provisioner =
-            RemoteChatProvisioner(
-                identityCrypto = identityFactory.identityCrypto(),
-                chatKeyStore = crypto.chatKeyStore(requireContext()),
-            )
-        when (provisioner.provision(identity, peer, chatId)) {
-            is org.openwebdav.messenger.directory.ProvisionOutcome.Failed -> return null
-            is org.openwebdav.messenger.directory.ProvisionOutcome.Provisioned -> { /* ok */ }
+        val testProvisioned = chatOpenTestSeam?.provisionDm?.invoke(identity, peer, chatId)
+        if (testProvisioned == false) return null
+        if (testProvisioned == null) {
+            val provisioner =
+                RemoteChatProvisioner(
+                    identityCrypto = identityFactory.identityCrypto(),
+                    chatKeyStore = crypto.chatKeyStore(requireContext()),
+                )
+            when (provisioner.provision(identity, peer, chatId)) {
+                is org.openwebdav.messenger.directory.ProvisionOutcome.Failed -> return null
+                is org.openwebdav.messenger.directory.ProvisionOutcome.Provisioned -> { /* ok */ }
+            }
         }
 
         // Register the DM chat in the registry for this community.
@@ -947,14 +952,20 @@ internal object AppContainer {
         // Switch the active send path to the DM chat.
         if (!switchToChat(graph, chatId, peer.displayName, peerId)) return null
         val dmGraph = runtimeGraph() ?: return null
-        val stored = configStore.loadStored(graph.communityId) ?: return chatId
-        val communityKey = loadRosterCommunityKey(stored) ?: return chatId
         val own = dmGraph.identity.publicIdentity()
         val verifiedEntries =
             listOf(
                 DirectoryEntry(UserSettings.displayName, own.copySignPub(), own.copyBoxPub()),
                 peer,
             )
+        EngineWiring.updateGraphIfCurrent(
+            expectedGraph = dmGraph,
+            isContextCurrent = { runtimeGraph() === dmGraph },
+            update = { applyRoster(dmGraph, verifiedEntries) },
+        )
+        val seam = chatOpenTestSeam
+        val stored = if (seam != null) seam.loadStored(graph.communityId) else configStore.loadStored(graph.communityId)
+        val communityKey = stored?.let(::loadRosterCommunityKey) ?: return chatId
         val provenance =
             RosterCacheProvenance.digest(
                 graph.communityId,
@@ -981,7 +992,9 @@ internal object AppContainer {
         chatName: String,
         peerId: String,
     ): Boolean {
-        val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return false
+        val seam = chatOpenTestSeam
+        val chatKey = if (seam != null) seam.loadChatKey(chatId) else crypto.chatKeyStore(requireContext()).load(chatId)
+        chatKey ?: return false
         val roster = listOf(expectedGraph.senderIdentifier, peerId)
         val memberNames = mapOf(peerId to chatName)
         val revision = runtimeSelectionGuard.begin()

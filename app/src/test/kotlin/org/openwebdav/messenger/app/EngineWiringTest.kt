@@ -112,6 +112,7 @@ class EngineWiringTest {
 
     @After
     fun tearDown() {
+        AppContainer.clearChatOpenTestSeam()
         SyncRunner.install(SyncRunner { CycleOutcome(0, 0, backedOff = false) })
         server.shutdown()
         db.close()
@@ -421,6 +422,41 @@ class EngineWiringTest {
                 EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
                 serverB.shutdown()
             }
+        }
+
+    @Test
+    fun start_dm_publishes_verified_peer_projection_with_matching_recipients() =
+        runBlocking {
+            AppContainer.bind(RuntimeEnvironment.getApplication())
+            val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
+            EngineWiring.initialize(JvmDeps(stored = stored))
+            val persistence = CountingRosterPersistence()
+            AppContainer.configureChatOpenTestSeam(
+                "default",
+                AppContainer.ChatOpenTestSeam(
+                    loadChatKey = { chatKey },
+                    loadStored = { stored },
+                    readDirectory = { DirectoryReadResult(emptyList(), 0) },
+                    cachePersistence = persistence,
+                    provisionDm = { _, _, _ -> true },
+                ),
+            )
+            val peer = DirectoryEntry("Verified peer", ByteArray(32) { 17 }, ByteArray(32) { 18 })
+            val dmId = checkNotNull(AppContainer.startDm(peer))
+            val dmGraph = checkNotNull(EngineWiring.current())
+            assertEquals(dmId, dmGraph.chatId)
+            val ready = dmGraph.recipientSnapshot() as RecipientReadiness.Ready
+            val peerId = Hex.encode(peer.copySigningPublicKey())
+            assertEquals(setOf(dmGraph.senderIdentifier, peerId), ready.members.toSet())
+            assertEquals(2, ready.participants.size)
+            assertEquals(
+                setOf(
+                    participantDigest(dmGraph.identity.copySignPublic()),
+                    participantDigest(peer.copySigningPublicKey()),
+                ),
+                ready.participants.map { it.identityDigest }.toSet(),
+            )
+            assertTrue(ready.participants.single { it.isSelf }.identityDigest == participantDigest(dmGraph.identity.copySignPublic()))
         }
 
     @Test

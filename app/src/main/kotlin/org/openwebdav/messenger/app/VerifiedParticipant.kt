@@ -7,7 +7,7 @@ import java.security.MessageDigest
 /** Public, display-safe projection of a verified directory row; contains no box or secret key material. */
 internal data class VerifiedParticipant(
     val displayName: String,
-    val fingerprint: String,
+    val identityDigest: String,
     val isSelf: Boolean,
 )
 
@@ -21,7 +21,7 @@ internal fun verifiedParticipants(
             val signingKey = entry.copySigningPublicKey()
             VerifiedParticipant(
                 displayName = entry.displayName,
-                fingerprint = participantFingerprint(signingKey),
+                identityDigest = participantDigest(signingKey),
                 isSelf = Hex.encode(signingKey) == senderIdentifier,
             )
         }
@@ -29,12 +29,12 @@ internal fun verifiedParticipants(
     return participants +
         VerifiedParticipant(
             displayName = "",
-            fingerprint = participantFingerprint(senderSigningPublicKey),
+            identityDigest = participantDigest(senderSigningPublicKey),
             isSelf = true,
         )
 }
 
-/** A short, domain-separated digest of the verified public signing identity. */
+/** A full domain-separated digest of the verified public signing identity; UI renders only a short prefix. */
 internal fun withSelfParticipant(
     participants: List<VerifiedParticipant>,
     senderSigningPublicKey: ByteArray,
@@ -45,17 +45,16 @@ internal fun withSelfParticipant(
         participants +
             VerifiedParticipant(
                 displayName = "",
-                fingerprint = participantFingerprint(senderSigningPublicKey),
+                identityDigest = participantDigest(senderSigningPublicKey),
                 isSelf = true,
             )
     }
 
-internal fun participantFingerprint(signingPublicKey: ByteArray): String {
+internal fun participantDigest(signingPublicKey: ByteArray): String {
     val digest = MessageDigest.getInstance("SHA-256")
     digest.update(FINGERPRINT_DOMAIN)
     digest.update(signingPublicKey)
-    return Hex.encode(digest.digest()).take(FINGERPRINT_HEX_LENGTH)
+    return Hex.encode(digest.digest())
 }
 
 private val FINGERPRINT_DOMAIN = "OWDM participant signing identity v1\u0000".toByteArray(Charsets.UTF_8)
-private const val FINGERPRINT_HEX_LENGTH = 10

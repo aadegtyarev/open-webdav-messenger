@@ -59,8 +59,12 @@ internal fun ParticipantsScreen(
                         Text(stringResource(R.string.participants_empty), Modifier.padding(vertical = 24.dp))
                     } else {
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(rows, key = { it.fingerprint }) { row ->
-                                ParticipantRow(row.displayName, row.fingerprint, row.isSelf)
+                            items(rows, key = { it.stableKey }) { row ->
+                                ParticipantRow(
+                                    row.participant.displayName,
+                                    row.fingerprint,
+                                    row.participant.isSelf,
+                                )
                             }
                         }
                     }
