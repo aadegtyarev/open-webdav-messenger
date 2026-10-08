@@ -113,8 +113,11 @@ created group in that community. Group creation and chat opening retain one
 production request token issued at the Create/open tap. A delayed operation may
 mutate selection/runtime or install only while its token is current and its
 captured graph and selection revision remain valid; a later chat tap invalidates
-earlier work before mutation and again at install after suspension. Cancellation
-of a public-group publication propagates instead of being reported as success.
+earlier work before mutation and again at install after suspension. When group
+creation intentionally activates a different community, it captures and validates
+the new selected graph/revision; an unrelated intervening context change aborts
+creation/opening. Cancellation of a public-group publication propagates instead
+of being reported as success.
 Credential rotation changes the stored connection credentials while retaining
 the persisted community anchor chat ID and name, even while a group or DM is open.
 

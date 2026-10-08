@@ -33,13 +33,14 @@ Protocol changes; destructive reset; fabricating ownership across genuinely ambi
 - Retain community isolation; never guess between multiple plausible owners.
 - Chat-open tokens are issued at tap dispatch and shared across General/group production opening. Group creation receives its token at Create dispatch and retains it through publication/open; obsolete work must be rejected before selection/revision/runtime mutation and again at install after suspension.
 - Cancellation during public-group publication propagates; it must not be converted into successful creation.
+- Cross-community group creation validates against the graph/revision captured after its intentional, token-guarded activation; an unrelated intervening runtime must block the stale open.
 - A stale chat open may install only if its request token and captured runtime/selection are still valid; stale failure must not block later requests.
 
 ## Acceptance criteria
 
 - Legitimate recoverable local history is visible after repair without data reset, including databases already at v6; ambiguous history remains unassigned and hidden.
 - Opening a previously unopened group chat does not prevent opening General or another chat after delay/failure.
-- Regression tests exercise actual Room migration/repair, stale General/group/create request ordering at the production coordinator boundary, cancellation propagation, and navigation/runtime opening.
+- Regression tests exercise actual Room migration/repair, same- and cross-community creation using production runtime graphs, stale-request/intervening-runtime rejection, cancellation propagation, and navigation/runtime opening.
 - Changes agree with both linked surface contracts after required reconciliation.
 - v0.23.1 is delivered.
 

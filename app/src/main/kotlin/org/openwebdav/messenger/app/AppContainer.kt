@@ -175,29 +175,53 @@ internal object AppContainer {
         return createGroupInSelectedCommunity(
             communityId = communityId,
             activeCommunityId = currentCommunityId,
-            isRuntimeCurrent = {
-                chatOpenRequestCoordinator.isCurrent(requestToken) &&
-                    runtimeGraph()?.communityRuntimeKey == expectedRuntimeKey
-            },
+            isRuntimeCurrent = { runtimeGraph()?.communityRuntimeKey == expectedRuntimeKey },
+            isRequestCurrent = { chatOpenRequestCoordinator.isCurrent(requestToken) },
+            isSelectedContextCurrent = { context -> isCurrentGroupContext(context, requestToken) },
             activateCommunity = { selected ->
                 chatOpenRequestCoordinator.runIfCurrent(requestToken) {
                     switchToCommunityExclusive(selected)
                 }
             },
-            resolveContext = { selectedId ->
-                selectedCommunityGroupContext(
-                    communityId = selectedId,
-                    activeCommunityId = currentCommunityId,
-                    stored = configStore.loadStored(selectedId),
-                    graph = runtimeGraph(),
-                    selectionRevision = runtimeSelectionGuard.current(),
-                )
-            },
+            resolveContext = { selectedId -> resolveSelectedGroupContext(selectedId, requestToken) },
             create = { context -> createGroupChatForContext(name, access, context, requestToken) },
             open = { context, chatId ->
                 openGroupChatExclusive(chatId, name, context.communityId, context.selectionRevision, requestToken)
             },
         )
+    }
+
+    private fun resolveSelectedGroupContext(
+        communityId: String,
+        requestToken: ChatOpenRequestCoordinator.Token,
+    ): SelectedCommunityGroupContext? {
+        var selectedContext: SelectedCommunityGroupContext? = null
+        val captured =
+            chatOpenRequestCoordinator.runIfCurrent(requestToken) {
+                selectedContext =
+                    selectedCommunityGroupContext(
+                        communityId = communityId,
+                        activeCommunityId = currentCommunityId,
+                        stored = configStore.loadStored(communityId),
+                        graph = runtimeGraph(),
+                        selectionRevision = runtimeSelectionGuard.current(),
+                    )
+                selectedContext != null
+            }
+        return selectedContext.takeIf { captured }
+    }
+
+    private fun isCurrentGroupContext(
+        context: SelectedCommunityGroupContext,
+        requestToken: ChatOpenRequestCoordinator.Token,
+    ): Boolean {
+        if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return false
+        val graph = runtimeGraph() ?: return false
+        return currentCommunityId == context.communityId &&
+            runtimeSelectionGuard.isCurrent(context.selectionRevision) &&
+            graph === context.graph &&
+            graph.communityId == context.communityId &&
+            graph.communityRuntimeKey == context.graph.communityRuntimeKey
     }
 
     private suspend fun createGroupChatForContext(
@@ -211,6 +235,7 @@ internal object AppContainer {
         val stored = context.stored
         val inserted =
             chatOpenRequestCoordinator.runIfCurrent(requestToken) {
+                if (!isCurrentGroupContext(context, requestToken)) return@runIfCurrent false
                 val keySources = crypto.keySources()
                 val chatKey =
                     if (access == ChatAccess.PUBLIC) {
@@ -235,7 +260,7 @@ internal object AppContainer {
         if (!inserted) return null
         val chatId = createdChatId ?: return null
         if (access == ChatAccess.PUBLIC) {
-            if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return null
+            if (!isCurrentGroupContext(context, requestToken)) return null
             if (!publishPublicGroup(stored, context.graph, rawChatId ?: return null, name)) return null
         }
         return chatId

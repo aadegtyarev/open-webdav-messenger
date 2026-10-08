@@ -119,7 +119,8 @@ class SelectedCommunityGroupCreationTest {
                     createGroupInSelectedCommunity(
                         communityId = "community-a",
                         activeCommunityId = activeCommunity,
-                        isRuntimeCurrent = { requests.isCurrent(createToken) && runtimeCommunity == "community-a" },
+                        isRuntimeCurrent = { runtimeCommunity == "community-a" },
+                        isRequestCurrent = { requests.isCurrent(createToken) },
                         activateCommunity = { false },
                         resolveContext = { context },
                         create = {
