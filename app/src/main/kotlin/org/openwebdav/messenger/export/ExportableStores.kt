@@ -28,6 +28,9 @@ interface ExportableAccountBackupStore {
 interface ExportableConnectionConfigStore {
     fun load(): ConnectionConfig?
 
+    /** Physical presence distinguishes an absent config from an encrypted config that failed to load. */
+    fun hasStored(): Boolean = load() != null
+
     fun store(config: ConnectionConfig)
 
     fun clear()

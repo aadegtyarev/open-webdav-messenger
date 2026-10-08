@@ -30,7 +30,7 @@ target single-chat mapping defined by the account-recovery surface.
 **Destination restoration and Back:** The current destination is saveable across
 activity recreation. System Back returns from the feed to Chats and from Invite
 to the feed; first-launch onboarding returns to Start. Toolbar Back from a feed
-also returns to Chats. A delayed open may install a chat only if its community
+also returns to Chats. Group creation for a non-active community switches and creates under one account-mutation barrier; its activation path uses the already-held exclusive operation. A delayed open may install a chat only if its community
 and runtime selection are still current. Destination state does not substitute
 for persistence of community/chat data.
 

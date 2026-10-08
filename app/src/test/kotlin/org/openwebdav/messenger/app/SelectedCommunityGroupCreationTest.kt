@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.app
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -68,6 +69,32 @@ class SelectedCommunityGroupCreationTest {
 
             assertNull(result)
             assertTrue(!createCalled && !openCalled)
+        }
+
+    @Test
+    fun non_active_community_group_creation_finishes_inside_the_account_barrier() =
+        runTest {
+            val graphB = TestGraph("community-b", "transport-b", "identity-b")
+            val contextB = TestContext("community-b", graphB)
+            var activeCommunity = "community-a"
+
+            val result =
+                withTimeout(1_000) {
+                    createGroupInSelectedCommunity(
+                        communityId = "community-b",
+                        activeCommunityId = activeCommunity,
+                        activateCommunity = { selected ->
+                            activeCommunity = selected
+                            true
+                        },
+                        resolveContext = { selected -> contextB.takeIf { it.communityId == selected && activeCommunity == selected } },
+                        create = { "group-b" },
+                        open = { context, chatId -> context.communityId == "community-b" && chatId == "group-b" },
+                    )
+                }
+
+            assertEquals("group-b", result)
+            assertEquals("community-b", activeCommunity)
         }
 
     private data class TestGraph(val communityId: String, val transport: String, val identity: String)

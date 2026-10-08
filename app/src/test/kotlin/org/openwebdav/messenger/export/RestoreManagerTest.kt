@@ -56,6 +56,86 @@ class RestoreManagerTest {
     // -- full restore with all stores ----------------------------------------
 
     @Test
+    fun unreadable_enumerated_config_or_key_aborts_snapshot_before_any_write() =
+        runTest {
+            val blob = exportBlob()
+            for (fault in listOf("config", "community", "chat")) {
+                var writes = 0
+                val configBacking = ExportTestSupport.inMemoryConnectionConfigStore()
+                val configStore =
+                    object : ExportableConnectionConfigStore by configBacking {
+                        override fun hasStored(): Boolean = fault == "config" || configBacking.hasStored()
+
+                        override fun load() = if (fault == "config") null else configBacking.load()
+
+                        override fun store(config: org.openwebdav.messenger.transport.ConnectionConfig) {
+                            writes++
+                            configBacking.store(config)
+                        }
+
+                        override fun clear() {
+                            writes++
+                            configBacking.clear()
+                        }
+                    }
+                val communityBacking = ExportTestSupport.inMemoryCommunityKeyStore()
+                val communityStore =
+                    object : ExportableCommunityKeyStore by communityBacking {
+                        override fun listCommunityIds(): Set<String> =
+                            if (fault == "community") setOf("unreadable-community") else communityBacking.listCommunityIds()
+
+                        override fun load(communityId: String) = if (fault == "community") null else communityBacking.load(communityId)
+
+                        override fun replaceAllStrict(keys: Map<String, org.openwebdav.messenger.crypto.ChatKey>) {
+                            writes++
+                            communityBacking.replaceAllStrict(keys)
+                        }
+                    }
+                val chatBacking = ExportTestSupport.inMemoryChatKeyStore()
+                val chatStore =
+                    object : ExportableChatKeyStore by chatBacking {
+                        override fun listChatIds(): List<String> =
+                            if (fault == "chat") listOf("unreadable-chat") else chatBacking.listChatIds()
+
+                        override fun load(chatId: String) = if (fault == "chat") null else chatBacking.load(chatId)
+
+                        override fun replaceAllStrict(chatKeys: Map<String, org.openwebdav.messenger.crypto.ChatKey>) {
+                            writes++
+                            chatBacking.replaceAllStrict(chatKeys)
+                        }
+                    }
+                val identityBacking = ExportTestSupport.inMemoryIdentityStore()
+                val identityStore =
+                    object : ExportableIdentityStore by identityBacking {
+                        override fun store(identity: org.openwebdav.messenger.identity.Identity) {
+                            writes++
+                            identityBacking.store(identity)
+                        }
+
+                        override fun clear() {
+                            writes++
+                            identityBacking.clear()
+                        }
+                    }
+                val accountBacking = ExportTestSupport.InMemoryAccountBackupStore()
+                val accountStore =
+                    object : ExportableAccountBackupStore by accountBacking {
+                        override fun replace(backup: AccountBackup) {
+                            writes++
+                            accountBacking.replace(backup)
+                        }
+                    }
+
+                val result =
+                    newRestoreManager(configStore, communityStore, chatStore, identityStore, accountStore)
+                        .restore(blob, "test-password-123".toCharArray())
+
+                assertEquals("$fault snapshot must fail", RestoreResult.StoreFailure(rollbackSucceeded = true), result)
+                assertEquals("$fault snapshot must not mutate any store", 0, writes)
+            }
+        }
+
+    @Test
     fun full_restore_populates_all_stores() =
         runTest {
             val blob = exportBlob()
@@ -75,6 +155,93 @@ class RestoreManagerTest {
             assertTrue("chat key should be restored", chRestore.load("chat-a") != null)
             assertTrue("identity should be restored", idRestore.load() is IdentityLoadResult.Loaded)
             assertEquals("default", accountRestore.snapshot()?.activeCommunityId)
+        }
+
+    @Test
+    fun encrypted_backup_rejects_invalid_unregistered_chat_key_before_any_write() =
+        runTest {
+            val chatId = "anchor-a"
+            val backup =
+                AccountBackup(
+                    "community-a",
+                    listOf(
+                        CommunityBackup(
+                            "community-a",
+                            "A",
+                            chatId,
+                            ExportTestSupport.sampleConfig(),
+                            listOf(ChatBackup(chatId, "General", "general")),
+                        ),
+                    ),
+                )
+            val sourceKeys =
+                ExportTestSupport.inMemoryChatKeyStore().also {
+                    it.store(chatId, CryptoTestSupport.fixedKey(seed = 70))
+                    it.store("bad/id", CryptoTestSupport.fixedKey(seed = 71))
+                }
+            val blob =
+                ExportManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    ExportTestSupport.inMemoryCommunityKeyStore(),
+                    sourceKeys,
+                    ExportTestSupport.inMemoryIdentityStore().also { it.store(ExportTestSupport.freshIdentity()) },
+                    accountBackupStore = ExportTestSupport.InMemoryAccountBackupStore(backup),
+                ).export("test-password-123".toCharArray()) as ExportResult.Ready
+
+            var writes = 0
+            val configBacking = ExportTestSupport.inMemoryConnectionConfigStore()
+            val configStore =
+                object : ExportableConnectionConfigStore by configBacking {
+                    override fun store(config: org.openwebdav.messenger.transport.ConnectionConfig) {
+                        writes++
+                        configBacking.store(config)
+                    }
+
+                    override fun clear() {
+                        writes++
+                        configBacking.clear()
+                    }
+                }
+            val communityBacking = ExportTestSupport.inMemoryCommunityKeyStore()
+            val communityStore =
+                object : ExportableCommunityKeyStore by communityBacking {
+                    override fun replaceAllStrict(keys: Map<String, org.openwebdav.messenger.crypto.ChatKey>) {
+                        writes++
+                        communityBacking.replaceAllStrict(keys)
+                    }
+                }
+            val chatBacking = ExportTestSupport.inMemoryChatKeyStore()
+            val chatStore =
+                object : ExportableChatKeyStore by chatBacking {
+                    override fun replaceAllStrict(chatKeys: Map<String, org.openwebdav.messenger.crypto.ChatKey>) {
+                        writes++
+                        chatBacking.replaceAllStrict(chatKeys)
+                    }
+                }
+            val identityBacking = ExportTestSupport.inMemoryIdentityStore()
+            val identityStore =
+                object : ExportableIdentityStore by identityBacking {
+                    override fun store(identity: org.openwebdav.messenger.identity.Identity) {
+                        writes++
+                        identityBacking.store(identity)
+                    }
+                }
+            val accountBacking = ExportTestSupport.InMemoryAccountBackupStore()
+            val accountStore =
+                object : ExportableAccountBackupStore by accountBacking {
+                    override fun replace(backup: AccountBackup) {
+                        writes++
+                        accountBacking.replace(backup)
+                    }
+                }
+
+            val result =
+                RestoreManager(native, configStore, communityStore, chatStore, identityStore, accountBackupStore = accountStore)
+                    .restore(blob.blob, "test-password-123".toCharArray())
+
+            assertEquals(RestoreResult.CorruptPayload, result)
+            assertEquals(0, writes)
         }
 
     @Test

@@ -28,6 +28,8 @@ internal class AccountBackupStore(private val context: Context) : ExportableAcco
                     listOf(CommunityRegistry.Entry(ConnectionConfigStore.DEFAULT_COMMUNITY_ID, it.communityName, it.chatId))
                 }.orEmpty()
             }
+        val registeredIds = effectiveEntries.mapTo(mutableSetOf()) { it.id }
+        check(configStore.listCommunityIds().all { it in registeredIds }) { "Stored connection has no registered community" }
         val communities =
             effectiveEntries.map { entry ->
                 val stored = checkNotNull(configStore.loadStored(entry.id)) { "Missing stored connection for ${entry.id}" }

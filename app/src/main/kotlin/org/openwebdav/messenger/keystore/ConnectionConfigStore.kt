@@ -74,6 +74,8 @@ internal class ConnectionConfigStore(
     /** ExportableConnectionConfigStore: load just the [ConnectionConfig], discarding chatId/communityName. */
     override fun load(): ConnectionConfig? = loadStored()?.config
 
+    override fun hasStored(): Boolean = has()
+
     /** ExportableConnectionConfigStore: store a bare config (restore path — no chatId/communityName yet). */
     override fun store(config: ConnectionConfig) {
         save(config, chatId = "", communityName = "")
@@ -84,7 +86,14 @@ internal class ConnectionConfigStore(
 
     fun has(communityId: String): Boolean = wrapper(communityId).exists()
 
-    fun hasAny(): Boolean = configDir().listFiles()?.any { it.name.startsWith("$CONFIG_FILE-") } == true
+    fun hasAny(): Boolean = listCommunityIds().isNotEmpty()
+
+    fun listCommunityIds(): Set<String> {
+        val dir = configDir()
+        if (!dir.exists()) return emptySet()
+        val files = dir.listFiles() ?: throw java.io.IOException("Cannot enumerate connection configs")
+        return files.mapNotNull { file -> file.name.takeIf { it.startsWith("$CONFIG_FILE-") }?.removePrefix("$CONFIG_FILE-") }.toSet()
+    }
 
     /** Delete the stored config. */
     override fun clear() = clear(DEFAULT_COMMUNITY_ID)

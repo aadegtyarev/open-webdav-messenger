@@ -1,5 +1,7 @@
 package org.openwebdav.messenger.app
 
+import org.openwebdav.messenger.account.AccountMutationBarrier
+
 /** A community's combined policy values, retained while field-level edits are in flight. */
 internal data class CommunityPolicy(val retentionDays: Int, val pollFloorSeconds: Int)
 
@@ -29,6 +31,44 @@ internal class CommunityPolicyCoordinator {
         submit(id, committed) {
             it.copy(pollFloorSeconds = seconds.coerceIn(CommunityMetadata.MIN_FLOOR_SECONDS, CommunityMetadata.MAX_FLOOR_SECONDS))
         }
+
+    @Synchronized
+    fun defaults(id: String): CommunityPolicyRequest =
+        submit(
+            id,
+            CommunityPolicy(CommunityMetadata.DEFAULT_RETENTION_DAYS, CommunityMetadata.DEFAULT_FLOOR_SECONDS),
+        ) { it }
+
+    suspend fun runInitialWrites(
+        request: CommunityPolicyRequest?,
+        expectedRuntimeGeneration: String,
+        currentRuntimeGeneration: () -> String?,
+        writeRoster: suspend () -> Unit,
+        writePolicy: suspend (CommunityPolicy) -> Boolean,
+        commitPolicy: (CommunityPolicy) -> Unit,
+    ): Boolean =
+        AccountMutationBarrier.process.withExclusive {
+            if (currentRuntimeGeneration() != expectedRuntimeGeneration) {
+                request?.let(::complete)
+                return@withExclusive false
+            }
+            try {
+                writeRoster()
+                val initialPolicy = request ?: return@withExclusive true
+                if (!isLatest(initialPolicy)) return@withExclusive true
+                val written = writePolicy(initialPolicy.policy)
+                if (written && isLatest(initialPolicy)) commitPolicy(initialPolicy.policy)
+                written
+            } finally {
+                request?.let(::complete)
+            }
+        }
+
+    @Synchronized
+    fun reset() {
+        pending.clear()
+        revisions.clear()
+    }
 
     @Synchronized
     fun isLatest(request: CommunityPolicyRequest): Boolean = pending[request.communityId] == request

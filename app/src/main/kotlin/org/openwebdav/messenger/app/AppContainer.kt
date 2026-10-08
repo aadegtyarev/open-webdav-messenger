@@ -128,6 +128,7 @@ internal object AppContainer {
     fun restorePreviousRuntime() = rebuildStoredRuntime(requireGraph = communityRegistry.all().isNotEmpty())
 
     private fun rebuildStoredRuntime(requireGraph: Boolean) {
+        communityPolicyCoordinator.reset()
         val fallback = communityRegistry.all().firstOrNull()?.id ?: "default"
         currentCommunityId = activeCommunityStore.load(fallback)
         UserSettings.selectCommunity(currentCommunityId)
@@ -153,27 +154,25 @@ internal object AppContainer {
         access: ChatAccess = ChatAccess.PUBLIC,
     ): String? {
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return null
-        return AccountMutationBarrier.process.withExclusive {
-            if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) return@withExclusive null
-            createGroupInSelectedCommunity(
-                communityId = communityId,
-                activeCommunityId = currentCommunityId,
-                activateCommunity = ::switchToCommunity,
-                resolveContext = { selectedId ->
-                    selectedCommunityGroupContext(
-                        communityId = selectedId,
-                        activeCommunityId = currentCommunityId,
-                        stored = configStore.loadStored(selectedId),
-                        graph = runtimeGraph(),
-                        selectionRevision = runtimeSelectionGuard.current(),
-                    )
-                },
-                create = { context -> createGroupChatForContext(name, access, context) },
-                open = { context, chatId ->
-                    openGroupChatExclusive(chatId, name, context.communityId, context.selectionRevision)
-                },
-            )
-        }
+        return createGroupInSelectedCommunity(
+            communityId = communityId,
+            activeCommunityId = currentCommunityId,
+            isRuntimeCurrent = { runtimeGraph()?.communityRuntimeKey == expectedRuntimeKey },
+            activateCommunity = ::switchToCommunityExclusive,
+            resolveContext = { selectedId ->
+                selectedCommunityGroupContext(
+                    communityId = selectedId,
+                    activeCommunityId = currentCommunityId,
+                    stored = configStore.loadStored(selectedId),
+                    graph = runtimeGraph(),
+                    selectionRevision = runtimeSelectionGuard.current(),
+                )
+            },
+            create = { context -> createGroupChatForContext(name, access, context) },
+            open = { context, chatId ->
+                openGroupChatExclusive(chatId, name, context.communityId, context.selectionRevision)
+            },
+        )
     }
 
     private suspend fun createGroupChatForContext(
@@ -830,29 +829,34 @@ internal object AppContainer {
             ) {
                 UserSettings.setHostFor(chatId, isHost)
                 EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity, communityId = chatId)
-                // Write on-disk metadata (async, best-effort).
+                val runtimeGeneration = runtimeGraph()?.takeIf { it.communityId == chatId }?.communityRuntimeKey ?: return
+                val initialPolicy = if (isHost) communityPolicyCoordinator.defaults(chatId) else null
                 appScope.launch {
                     try {
                         val transport = TransportFactory.create(config)
-                        // Register ourselves in the disk roster.
-                        RosterService(transport).addMyself(
-                            org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
-                        )
-                        // The host writes the community metadata (polling floor, etc.).
-                        if (isHost) {
-                            val metadata =
-                                CommunityMetadata(
-                                    minPollIntervalSeconds = CommunityMetadata.DEFAULT_FLOOR_SECONDS,
+                        communityPolicyCoordinator.runInitialWrites(
+                            request = initialPolicy,
+                            expectedRuntimeGeneration = runtimeGeneration,
+                            currentRuntimeGeneration = { runtimeGraph()?.communityRuntimeKey },
+                            writeRoster = {
+                                RosterService(transport).addMyself(
+                                    org.openwebdav.messenger.protocol.Hex.encode(identity.copySignPublic()),
                                 )
-                            CommunityMetadata.write(
-                                transport = transport,
-                                metadata = metadata,
-                                hostIdentity = identity,
-                                identityCrypto = identityFactory.identityCrypto(),
-                            )
-                        }
+                            },
+                            writePolicy = { policy ->
+                                CommunityMetadata.write(
+                                    transport = transport,
+                                    metadata = CommunityMetadata(policy.pollFloorSeconds, policy.retentionDays),
+                                    hostIdentity = identity,
+                                    identityCrypto = identityFactory.identityCrypto(),
+                                ) is WebDavResult.Success
+                            },
+                            commitPolicy = { policy ->
+                                UserSettings.setCommunityMetadata(chatId, policy.pollFloorSeconds, policy.retentionDays)
+                            },
+                        )
                     } catch (_: Exception) {
-                        // best-effort
+                        initialPolicy?.let(communityPolicyCoordinator::complete)
                     }
                 }
             }

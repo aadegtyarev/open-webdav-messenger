@@ -202,7 +202,8 @@ class RestoreManager(
         backup: AccountBackup,
         chatKeys: Map<String, ChatKey>,
     ): Boolean =
-        backup.communities.map { it.id }.distinct().size == backup.communities.size &&
+        chatKeys.keys.all(AccountIdentifier::isValid) &&
+            backup.communities.map { it.id }.distinct().size == backup.communities.size &&
             backup.communities.any { it.id == backup.activeCommunityId } &&
             backup.communities.all { community ->
                 AccountIdentifier.isValid(community.id) && community.name.isNotBlank() &&
@@ -242,10 +243,21 @@ class RestoreManager(
     private suspend fun writeWithRollback(staged: StagedRestore): RestoreResult {
         val previous =
             try {
+                val configPresent = connectionConfigStore.hasStored()
+                val config = connectionConfigStore.load()
+                check(!configPresent || config != null) { "Stored connection config is unreadable" }
+                val communityKeys =
+                    communityKeyStore.listCommunityIds().associateWith { id ->
+                        checkNotNull(communityKeyStore.load(id)) { "Stored community key is unreadable: $id" }
+                    }
+                val chatKeys =
+                    chatKeyStore.listChatIds().associateWith { id ->
+                        checkNotNull(chatKeyStore.load(id)) { "Stored chat key is unreadable: $id" }
+                    }
                 RestoreSnapshot(
-                    connectionConfigStore.load(),
-                    communityKeyStore.listCommunityIds().mapNotNull { id -> communityKeyStore.load(id)?.let { id to it } }.toMap(),
-                    chatKeyStore.listChatIds().mapNotNull { id -> chatKeyStore.load(id)?.let { id to it } }.toMap(),
+                    config,
+                    communityKeys,
+                    chatKeys,
                     identityStore.load(),
                     accountBackupStore?.snapshot(),
                     accountBackupStore?.hasMembershipState() ?: false,
