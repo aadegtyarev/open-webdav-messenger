@@ -109,8 +109,26 @@ class RestoreManager(
                                     ?: return@withContext RestoreResult.CorruptPayload
                             val staged = stage(payload) ?: return@withContext RestoreResult.CorruptPayload
                             return@withContext AccountMutationBarrier.process.withExclusive {
-                                AccountMutationBarrier.process.withAccountReplacement {
-                                    writeWithRollback(staged)
+                                val preparation = AccountMutationBarrier.process.withAccountReplacement { prepareRestore(staged) }
+                                when (preparation) {
+                                    is RestorePreparation.Failed -> preparation.result
+                                    is RestorePreparation.Ready -> {
+                                        try {
+                                            activateRuntime()
+                                            RestoreResult.Restored
+                                        } catch (_: Exception) {
+                                            var rolledBack =
+                                                AccountMutationBarrier.process.withAccountReplacement {
+                                                    rollbackStores(staged, preparation.previous)
+                                                }
+                                            try {
+                                                restorePreviousRuntime()
+                                            } catch (_: Exception) {
+                                                rolledBack = false
+                                            }
+                                            RestoreResult.StoreFailure(rollbackSucceeded = rolledBack)
+                                        }
+                                    }
                                 }
                             }
                         } finally {
@@ -243,11 +261,17 @@ class RestoreManager(
                 identity is IdentityLoadResult.None && accountBackup == null && !membershipState && !registryState
     }
 
-    private suspend fun writeWithRollback(staged: StagedRestore): RestoreResult {
+    private sealed interface RestorePreparation {
+        data class Ready(val previous: RestoreSnapshot) : RestorePreparation
+
+        data class Failed(val result: RestoreResult) : RestorePreparation
+    }
+
+    private fun prepareRestore(staged: StagedRestore): RestorePreparation {
         try {
             invalidateLocalCaches()
         } catch (_: Exception) {
-            return RestoreResult.StoreFailure(rollbackSucceeded = true)
+            return RestorePreparation.Failed(RestoreResult.StoreFailure(rollbackSucceeded = true))
         }
         val previous =
             try {
@@ -272,57 +296,64 @@ class RestoreManager(
                     accountBackupStore?.hasRegistryState() ?: false,
                 )
             } catch (_: Exception) {
-                return RestoreResult.StoreFailure(rollbackSucceeded = true)
+                return RestorePreparation.Failed(RestoreResult.StoreFailure(rollbackSucceeded = true))
             }
-        if (previous.identity is IdentityLoadResult.Unrecoverable) return RestoreResult.StoreFailure(rollbackSucceeded = true)
-        if (previous.registryState && previous.accountBackup == null) return RestoreResult.StoreFailure(rollbackSucceeded = true)
-        if (staged.legacy && !previous.isEmpty()) return RestoreResult.IncompatibleTarget
+        if (previous.identity is IdentityLoadResult.Unrecoverable) {
+            return RestorePreparation.Failed(RestoreResult.StoreFailure(rollbackSucceeded = true))
+        }
+        if (previous.registryState && previous.accountBackup == null) {
+            return RestorePreparation.Failed(RestoreResult.StoreFailure(rollbackSucceeded = true))
+        }
+        if (staged.legacy && !previous.isEmpty()) return RestorePreparation.Failed(RestoreResult.IncompatibleTarget)
 
-        var activationAttempted = false
         return try {
             communityKeyStore.replaceAllStrict(staged.accountCommunityKeys)
             chatKeyStore.replaceAllStrict(staged.chatKeys)
             identityStore.store(staged.identity)
             checkNotNull(accountBackupStore).replace(staged.accountBackup)
-            activationAttempted = true
-            activateRuntime()
-            RestoreResult.Restored
+            RestorePreparation.Ready(previous)
         } catch (_: Exception) {
-            var rolledBack = true
-
-            fun attempt(action: () -> Unit) {
-                try {
-                    action()
-                } catch (_: Exception) {
-                    rolledBack = false
-                }
-            }
-            attempt {
-                if (previous.accountBackup != null) {
-                    checkNotNull(accountBackupStore).replace(previous.accountBackup)
-                } else {
-                    checkNotNull(accountBackupStore).clearCommunityIds(staged.accountBackup.communities.mapTo(mutableSetOf()) { it.id })
-                }
-            }
-            attempt {
-                if (previous.accountBackup == null) {
-                    if (previous.config == null) connectionConfigStore.clear() else connectionConfigStore.store(previous.config)
-                }
-            }
-            attempt { communityKeyStore.replaceAllStrict(previous.communityKeys) }
-            previous.chatKeys.forEach { (id, key) -> attempt { chatKeyStore.storeStrict(id, key) } }
-            (staged.chatKeys.keys - previous.chatKeys.keys).forEach { id -> attempt { chatKeyStore.removeStrict(id) } }
-            attempt { chatKeyStore.replaceAllStrict(previous.chatKeys) }
-            attempt {
-                when (val oldIdentity = previous.identity) {
-                    is IdentityLoadResult.Loaded -> identityStore.store(oldIdentity.identity)
-                    IdentityLoadResult.None -> identityStore.clear()
-                    is IdentityLoadResult.Unrecoverable -> error("Previous identity was unrecoverable")
-                }
-            }
-            if (activationAttempted) attempt(restorePreviousRuntime)
-            RestoreResult.StoreFailure(rollbackSucceeded = rolledBack)
+            RestorePreparation.Failed(RestoreResult.StoreFailure(rollbackStores(staged, previous)))
         }
+    }
+
+    private fun rollbackStores(
+        staged: StagedRestore,
+        previous: RestoreSnapshot,
+    ): Boolean {
+        var succeeded = true
+
+        fun attempt(action: () -> Unit) {
+            try {
+                action()
+            } catch (_: Exception) {
+                succeeded = false
+            }
+        }
+        attempt {
+            if (previous.accountBackup != null) {
+                checkNotNull(accountBackupStore).replace(previous.accountBackup)
+            } else {
+                checkNotNull(accountBackupStore).clearCommunityIds(staged.accountBackup.communities.mapTo(mutableSetOf()) { it.id })
+            }
+        }
+        attempt {
+            if (previous.accountBackup == null) {
+                if (previous.config == null) connectionConfigStore.clear() else connectionConfigStore.store(previous.config)
+            }
+        }
+        attempt { communityKeyStore.replaceAllStrict(previous.communityKeys) }
+        previous.chatKeys.forEach { (id, key) -> attempt { chatKeyStore.storeStrict(id, key) } }
+        (staged.chatKeys.keys - previous.chatKeys.keys).forEach { id -> attempt { chatKeyStore.removeStrict(id) } }
+        attempt { chatKeyStore.replaceAllStrict(previous.chatKeys) }
+        attempt {
+            when (val oldIdentity = previous.identity) {
+                is IdentityLoadResult.Loaded -> identityStore.store(oldIdentity.identity)
+                IdentityLoadResult.None -> identityStore.clear()
+                is IdentityLoadResult.Unrecoverable -> error("Previous identity was unrecoverable")
+            }
+        }
+        return succeeded
     }
 
     private fun passphraseToBytes(passphrase: CharArray): ByteArray {

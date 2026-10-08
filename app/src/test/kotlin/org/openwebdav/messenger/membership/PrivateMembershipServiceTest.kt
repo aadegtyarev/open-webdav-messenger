@@ -37,13 +37,28 @@ class PrivateMembershipServiceTest {
     fun tearDown() = server.shutdown()
 
     @Test
+    fun blank_name_survives_remote_round_trip_as_empty_verified_name() =
+        runTest {
+            val bytes =
+                PrivateMembershipClaimCrypto(
+                    PrivateMembershipAead(Aead(DirectoryTestSupport.native())),
+                    PrivateMembershipClaimCodec(DirectoryTestSupport.identityCrypto()),
+                ).seal("chat_01", " \t\n", identity, key)
+            assertTrue(service.publishSelf(bytes, "chat_01") is MembershipPublishOutcome.Published)
+
+            val result = service.read("chat_01", key, null)
+            assertEquals(false, result.listingFailed)
+            assertEquals(listOf(""), result.members.map { it.displayName })
+        }
+
+    @Test
     fun publish_and_read_is_idempotent_and_exact_chat_scoped() =
         runTest {
             val bytes =
                 PrivateMembershipClaimCrypto(
                     PrivateMembershipAead(Aead(DirectoryTestSupport.native())),
                     PrivateMembershipClaimCodec(DirectoryTestSupport.identityCrypto()),
-                ).seal("chat_01", "Alice", identity, key)
+                ).seal("chat_01", "\u2003Alice \t", identity, key)
             assertTrue(service.publishSelf(bytes, "chat_01") is MembershipPublishOutcome.Published)
             assertTrue(service.publishSelf(bytes, "chat_01") is MembershipPublishOutcome.Published)
             val result = service.read("chat_01", key, null)

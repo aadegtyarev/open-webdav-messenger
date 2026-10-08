@@ -6,12 +6,13 @@ internal data class PrivateClaimRetryCandidate(val chatId: String, val pending: 
 internal object PrivateClaimRetryQueue {
     fun select(
         candidates: List<PrivateClaimRetryCandidate>,
-        lastChatId: String?,
+        lastPendingChatId: String?,
+        lastFreshChatId: String?,
         pendingLimit: Int,
         newLimit: Int,
     ): List<PrivateClaimRetryCandidate> {
-        val pending = rotate(candidates.filter { it.pending }, lastChatId).take(pendingLimit)
-        val fresh = rotate(candidates.filterNot { it.pending }, lastChatId).take(newLimit)
+        val pending = rotate(candidates.filter { it.pending }, lastPendingChatId).take(pendingLimit)
+        val fresh = rotate(candidates.filterNot { it.pending }, lastFreshChatId).take(newLimit)
         return pending + fresh
     }
 

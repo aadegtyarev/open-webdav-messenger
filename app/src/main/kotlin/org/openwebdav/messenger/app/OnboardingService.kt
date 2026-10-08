@@ -138,8 +138,8 @@ internal class OnboardingService(
             deps.chatKeyStore().store(chatId, chatKey)
             if (access == org.openwebdav.messenger.chatdirectory.ChatAccess.PUBLIC) deps.storeCommunityKey(chatId, chatKey)
             deps.saveConfig(config, chatId, communityName, access.name.lowercase())
-            deps.reconfigure(config, chatId, communityName, chatKey, identity, isHost)
         }
+        deps.reconfigure(config, chatId, communityName, chatKey, identity, isHost)
     }
 
     private fun isHttps(url: String): Boolean = url.trim().lowercase().startsWith("https://")

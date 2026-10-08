@@ -30,11 +30,13 @@ validation before separate removal/revocation work.
 ## Protocol
 
 Each private chat has a remote membership collection. Claims bind domain/version,
-chat ID, signing+box identities, and canonical bytes. Wire trust is chatId+chatKey;
-local communityId, URL, and username are excluded. Ed25519 proves signer control;
-chat-key AEAD proves possession with canonical domain+wire-version+length-prefixed
-chatId AAD (message envelopes are unchanged). Bind path/filename/content and reject
-bounds, path, context, signature, or key-proof failures. An exact accessible
+chat ID, signing+box identities, and canonical bytes. Optional display names are
+trimmed consistently on signing and parse; blank names remain valid and render via
+existing unavailable-name UI. Wire trust is chatId+chatKey; local communityId,
+URL, and username are excluded. Ed25519 proves signer control; chat-key AEAD proves
+possession with canonical domain+wire-version+length-prefixed chatId AAD (message
+envelopes are unchanged). Bind path/filename/content and reject bounds, path,
+context, signature, or key-proof failures. An exact accessible
 directory pair strengthens provenance; absence permits chat-only membership.
 Conflicting directory identities, equivocation, tampering, and cross-chat claims fail closed.
 
@@ -42,10 +44,12 @@ Only remotely listed/read verified claims supply private recipients; invite or
 publication attempts never infer a peer. Import stores the key, registers the chat,
 and publishes self with truthful pending/uploaded status. A keyed account/community/
 chat mutex serializes pending creation, PUT, and local commit. Stable-account checks
-fence before remote start and after PUT; restore/key replacement advances generation
-and clears local state without holding the account barrier over WebDAV. Pending-first
-round-robin retries skip uploaded claims and cannot starve beyond 64 entries per cycle.
-No remote acknowledgement or atomic invite is implied. Private-only names stay labelled.
+fence before remote start and after PUT; onboarding publishes only after replacement
+completes, while restore activation follows replacement and rollback restores the prior
+runtime. Pending and fresh queues have independent persisted cursors; a repeatedly
+failing fresh claim cannot reset pending progress. Each queue is bounded per cycle and
+uploaded claims are skipped. No remote acknowledgement or atomic invite is implied.
+Private-only names stay labelled.
 
 Private open reads only its membership collection. Cache provenance binds local
 community+chat, key, identity, kind, and protocol; it is encrypted, bounded, and

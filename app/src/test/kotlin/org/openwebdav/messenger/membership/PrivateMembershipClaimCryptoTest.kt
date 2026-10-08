@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.membership
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,6 +43,34 @@ class PrivateMembershipClaimCryptoTest {
             val blob = aead.sealWithAssociatedData(key, aad, validClaim)
             val ciphertext = Envelope.frame(Envelope.CODEC_NONE, blob)
             assertTrue(crypto.open(ciphertext, "chat_01", key) == ClaimParseResult.Rejected)
+        }
+    }
+
+    @Test
+    fun blank_display_name_is_a_valid_canonical_claim() {
+        val bytes = crypto.seal("chat_01", " \u2003\t", identity, key)
+        val opened = crypto.open(bytes, "chat_01", key) as ClaimParseResult.Verified
+
+        assertEquals("", opened.claim.displayName)
+    }
+
+    @Test
+    fun display_name_canonicalization_is_deterministic_and_byte_bounded() {
+        val secret = identity.copySignSecret()
+        try {
+            val signing = identity.copySignPublic()
+            val box = identity.copyBoxPublic()
+            val canonical = PrivateMembershipClaim("chat_01", "Alice", signing, box)
+            val padded = PrivateMembershipClaim("chat_01", "\u2003Alice \t", signing, box)
+            assertArrayEquals(codec.sign(canonical, secret), codec.sign(padded, secret))
+
+            val max = PrivateMembershipClaim("chat_01", "é".repeat(128), signing, box)
+            val maxParsed = codec.parseAndVerify(codec.sign(max, secret)) as ClaimParseResult.Verified
+            assertEquals("é".repeat(128), maxParsed.claim.displayName)
+            val tooLong = PrivateMembershipClaim("chat_01", "é".repeat(129), signing, box)
+            assertTrue(runCatching { codec.sign(tooLong, secret) }.isFailure)
+        } finally {
+            secret.fill(0)
         }
     }
 

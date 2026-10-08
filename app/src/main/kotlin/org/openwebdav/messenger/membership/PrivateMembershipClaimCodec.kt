@@ -38,8 +38,11 @@ internal class PrivateMembershipClaimCodec(private val identityCrypto: IdentityC
         val nameBytes = cursor.take(nameLength) ?: return ClaimParseResult.Rejected
         if (cursor.pos != signatureStart) return ClaimParseResult.Rejected
         val chatId = decodeUtf8(chatBytes) ?: return ClaimParseResult.Rejected
-        val name = decodeUtf8(nameBytes) ?: return ClaimParseResult.Rejected
-        if (!validChatId(chatId) || name.isBlank() || name != name.trim()) return ClaimParseResult.Rejected
+        val decodedName = decodeUtf8(nameBytes) ?: return ClaimParseResult.Rejected
+        val name = canonicalDisplayName(decodedName)
+        if (!validChatId(chatId) || name.toByteArray(Charsets.UTF_8).size > PrivateMembershipFormat.MAX_DISPLAY_NAME_BYTES) {
+            return ClaimParseResult.Rejected
+        }
         val signature = bytes.copyOfRange(signatureStart, bytes.size)
         if (!identityCrypto.verify(signature, signatureInput(bytes.copyOfRange(0, signatureStart)), signing)) {
             return ClaimParseResult.Rejected
@@ -49,9 +52,9 @@ internal class PrivateMembershipClaimCodec(private val identityCrypto: IdentityC
 
     private fun serializeUnsigned(claim: PrivateMembershipClaim): ByteArray {
         val chat = claim.chatId.toByteArray(Charsets.UTF_8)
-        val name = claim.displayName.toByteArray(Charsets.UTF_8)
+        val name = canonicalDisplayName(claim.displayName).toByteArray(Charsets.UTF_8)
         require(validChatId(claim.chatId) && chat.size <= PrivateMembershipFormat.MAX_CHAT_ID_BYTES)
-        require(name.size <= PrivateMembershipFormat.MAX_DISPLAY_NAME_BYTES && claim.displayName.isNotBlank())
+        require(name.size <= PrivateMembershipFormat.MAX_DISPLAY_NAME_BYTES)
         val out = ByteArrayOutputStream()
         out.write(PrivateMembershipFormat.MAGIC.toByteArray())
         out.write(PrivateMembershipFormat.VERSION.toInt())
@@ -63,6 +66,8 @@ internal class PrivateMembershipClaimCodec(private val identityCrypto: IdentityC
         out.write(name)
         return out.toByteArray()
     }
+
+    private fun canonicalDisplayName(value: String): String = value.trim { it.isWhitespace() }
 
     private fun signatureInput(unsigned: ByteArray): ByteArray = PrivateMembershipFormat.DOMAIN.toByteArray() + byteArrayOf(0) + unsigned
 

@@ -753,11 +753,12 @@ internal object AppContainer {
             candidates += PrivateClaimRetryCandidate(row.id, pending)
             keys[row.id] = key
         }
-        val cursor = privateClaimRetryCursorStore.load(communityId, identity)
+        val cursors = privateClaimRetryCursorStore.load(communityId, identity)
         val selected =
             PrivateClaimRetryQueue.select(
                 candidates,
-                cursor,
+                cursors.pendingChatId,
+                cursors.freshChatId,
                 pendingLimit = MAX_PRIVATE_CLAIM_RETRIES,
                 newLimit = MAX_PRIVATE_CLAIM_NEW_PUBLICATIONS,
             )
@@ -800,7 +801,13 @@ internal object AppContainer {
                 if (AccountMutationBarrier.process.replacementGeneration() == accountGeneration &&
                     runCatching(contextCurrent).getOrDefault(false)
                 ) {
-                    runCatching { privateClaimRetryCursorStore.save(communityId, identity, row.id) }
+                    runCatching {
+                        if (candidate.pending) {
+                            privateClaimRetryCursorStore.savePending(communityId, identity, row.id)
+                        } else {
+                            privateClaimRetryCursorStore.saveFresh(communityId, identity, row.id)
+                        }
+                    }
                     runtimeGraph()?.takeIf { it.communityId == communityId && it.chatId == row.id }?.updatePrivateClaimStatus(status)
                 }
             }

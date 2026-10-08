@@ -3,6 +3,7 @@ package org.openwebdav.messenger.export
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.identity.Identity
 import java.nio.ByteBuffer
@@ -47,6 +48,8 @@ class AccountBackupVersionRestoreTest {
                 val json = ExportPayload.toJson(payload).replace("\"v\":3", "\"v\":$version")
                 val blob = encryptedPayload(native, json, "restore-password")
                 val account = ExportTestSupport.InMemoryAccountBackupStore()
+                val generationBeforeRestore = AccountMutationBarrier.process.replacementGeneration()
+                var generationAtActivation = -1L
                 val result =
                     RestoreManager(
                         native,
@@ -55,9 +58,11 @@ class AccountBackupVersionRestoreTest {
                         ExportTestSupport.inMemoryChatKeyStore(),
                         ExportTestSupport.inMemoryIdentityStore(),
                         accountBackupStore = account,
+                        activateRuntime = { generationAtActivation = AccountMutationBarrier.process.replacementGeneration() },
                     ).restore(blob, "restore-password".toCharArray())
 
                 assertEquals(RestoreResult.Restored, result)
+                assertEquals(generationBeforeRestore + 1, generationAtActivation)
                 assertEquals(backup, account.snapshot())
             }
         }

@@ -8,6 +8,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.identity.Identity
@@ -34,6 +35,7 @@ class OnboardingServiceTest {
         var invalidatedChatId: String? = null
         var reconfiguredChatId: String? = null
         var reconfiguredKey: ChatKey? = null
+        var generationAtReconfigure: Long? = null
 
         override fun keySources(): KeySources = AppTestSupport.keySources()
 
@@ -72,6 +74,7 @@ class OnboardingServiceTest {
         ) {
             reconfiguredChatId = chatId
             reconfiguredKey = chatKey
+            generationAtReconfigure = AccountMutationBarrier.process.replacementGeneration()
         }
 
         override suspend fun checkFolder(
@@ -192,9 +195,11 @@ class OnboardingServiceTest {
                     org.openwebdav.messenger.chatdirectory.ChatAccess.PRIVATE,
                 )
             val deps = RecordingDeps(AppTestSupport.newIdentity())
+            val generationBeforeJoin = AccountMutationBarrier.process.replacementGeneration()
 
             assertTrue(service(deps).joinFromInvite(invite) is OnboardingService.JoinResult.Joined)
             assertEquals("private", deps.savedAccess)
+            assertEquals(generationBeforeJoin + 1, deps.generationAtReconfigure)
         }
 
     @Test
