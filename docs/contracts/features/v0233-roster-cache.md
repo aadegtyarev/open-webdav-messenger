@@ -9,9 +9,9 @@ After one successful verified roster load, reopening any General, group, or DM c
 ## Scenarios and behavior
 
 - Cache identity is scoped to the exact community ID and chat ID and bound to cryptographic provenance sufficient to reject reuse after a community/chat key or account identity changes.
-- A valid cached verified roster makes the exact active runtime Ready and Send-enabled before the suspended WebDAV reader returns; refresh proceeds asynchronously.
-- First open without valid cache remains Loading with progress and Send disabled. A fresh verified result atomically replaces both durable cache and current exact runtime roster.
-- Refresh failure with a valid cache preserves Ready and exposes a truthful, non-blocking freshness warning/retry. With no valid cache, readiness becomes Unavailable with Retry.
+- A valid cached verified roster makes the exact active runtime Ready and Send-enabled before the suspended WebDAV reader returns; refresh proceeds asynchronously and silently. While cached Ready, show no spinner, placeholder, status, or warning; keep the chat visually normal and Send enabled.
+- First open without valid cache remains Loading with the top spinner and Send disabled. The disabled message input uses a concise localized equivalent of `Reading participants from server…` instead of the generic message placeholder. The spinner/status control is an accessible, at-least-48dp target; tapping it shows a brief localized explanation equivalent to `Reading participants from server. Sending will be available when complete.` A fresh verified result atomically replaces both durable cache and current exact runtime roster.
+- Silent refresh failure with a valid cache preserves Ready with no foreground error; retry later. With no valid cache, readiness becomes Unavailable with Retry and an appropriate visible status.
 - Cache survives process death and contains only public identities and verified recipient metadata—never plaintext, credentials, or private keys. Schema, size, and entry validation are strictly bounded; corruption or invalid data fails closed.
 - Invalidate/remove cache on community/chat key change, membership deletion, chat removal, account restore/replacement, or ambiguous identity/provenance. Credential-only rotation may retain cache only when community and chat cryptographic identity is unchanged.
 - Async results begun before invalidation cannot repopulate the cache. Sends continue to use one exact Ready verified-recipient snapshot for the persisted retryable envelope and immediate fan-out; existing runtime/request/current-context guards remain authoritative.
@@ -31,8 +31,8 @@ Preserve exact community/chat and cryptographic/account provenance through cache
 
 ## Acceptance criteria
 
-1. After one verified load, reopening the same chat is Ready and Send-enabled before a suspended reader completes; General, group, and DM behave uniformly.
-2. A verified cache survives process restart; a first open or missing/invalid cache remains Loading until verification completes.
+1. After one verified load, reopening the same chat is Ready and Send-enabled before a suspended reader completes; General, group, and DM behave uniformly. While this cached background refresh runs, no spinner, placeholder, status, or warning is shown, and failure leaves the chat Ready without foreground error.
+2. A verified cache survives process restart; a first open or missing/invalid cache remains Loading until verification completes, with the localized disabled-input placeholder and accessible >=48dp spinner/status target whose tap explains that sending will be available after loading.
 3. Community/chat key changes, account replacement/restore, chat removal, and membership deletion prevent reuse; credential-only rotation preserves only unchanged cryptographic identity.
 4. Corrupt, malformed, ambiguous, and oversized cache data is rejected. A refresh completing after invalidation cannot restore the entry.
 5. A send persists and fans out to the exact same verified snapshot; durable-envelope retry remains unchanged.
