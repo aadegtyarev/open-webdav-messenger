@@ -93,11 +93,14 @@ private fun AppNav() {
     }
 
     when (screen) {
-        Screen.Start ->
+        Screen.Start -> {
+            val context = LocalContext.current
             StartScreen(
                 onCreate = { screen = Screen.CreateCommunity },
                 onJoin = { screen = Screen.Join },
+                onRestore = { context.startActivity(Intent(context, ExportRestoreActivity::class.java)) },
             )
+        }
 
         Screen.CommunityList ->
             UnifiedChatListScreen(

@@ -15,12 +15,16 @@ interface ExportableConnectionConfigStore {
     fun load(): ConnectionConfig?
 
     fun store(config: ConnectionConfig)
+
+    fun clear()
 }
 
 interface ExportableCommunityKeyStore {
     fun load(): ChatKey?
 
     fun store(key: ChatKey)
+
+    fun clear()
 }
 
 interface ExportableChatKeyStore {
@@ -32,10 +36,14 @@ interface ExportableChatKeyStore {
     )
 
     fun listChatIds(): List<String>
+
+    fun remove(chatId: String)
 }
 
 interface ExportableIdentityStore {
     fun load(): IdentityLoadResult
 
     fun store(identity: Identity)
+
+    fun clear()
 }

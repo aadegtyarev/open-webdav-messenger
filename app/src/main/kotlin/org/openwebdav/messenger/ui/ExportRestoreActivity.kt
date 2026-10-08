@@ -244,6 +244,15 @@ class ExportRestoreActivity : Activity() {
             RestoreResult.WeakPassword -> {
                 showRestoreStatus(getString(R.string.restore_weak_password), isError = true)
             }
+            is RestoreResult.StoreFailure -> {
+                val message =
+                    if (result.rollbackSucceeded) {
+                        "Restore could not be saved. Existing account data was restored."
+                    } else {
+                        "Restore failed and existing account data could not be fully restored. Do not continue using this account."
+                    }
+                showRestoreStatus(message, isError = true)
+            }
         }
     }
 

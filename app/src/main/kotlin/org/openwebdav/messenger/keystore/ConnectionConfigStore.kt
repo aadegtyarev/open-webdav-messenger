@@ -85,7 +85,7 @@ internal class ConnectionConfigStore(
     fun has(communityId: String): Boolean = wrapper(communityId).exists()
 
     /** Delete the stored config. */
-    fun clear() = clear(DEFAULT_COMMUNITY_ID)
+    override fun clear() = clear(DEFAULT_COMMUNITY_ID)
 
     fun clear(communityId: String) = wrapper(communityId).delete()
 

@@ -567,12 +567,17 @@ internal object AppContainer {
                         minPollIntervalSeconds = pollSeconds,
                         retentionWindowDays = retentionDays,
                     )
-                CommunityMetadata.write(
-                    transport = transport,
-                    metadata = metadata,
-                    hostIdentity = graph.identity,
-                    identityCrypto = identityFactory.identityCrypto(),
-                )
+                val result =
+                    CommunityMetadata.write(
+                        transport = transport,
+                        metadata = metadata,
+                        hostIdentity = graph.identity,
+                        identityCrypto = identityFactory.identityCrypto(),
+                    )
+                if (result !is WebDavResult.Success) {
+                    onError?.invoke("Couldn't save settings: $result")
+                    return@launch
+                }
                 // Update local cache immediately so the UI reflects the change.
                 UserSettings.communityMinPollSeconds = pollSeconds
                 UserSettings.communityRetentionWindowDays = retentionDays

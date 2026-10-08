@@ -49,7 +49,7 @@ class CommunityKeyStore(context: Context) : ExportableCommunityKeyStore {
     fun has(): Boolean = wrapper.exists()
 
     /** Delete the stored key. */
-    fun remove() {
+    override fun clear() {
         wrapper.delete()
     }
 

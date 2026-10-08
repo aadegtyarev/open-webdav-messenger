@@ -86,7 +86,7 @@ class ChatKeyStore(
     fun has(chatId: String): Boolean = wrapper(chatId).exists()
 
     /** Delete the stored wrapped key for [chatId] (e.g. on leaving a chat). */
-    fun remove(chatId: String) {
+    override fun remove(chatId: String) {
         wrapper(chatId).delete()
         removeFromIndex(chatId)
     }

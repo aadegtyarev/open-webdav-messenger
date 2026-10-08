@@ -100,7 +100,7 @@ internal data class CommunityMetadata(
             metadata: CommunityMetadata,
             hostIdentity: Identity,
             identityCrypto: IdentityCrypto,
-        ) {
+        ): WebDavResult<Unit> {
             val json = metadata.toJson()
             val payloadBytes = json.toByteArray(Charsets.UTF_8)
             val signSecret = hostIdentity.copySignSecret()
@@ -108,8 +108,10 @@ internal data class CommunityMetadata(
             try {
                 val signature = identityCrypto.sign(payloadBytes, signSecret)
                 val fileBytes = signature + payloadBytes + hostSignPub
-                transport.ensureCollection("meta")
-                transport.write(FILE_PATH, fileBytes)
+                return when (val collection = transport.ensureCollection("meta")) {
+                    is WebDavResult.Success -> transport.write(FILE_PATH, fileBytes)
+                    else -> collection
+                }
             } finally {
                 signSecret.fill(0)
                 hostSignPub.fill(0)

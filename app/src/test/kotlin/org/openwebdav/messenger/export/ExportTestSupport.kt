@@ -43,6 +43,10 @@ internal object ExportTestSupport {
         override fun store(config: ConnectionConfig) {
             this.config = config
         }
+
+        override fun clear() {
+            config = null
+        }
     }
 
     class InMemoryCommunityKeyStore : ExportableCommunityKeyStore {
@@ -52,6 +56,10 @@ internal object ExportTestSupport {
 
         override fun store(key: ChatKey) {
             this.key = key
+        }
+
+        override fun clear() {
+            key = null
         }
     }
 
@@ -68,6 +76,10 @@ internal object ExportTestSupport {
         }
 
         override fun listChatIds(): List<String> = keys.keys.toList()
+
+        override fun remove(chatId: String) {
+            keys.remove(chatId)
+        }
     }
 
     class InMemoryIdentityStore : ExportableIdentityStore {
@@ -80,6 +92,10 @@ internal object ExportTestSupport {
 
         override fun store(identity: Identity) {
             this.identity = identity
+        }
+
+        override fun clear() {
+            identity = null
         }
     }
 }

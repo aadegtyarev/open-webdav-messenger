@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.identity.IdentityLoadResult
 import java.util.Base64
 
 /**
@@ -91,15 +92,9 @@ class RestoreManager(
                             ExportPayload.fromJson(json)
                                 ?: return@withContext RestoreResult.CorruptPayload
 
-                        // Validate payload — identity is mandatory for a complete restore.
-                        if (payload.identitySerialized == null) {
-                            return@withContext RestoreResult.CorruptPayload
-                        }
-
-                        // Populate all stores (all-or-nothing).
-                        populateStores(payload)
-
-                        RestoreResult.Restored
+                        // Validate all binary and identity data before touching persistent stores.
+                        val staged = stage(payload) ?: return@withContext RestoreResult.CorruptPayload
+                        return@withContext writeWithRollback(staged)
                     } finally {
                         key.fill(0)
                     }
@@ -112,47 +107,70 @@ class RestoreManager(
         }
     }
 
-    /** Populate all stores from the validated payload. Any store write failure here is an exception. */
-    private fun populateStores(payload: ExportPayload) {
-        // Connection config.
-        val cc = payload.connectionConfig
-        if (cc != null) {
-            connectionConfigStore.store(cc)
+    private data class StagedRestore(
+        val payload: ExportPayload,
+        val communityKey: ChatKey?,
+        val chatKeys: Map<String, ChatKey>,
+        val identity: Identity,
+    )
+
+    private fun stage(payload: ExportPayload): StagedRestore? =
+        try {
+            val communityKey = payload.communityKeyBase64?.let { decodeKey(it) ?: return null }
+            val chatKeys = payload.chatKeys.mapValues { (_, encoded) -> decodeKey(encoded) ?: return null }
+            val serializedIdentity = payload.identitySerialized?.let(ExportPayload::decodeBase64) ?: return null
+            val identity =
+                try {
+                    Identity.deserialize(serializedIdentity) ?: return null
+                } finally {
+                    serializedIdentity.fill(0)
+                }
+            payload.connectionConfig?.let { config ->
+                if (!config.baseUrl.startsWith("https://") || config.username.isBlank() ||
+                    config.appPassword.isBlank() || config.chatRoot.isBlank()
+                ) {
+                    return null
+                }
+            }
+            StagedRestore(payload, communityKey, chatKeys, identity)
+        } catch (_: Exception) {
+            null
         }
 
-        // Community key.
-        val ckB64 = payload.communityKeyBase64
-        if (ckB64 != null) {
-            val raw = ExportPayload.decodeBase64(ckB64)
-            try {
-                communityKeyStore.store(ChatKey.fromBytes(raw))
-            } finally {
-                raw.fill(0)
-            }
+    private fun decodeKey(encoded: String): ChatKey? {
+        val raw = ExportPayload.decodeBase64(encoded)
+        return try {
+            if (raw.size != ChatKey.KEY_BYTES) null else ChatKey.fromBytes(raw)
+        } finally {
+            raw.fill(0)
         }
+    }
 
-        // Chat keys.
-        for ((chatId, keyB64) in payload.chatKeys) {
-            val raw = ExportPayload.decodeBase64(keyB64)
-            try {
-                chatKeyStore.store(chatId, ChatKey.fromBytes(raw))
-            } finally {
-                raw.fill(0)
-            }
-        }
-
-        // Identity.
-        val idB64 = payload.identitySerialized
-        if (idB64 != null) {
-            val ser = ExportPayload.decodeBase64(idB64)
-            try {
-                val identity =
-                    Identity.deserialize(ser)
-                        ?: error("corrupt identity in payload")
-                identityStore.store(identity)
-            } finally {
-                ser.fill(0)
-            }
+    private fun writeWithRollback(staged: StagedRestore): RestoreResult {
+        val previousConfig = connectionConfigStore.load()
+        val previousCommunityKey = communityKeyStore.load()
+        val previousChatKeys = chatKeyStore.listChatIds().mapNotNull { id -> chatKeyStore.load(id)?.let { id to it } }.toMap()
+        val previousIdentity = identityStore.load()
+        if (previousIdentity is IdentityLoadResult.Unrecoverable) return RestoreResult.StoreFailure(rollbackSucceeded = true)
+        return try {
+            staged.payload.connectionConfig?.let(connectionConfigStore::store)
+            staged.communityKey?.let(communityKeyStore::store)
+            staged.chatKeys.forEach { (id, key) -> chatKeyStore.store(id, key) }
+            identityStore.store(staged.identity)
+            RestoreResult.Restored
+        } catch (_: Exception) {
+            val rolledBack =
+                runCatching {
+                    connectionConfigStore.clear()
+                    previousConfig?.let(connectionConfigStore::store)
+                    communityKeyStore.clear()
+                    previousCommunityKey?.let(communityKeyStore::store)
+                    (chatKeyStore.listChatIds() - previousChatKeys.keys).forEach(chatKeyStore::remove)
+                    previousChatKeys.forEach(chatKeyStore::store)
+                    identityStore.clear()
+                    (previousIdentity as? IdentityLoadResult.Loaded)?.identity?.let(identityStore::store)
+                }.isSuccess
+            RestoreResult.StoreFailure(rollbackSucceeded = rolledBack)
         }
     }
 

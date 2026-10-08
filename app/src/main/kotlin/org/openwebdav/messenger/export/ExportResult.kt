@@ -25,4 +25,7 @@ sealed interface RestoreResult {
 
     /** User cancelled or password empty. */
     data object WeakPassword : RestoreResult
+
+    /** A store write failed; [rollbackSucceeded] indicates whether the previous snapshot was restored. */
+    data class StoreFailure(val rollbackSucceeded: Boolean) : RestoreResult
 }

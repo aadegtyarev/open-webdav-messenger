@@ -91,6 +91,45 @@ class RestoreManagerTest {
             assertEquals("identity must not be populated on failure", IdentityLoadResult.None, idRestore.load())
         }
 
+    @Test
+    fun store_failure_rolls_back_all_previous_values() =
+        runTest {
+            val blob = exportBlob()
+            val oldConfig = ExportTestSupport.sampleConfig().copy(username = "old-user")
+            val cc = ExportTestSupport.inMemoryConnectionConfigStore().also { it.store(oldConfig) }
+            val ck =
+                ExportTestSupport.inMemoryCommunityKeyStore().also {
+                    it.store(CryptoTestSupport.fixedKey(seed = 4))
+                }
+            val chats =
+                ExportTestSupport.inMemoryChatKeyStore().also {
+                    it.store("old-chat", CryptoTestSupport.fixedKey(seed = 5))
+                }
+            val previousIdentityStore =
+                ExportTestSupport.inMemoryIdentityStore().also { it.store(ExportTestSupport.freshIdentity()) }
+            var failNextWrite = true
+            val failingIdentity =
+                object : ExportableIdentityStore by previousIdentityStore {
+                    override fun store(identity: org.openwebdav.messenger.identity.Identity) {
+                        if (failNextWrite) {
+                            failNextWrite = false
+                            error("injected identity store failure")
+                        }
+                        previousIdentityStore.store(identity)
+                    }
+                }
+
+            val result =
+                newRestoreManager(cc, ck, chats, failingIdentity)
+                    .restore(blob, "test-password-123".toCharArray())
+
+            assertEquals(RestoreResult.StoreFailure(rollbackSucceeded = true), result)
+            assertEquals(oldConfig, cc.load())
+            assertTrue(CryptoTestSupport.fixedKey(seed = 4).export().contentEquals(ck.load()?.export()))
+            assertEquals(listOf("old-chat"), chats.listChatIds())
+            assertTrue(previousIdentityStore.load() is IdentityLoadResult.Loaded)
+        }
+
     // -- empty base64 blob ---------------------------------------------------
 
     @Test
