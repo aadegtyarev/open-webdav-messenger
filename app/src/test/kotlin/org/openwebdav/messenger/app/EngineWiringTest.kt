@@ -1,7 +1,13 @@
 package org.openwebdav.messenger.app
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
@@ -112,6 +118,7 @@ class EngineWiringTest {
 
     @After
     fun tearDown() {
+        AppContainer.clearChatOpenTestSeam()
         SyncRunner.install(SyncRunner { CycleOutcome(0, 0, backedOff = false) })
         server.shutdown()
         db.close()
@@ -424,6 +431,61 @@ class EngineWiringTest {
         }
 
     @Test
+    fun start_dm_publishes_verified_peer_projection_with_matching_recipients() =
+        runBlocking {
+            AppContainer.bind(RuntimeEnvironment.getApplication())
+            val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
+            EngineWiring.initialize(JvmDeps(stored = stored))
+            val persistence = CountingRosterPersistence()
+            AppContainer.configureChatOpenTestSeam(
+                "default",
+                AppContainer.ChatOpenTestSeam(
+                    loadChatKey = { chatKey },
+                    loadStored = { stored },
+                    readDirectory = { DirectoryReadResult(emptyList(), 0) },
+                    cachePersistence = persistence,
+                    provisionDm = { _, _, _ -> true },
+                ),
+            )
+            val peer = DirectoryEntry("Verified peer", ByteArray(32) { 17 }, ByteArray(32) { 18 })
+            val originalGraph = checkNotNull(EngineWiring.current())
+            val publishedReadiness = mutableListOf<RecipientReadiness>()
+            val readinessObservers = mutableListOf<Job>()
+            val observer =
+                launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+                    EngineWiring.currentGraph.collect { published ->
+                        if (published != null && published !== originalGraph) {
+                            readinessObservers +=
+                                launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+                                    published.recipientReadiness.collect { publishedReadiness += it }
+                                }
+                        }
+                    }
+                }
+            try {
+                val dmId = checkNotNull(AppContainer.startDm(peer))
+                val dmGraph = checkNotNull(EngineWiring.current())
+                assertEquals(dmId, dmGraph.chatId)
+                assertEquals(1, publishedReadiness.size)
+                val ready = publishedReadiness.single() as RecipientReadiness.Ready
+                val peerId = Hex.encode(peer.copySigningPublicKey())
+                assertEquals(setOf(dmGraph.senderIdentifier, peerId), ready.members.toSet())
+                assertEquals(2, ready.participants.size)
+                assertEquals(
+                    setOf(
+                        participantDigest(dmGraph.identity.copySignPublic()),
+                        participantDigest(peer.copySigningPublicKey()),
+                    ),
+                    ready.participants.map { it.identityDigest }.toSet(),
+                )
+                assertTrue(ready.participants.single { it.isSelf }.identityDigest == participantDigest(dmGraph.identity.copySignPublic()))
+            } finally {
+                observer.cancel()
+                readinessObservers.forEach(Job::cancel)
+            }
+        }
+
+    @Test
     fun superseded_general_continuation_keeps_original_request_and_installed_graph() {
         val generalId = "general-chat"
         val dmId = "dm-chat"
@@ -468,6 +530,9 @@ class EngineWiringTest {
             assertEquals(dmId, dmGraph.chatId)
             assertTrue(dmGraph.recipientSnapshot() is RecipientReadiness.Ready)
             assertEquals("DM peer", dmGraph.memberNames.values.single())
+            val participantSnapshot = dmGraph.recipientSnapshot() as RecipientReadiness.Ready
+            assertTrue(participantSnapshot.participants.any { it.displayName == "DM peer" && !it.isSelf })
+            assertTrue(participantSnapshot.participants.any { it.isSelf })
             assertTrue(directoryRead.await(5, TimeUnit.SECONDS))
             resume.countDown()
             assertTrue(generalOpen.get(5, TimeUnit.SECONDS))
@@ -723,7 +788,7 @@ class EngineWiringTest {
                 executor.submit<Boolean> {
                     EngineWiring.switchToChatIfCurrent(
                         guard, expectedRevision, expectedGraph, "group-a", "Group A", chatKey,
-                        listOf(expectedGraph.senderIdentifier), emptyMap(), { true },
+                        listOf(expectedGraph.senderIdentifier), emptyMap(), { true }, RecipientReadiness.Loading,
                     ) {
                         checked.countDown()
                         check(releaseInstall.await(5, TimeUnit.SECONDS))
@@ -800,6 +865,7 @@ class EngineWiringTest {
                 listOf(initialGraph.senderIdentifier),
                 emptyMap(),
                 { selectedCommunity == "community-a" },
+                recipientReadiness = RecipientReadiness.Ready(listOf(initialGraph.senderIdentifier)),
             ),
         )
         val generalGraph = EngineWiring.current()!!
@@ -873,6 +939,7 @@ class EngineWiringTest {
                                 listOf(context.graph.senderIdentifier),
                                 emptyMap(),
                                 { selectedCommunity == context.communityId },
+                                recipientReadiness = RecipientReadiness.Loading,
                             )
                         }
                     },
@@ -953,6 +1020,7 @@ class EngineWiringTest {
                                 listOf(context.graph.senderIdentifier),
                                 emptyMap(),
                                 { selectedCommunity == context.communityId },
+                                recipientReadiness = RecipientReadiness.Loading,
                             )
                         }
                     },
@@ -1096,6 +1164,7 @@ class EngineWiringTest {
                     roster = listOf(plan.graph.senderIdentifier),
                     memberNames = emptyMap(),
                     isCommunitySelected = { selectedCommunity == plan.communityId },
+                    recipientReadiness = RecipientReadiness.Loading,
                 )
             },
         )
@@ -1186,6 +1255,7 @@ class EngineWiringTest {
                 listOf(graph.senderIdentifier),
                 emptyMap(),
                 { true },
+                recipientReadiness = RecipientReadiness.Loading,
             ),
         )
         assertTrue(
@@ -1199,6 +1269,7 @@ class EngineWiringTest {
                 listOf(graph.senderIdentifier),
                 emptyMap(),
                 { true },
+                recipientReadiness = RecipientReadiness.Ready(listOf(graph.senderIdentifier)),
             ),
         )
         assertEquals("General", EngineWiring.current()?.communityName)

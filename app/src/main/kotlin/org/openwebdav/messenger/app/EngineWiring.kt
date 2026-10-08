@@ -60,6 +60,8 @@ import org.openwebdav.messenger.transport.WebDavResult
 internal object EngineWiring {
     @Volatile
     private var graph: RuntimeGraph? = null
+    private val _currentGraph = MutableStateFlow<RuntimeGraph?>(null)
+    val currentGraph: StateFlow<RuntimeGraph?> = _currentGraph.asStateFlow()
 
     @Volatile
     private var communityId: String = "default"
@@ -120,6 +122,7 @@ internal object EngineWiring {
         deps = injected
         communityId = deps.activeCommunityId()
         graph = null
+        _currentGraph.value = null
         activeChatIds = emptyList()
         rebuildFromStore()
         graph?.let { active ->
@@ -181,6 +184,7 @@ internal object EngineWiring {
                     ).also { it.memberNames = memberNames }
                 }
             graph = g
+            _currentGraph.value = g
             activeChatIds = allChats
             installAndSchedule(g, selectedCommunityId)
         }
@@ -221,6 +225,8 @@ internal object EngineWiring {
      * Switch the active send-path chat within the current community (e.g. from community chat to a DM).
      * The poll subscriptions (all community chats) stay unchanged; only the active [RuntimeGraph] is
      * replaced so the send path uses the correct [chatId], [chatKey], display name, and roster.
+     * Callers must provide the initial readiness snapshot explicitly so recipient and participant data
+     * cannot be published in divergent Ready states.
      */
     fun switchToChatIfCurrent(
         guard: RuntimeSelectionGuard,
@@ -232,7 +238,7 @@ internal object EngineWiring {
         roster: List<String>,
         memberNames: Map<String, String>,
         isCommunitySelected: () -> Boolean,
-        recipientReadiness: RecipientReadiness = RecipientReadiness.Ready(roster),
+        recipientReadiness: RecipientReadiness,
         beforeInstall: () -> Unit = {},
     ): Boolean =
         guard.runIfCurrent(expectedSelectionRevision) {
@@ -250,7 +256,7 @@ internal object EngineWiring {
         chatKey: ChatKey,
         roster: List<String>,
         memberNames: Map<String, String> = emptyMap(),
-        recipientReadiness: RecipientReadiness = RecipientReadiness.Ready(roster),
+        recipientReadiness: RecipientReadiness,
     ) {
         synchronized(runtimeInstallLock) {
             val base = graph ?: return
@@ -285,6 +291,7 @@ internal object EngineWiring {
             )
         switched.memberNames = memberNames
         graph = switched
+        _currentGraph.value = switched
         if (chatId !in activeChatIds) {
             activeChatIds = activeChatIds + chatId
             installAndSchedule(switched, base.communityId)
@@ -299,6 +306,7 @@ internal object EngineWiring {
         val allChats = deps.communityChatIds(selectedCommunityId)
         val g = deps.buildGraph(stored.config, stored.chatId, stored.communityName, chatKey, identity, selectedCommunityId)
         graph = g
+        _currentGraph.value = g
         activeChatIds = allChats
     }
 

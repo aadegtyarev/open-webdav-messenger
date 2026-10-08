@@ -7,7 +7,10 @@ import kotlinx.coroutines.flow.asStateFlow
 internal sealed interface RecipientReadiness {
     data object Loading : RecipientReadiness
 
-    data class Ready(val members: List<String>) : RecipientReadiness
+    data class Ready(
+        val members: List<String>,
+        val participants: List<VerifiedParticipant> = emptyList(),
+    ) : RecipientReadiness
 
     data class Unavailable(val message: String) : RecipientReadiness
 }
@@ -30,7 +33,11 @@ internal class VerifiedRecipientRoster(
     private fun RecipientReadiness.normalized(): RecipientReadiness =
         when (this) {
             RecipientReadiness.Loading -> this
-            is RecipientReadiness.Ready -> copy(members = (listOf(senderIdentifier) + members).distinct())
+            is RecipientReadiness.Ready ->
+                copy(
+                    members = (listOf(senderIdentifier) + members).distinct().toList(),
+                    participants = participants.toList(),
+                )
             is RecipientReadiness.Unavailable -> this
         }
 }

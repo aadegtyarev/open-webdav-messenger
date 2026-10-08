@@ -14,6 +14,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -30,11 +31,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.EngineWiring
 import org.openwebdav.messenger.ui.chatlist.UnifiedChatListScreen
 import org.openwebdav.messenger.ui.feed.ChatFeedScreen
 import org.openwebdav.messenger.ui.invite.InviteScreen
 import org.openwebdav.messenger.ui.onboarding.CreateCommunityScreen
 import org.openwebdav.messenger.ui.onboarding.JoinScreen
+import org.openwebdav.messenger.ui.participants.ParticipantsScreen
 import org.openwebdav.messenger.ui.settings.SettingsScreen
 import org.openwebdav.messenger.ui.settings.UserSettings
 import org.openwebdav.messenger.ui.start.StartScreen
@@ -66,7 +69,7 @@ internal fun AppRoot() {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "v0.14.0+",
+                "v0.24.0+",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -80,12 +83,12 @@ internal fun AppRoot() {
 
 /** The post-readiness navigation graph — the start destination is resolved from the warmed-up graph. */
 @Composable
-private fun AppNav() {
+internal fun AppNav(initialScreen: Screen? = null) {
     val startAlreadyJoined = remember { AppContainer.runtimeGraph() != null }
     val hasCommunities = remember { AppContainer.communities().isNotEmpty() }
     var screen: Screen by rememberSaveable(stateSaver = ScreenSaver) {
         mutableStateOf(
-            when {
+            initialScreen ?: when {
                 startAlreadyJoined -> Screen.CommunityList
                 hasCommunities -> Screen.CommunityList
                 else -> Screen.Start
@@ -93,6 +96,11 @@ private fun AppNav() {
         )
     }
     var restoredAccountRevision by rememberSaveable { mutableIntStateOf(0) }
+    var participantsGraphScope by rememberSaveable { mutableStateOf<String?>(null) }
+    val currentGraph by EngineWiring.currentGraph.collectAsStateWithLifecycle()
+    LaunchedEffect(screen, currentGraph?.scopeKey, participantsGraphScope) {
+        if (screen == Screen.Participants && currentGraph?.scopeKey != participantsGraphScope) screen = Screen.Feed
+    }
     val context = LocalContext.current
     val exportRestoreLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -181,8 +189,19 @@ private fun AppNav() {
         Screen.Feed ->
             ChatFeedScreen(
                 onShowInvite = { screen = Screen.Invite },
+                onShowParticipants = {
+                    participantsGraphScope = currentGraph?.scopeKey
+                    if (participantsGraphScope != null) screen = Screen.Participants
+                },
                 onBack = { screen = Screen.CommunityList },
             )
+
+        Screen.Participants -> {
+            val graph = currentGraph
+            if (graph != null && graph.scopeKey == participantsGraphScope) {
+                ParticipantsScreen(graph = graph, onBack = { screen = Screen.Feed })
+            }
+        }
 
         Screen.Invite ->
             InviteScreen(
@@ -224,6 +243,8 @@ internal sealed interface Screen {
 
     data object Invite : Screen
 
+    data object Participants : Screen
+
     data object Settings : Screen
 }
 
@@ -235,6 +256,7 @@ internal fun Screen.persistedRoute(): String =
         Screen.Join -> "join"
         Screen.Feed -> "feed"
         Screen.Invite -> "invite"
+        Screen.Participants -> "participants"
         Screen.Settings -> "settings"
     }
 
@@ -245,6 +267,7 @@ internal fun screenForSavedRoute(route: String): Screen =
         "join" -> Screen.Join
         "feed" -> Screen.Feed
         "invite" -> Screen.Invite
+        "participants" -> Screen.Participants
         "settings" -> Screen.Settings
         else -> Screen.Start
     }
@@ -252,7 +275,7 @@ internal fun screenForSavedRoute(route: String): Screen =
 internal fun Screen.systemBackDestination(hasCommunities: Boolean): Screen =
     when (this) {
         Screen.Feed -> Screen.CommunityList
-        Screen.Invite -> Screen.Feed
+        Screen.Invite, Screen.Participants -> Screen.Feed
         Screen.CreateCommunity, Screen.Join -> if (hasCommunities) Screen.CommunityList else Screen.Start
         Screen.Settings -> Screen.CommunityList
         Screen.CommunityList, Screen.Start -> this

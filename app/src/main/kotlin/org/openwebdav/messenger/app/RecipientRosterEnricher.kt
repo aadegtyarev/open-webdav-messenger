@@ -33,7 +33,15 @@ internal class RecipientRosterEnricher(
                             }
                         graph.setMemberNamesError(null)
                         graph.updateRecipientReadiness(
-                            RecipientReadiness.Ready(result.entries.map { Hex.encode(it.copySigningPublicKey()) }),
+                            RecipientReadiness.Ready(
+                                members = result.entries.map { Hex.encode(it.copySigningPublicKey()) },
+                                participants =
+                                    verifiedParticipants(
+                                        result.entries,
+                                        graph.senderIdentifier,
+                                        graph.identity.copySignPublic(),
+                                    ),
+                            ),
                         )
                     }
                     val commit = commitVerified

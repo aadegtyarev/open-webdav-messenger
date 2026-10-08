@@ -1,24 +1,36 @@
 package org.openwebdav.messenger.ui
 
+import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppTestSupport
 import org.openwebdav.messenger.app.EngineWiring
+import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RuntimeGraph
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
+import org.openwebdav.messenger.directory.DirectoryEntry
+import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.keystore.StoredConnection
@@ -32,6 +44,7 @@ import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.TransportFactory
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.GraphicsMode
 
 /**
@@ -47,7 +60,7 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AppRootTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     private lateinit var server: MockWebServer
     private lateinit var db: MessengerDatabase
@@ -68,9 +81,81 @@ class AppRootTest {
 
     @After
     fun tearDown() {
+        AppContainer.clearChatOpenTestSeam()
         EngineWiring.initialize(JvmDeps(stored = null))
         server.shutdown()
         db.close()
+    }
+
+    @Test
+    fun participants_destination_is_saveable_and_back_returns_to_feed() {
+        assertEquals("participants", Screen.Participants.persistedRoute())
+        assertEquals(Screen.Participants, screenForSavedRoute("participants"))
+        assertEquals(Screen.Feed, Screen.Participants.systemBackDestination(hasCommunities = true))
+    }
+
+    @Test
+    fun app_nav_participants_route_restores_and_returns_by_toolbar_and_system_back() {
+        val stored = StoredConnection(SyncTestSupport.config(server), chatId, "My Community")
+        EngineWiring.initialize(JvmDeps(stored = stored))
+        // This restores AppNav's production rememberSaveable state; the Robolectric Compose host cannot re-install content after ActivityScenario.recreate().
+        val restoration = StateRestorationTester(composeRule)
+        restoration.setContent { AppNav(initialScreen = Screen.Feed) }
+        composeRule.onNodeWithContentDescription("Participants").performClick()
+        composeRule.onNodeWithText("Participants").assertIsDisplayed()
+        restoration.emulateSavedInstanceStateRestore()
+        composeRule.onNodeWithText("Participants").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Back to chat").performClick()
+        composeRule.onNodeWithContentDescription("Message").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Participants").performClick()
+        composeRule.activity.onBackPressedDispatcher.onBackPressed()
+        composeRule.onNodeWithContentDescription("Message").assertIsDisplayed()
+    }
+
+    @Test
+    fun app_nav_returns_to_feed_when_the_exact_runtime_graph_changes() {
+        val first = StoredConnection(SyncTestSupport.config(server), chatId, "My Community")
+        EngineWiring.initialize(JvmDeps(stored = first))
+        composeRule.setContent { AppNav(initialScreen = Screen.Feed) }
+        composeRule.onNodeWithContentDescription("Participants").performClick()
+        composeRule.onNodeWithText("Participants").assertIsDisplayed()
+
+        val switched = first.copy(chatId = "other-chat-id-00000000001")
+        composeRule.runOnIdle { EngineWiring.initialize(JvmDeps(stored = switched)) }
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithContentDescription("Message").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("Participants").assertDoesNotExist()
+    }
+
+    @Test
+    fun participants_retry_button_runs_the_guarded_roster_refresh() {
+        AppContainer.bind(RuntimeEnvironment.getApplication())
+        val stored = StoredConnection(SyncTestSupport.config(server), chatId, "My Community")
+        EngineWiring.initialize(JvmDeps(stored = stored))
+        val graph = checkNotNull(AppContainer.runtimeGraph())
+        graph.updateRecipientReadiness(RecipientReadiness.Unavailable("offline"))
+        val readStarted = CompletableDeferred<Unit>()
+        val readResult = CompletableDeferred<DirectoryReadResult>()
+        val readFinished = CompletableDeferred<Unit>()
+        AppContainer.configureChatOpenTestSeam(
+            "default",
+            AppContainer.ChatOpenTestSeam(
+                loadChatKey = { chatKey },
+                loadStored = { stored },
+                readDirectory = {
+                    readStarted.complete(Unit)
+                    readResult.await()
+                },
+                onRosterEnrichmentCompleted = { readFinished.complete(Unit) },
+            ),
+        )
+        composeRule.setContent { AppNav(initialScreen = Screen.Feed) }
+        composeRule.onNodeWithContentDescription("Participants").performClick()
+        composeRule.onNodeWithText("Retry").performClick()
+        runBlocking { withTimeout(5_000) { readStarted.await() } }
+        readResult.complete(DirectoryReadResult(listOf(DirectoryEntry("Retry peer", ByteArray(32) { 19 }, ByteArray(32) { 20 })), 0))
+        runBlocking { withTimeout(5_000) { readFinished.await() } }
+        composeRule.onNodeWithText("Retry peer").assertIsDisplayed()
+        assertTrue((graph.recipientSnapshot() as RecipientReadiness.Ready).participants.any { it.displayName == "Retry peer" })
     }
 
     @Test

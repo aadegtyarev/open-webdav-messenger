@@ -117,6 +117,32 @@ data; stale or superseded refresh work cannot write or apply. This cache does no
 change the Ready-snapshot requirement for new sends or existing outbox retry
 behavior.
 
+**Verified participants (3-participants):** A separately accessible, labelled People
+icon in the top bar (minimum 48×48dp target) opens a read-only list for the exact
+active General, group, or DM graph; Invite/PersonAdd remains a separate action.
+The list consumes the same `RecipientReadiness.Ready` snapshot and cache as
+verified recipients and sending: member IDs and public-identity rows are
+published together and agree semantically. For a DM, verified self and peer rows
+are built before graph installation, so the first published graph already
+contains the matching recipients and participant projection.
+
+A valid Ready cache hit renders without waiting for network refresh; refresh
+remains silent and a failed refresh does not displace the cached Ready state.
+Without a valid cache, Loading shows progress and explanation while Feed remains
+accessible; Unavailable offers the existing guarded roster retry. Rows expose
+verified display names, a clear self marker, and only a short domain-separated
+digest prefix of the public signing identity. Prefixes extend deterministically
+to a bounded length and receive a stable disambiguator on collision; the full
+digest stays internal to row keys, ordering, and collision checks, and is never
+displayed. Self sorts first and peers sort deterministically by normalized name
+then digest. No private keys, full/raw keys, credentials, box keys, or technical
+blobs are displayed. Empty/self-only rosters remain truthful, and rows offer no
+membership-management actions.
+
+The saveable Participants destination supports system and toolbar Back to Feed;
+a runtime-scope mismatch returns to Feed rather than displaying a stale graph.
+This foreground-only view does not change background delivery.
+
 **Send failure and retry (3-send-fail):** A failed or uncertain send remains in
 the feed with truthful local status. A transient error below the draft clears
 when the draft changes or a send succeeds. Automatic sync retry and explicit

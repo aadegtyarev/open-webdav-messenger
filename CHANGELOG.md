@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.24.0] — 2026-10-08
+
+### Added
+
+- A read-only Participants screen shows the exact chat's verified roster, self
+  first, with deterministic ordering and short public signing-identity fingerprints.
+  It reuses cached/verified readiness, keeps loading/retry states feed-safe, and
+  keeps invitation separate from membership information.
+
 ## [0.23.3] — 2026-10-08
 
 ### Added

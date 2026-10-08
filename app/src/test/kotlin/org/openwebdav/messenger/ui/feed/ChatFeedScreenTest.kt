@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -34,6 +35,7 @@ import org.openwebdav.messenger.app.EngineWiring
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RosterCacheProvenance
 import org.openwebdav.messenger.app.RuntimeGraph
+import org.openwebdav.messenger.app.VerifiedParticipant
 import org.openwebdav.messenger.app.VerifiedRosterCachePersistence
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
@@ -52,6 +54,7 @@ import org.openwebdav.messenger.protocol.OrderToken
 import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.sync.SyncRunner
 import org.openwebdav.messenger.sync.SyncTestSupport
+import org.openwebdav.messenger.ui.participants.ParticipantsScreen
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.GraphicsMode
 import java.util.concurrent.LinkedBlockingQueue
@@ -312,6 +315,9 @@ class ChatFeedScreenTest {
         val graph = checkNotNull(AppContainer.runtimeGraph())
         AppContainer.startIndependentGeneralRosterRefreshForStartupOrRestore(graph)
         assertTrue(graph.recipientSnapshot() is RecipientReadiness.Ready)
+        val participants = graph.recipientSnapshot() as RecipientReadiness.Ready
+        assertTrue(participants.participants.any { it.displayName == "Peer" && !it.isSelf })
+        assertTrue(participants.participants.any { it.isSelf })
         assertEquals("Peer", graph.memberNames.values.single())
         read.complete(DirectoryReadResult(emptyList(), 0, listingFailed = true))
         runBlocking { withTimeout(5_000) { completed.await() } }
@@ -349,9 +355,60 @@ class ChatFeedScreenTest {
             assertTrue(runBlocking { AppContainer.openGroupChat(id, kind, communityId, requestToken = request) })
             val installed = checkNotNull(AppContainer.runtimeGraph())
             assertTrue(installed.recipientSnapshot() is RecipientReadiness.Ready)
+            val participants = installed.recipientSnapshot() as RecipientReadiness.Ready
+            assertTrue(participants.participants.any { it.displayName == "Peer" && !it.isSelf })
+            assertTrue(participants.participants.any { it.isSelf })
             pendingReads.poll(5, TimeUnit.SECONDS)!!.complete(DirectoryReadResult(emptyList(), 0, listingFailed = true))
             runBlocking { withTimeout(5_000) { completed.await() } }
         }
+    }
+
+    @Test
+    fun participants_screen_shows_verified_projection_and_self_marker() {
+        val graph =
+            graph().apply {
+                updateRecipientReadiness(
+                    RecipientReadiness.Ready(
+                        listOf(senderIdentifier, "peer"),
+                        listOf(VerifiedParticipant("Alex", "a1b2c3d4e5" + "0".repeat(54), false)),
+                    ),
+                )
+            }
+        composeRule.setContent { ParticipantsScreen(graph, onBack = {}) }
+        composeRule.onNodeWithText("Alex").assertIsDisplayed()
+        composeRule.onNodeWithText("You").assertIsDisplayed()
+        composeRule.onNodeWithText("Identity · a1b2c3d4e5").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Back to chat").assertIsDisplayed()
+        composeRule.onNodeWithText("Remove").assertDoesNotExist()
+        composeRule.onNodeWithText("Ban").assertDoesNotExist()
+        composeRule.onNodeWithText("Change role").assertDoesNotExist()
+    }
+
+    @Test
+    fun participants_screen_expands_colliding_fingerprint_prefixes_without_duplicate_row_keys() {
+        val first = "a".repeat(10) + "1" + "0".repeat(53)
+        val second = "a".repeat(10) + "2" + "0".repeat(53)
+        val graph = graph()
+        graph.updateRecipientReadiness(
+            RecipientReadiness.Ready(
+                listOf(graph.senderIdentifier, "peer-1", "peer-2"),
+                listOf(VerifiedParticipant("Alex", first, false), VerifiedParticipant("Alex", second, false)),
+            ),
+        )
+        composeRule.setContent { ParticipantsScreen(graph, onBack = {}) }
+        composeRule.onNodeWithText("Identity · ${first.take(11)}").assertIsDisplayed()
+        composeRule.onNodeWithText("Identity · ${second.take(11)}").assertIsDisplayed()
+    }
+
+    @Test
+    fun participants_screen_explains_loading_and_unavailable_states() {
+        val graph = graph().apply { updateRecipientReadiness(RecipientReadiness.Loading) }
+        composeRule.setContent { ParticipantsScreen(graph, onBack = {}) }
+        composeRule.onNodeWithText("Loading verified participants…").assertIsDisplayed()
+        graph.updateRecipientReadiness(RecipientReadiness.Unavailable("offline"))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Participants are unavailable right now.").assertIsDisplayed()
+        composeRule.onNodeWithText("Retry").assertIsDisplayed()
     }
 
     @Test
@@ -361,6 +418,11 @@ class ChatFeedScreenTest {
             ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph))
         }
         composeRule.onNodeWithContentDescription("Reading participants from server").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Participants")
+            .assertIsDisplayed()
+            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithContentDescription("Invite someone").assertIsDisplayed()
         composeRule.onNodeWithText("Message").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Message").performTextInput("hello")
         composeRule.onNodeWithContentDescription("Send").assertIsEnabled()
