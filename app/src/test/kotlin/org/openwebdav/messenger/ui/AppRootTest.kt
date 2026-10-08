@@ -74,6 +74,13 @@ class AppRootTest {
     }
 
     @Test
+    fun participants_destination_is_saveable_and_back_returns_to_feed() {
+        assertEquals("participants", Screen.Participants.persistedRoute())
+        assertEquals(Screen.Participants, screenForSavedRoute("participants"))
+        assertEquals(Screen.Feed, Screen.Participants.systemBackDestination(hasCommunities = true))
+    }
+
+    @Test
     fun successful_restore_activity_result_returns_to_chats_and_invalidates_settings() {
         val update = accountRestoreNavigationResult(Screen.Settings, 4, android.app.Activity.RESULT_OK)
         assertEquals(Screen.CommunityList, update.screen)

@@ -60,6 +60,8 @@ import org.openwebdav.messenger.transport.WebDavResult
 internal object EngineWiring {
     @Volatile
     private var graph: RuntimeGraph? = null
+    private val _currentGraph = MutableStateFlow<RuntimeGraph?>(null)
+    val currentGraph: StateFlow<RuntimeGraph?> = _currentGraph.asStateFlow()
 
     @Volatile
     private var communityId: String = "default"
@@ -120,6 +122,7 @@ internal object EngineWiring {
         deps = injected
         communityId = deps.activeCommunityId()
         graph = null
+        _currentGraph.value = null
         activeChatIds = emptyList()
         rebuildFromStore()
         graph?.let { active ->
@@ -181,6 +184,7 @@ internal object EngineWiring {
                     ).also { it.memberNames = memberNames }
                 }
             graph = g
+            _currentGraph.value = g
             activeChatIds = allChats
             installAndSchedule(g, selectedCommunityId)
         }
@@ -285,6 +289,7 @@ internal object EngineWiring {
             )
         switched.memberNames = memberNames
         graph = switched
+        _currentGraph.value = switched
         if (chatId !in activeChatIds) {
             activeChatIds = activeChatIds + chatId
             installAndSchedule(switched, base.communityId)
@@ -299,6 +304,7 @@ internal object EngineWiring {
         val allChats = deps.communityChatIds(selectedCommunityId)
         val g = deps.buildGraph(stored.config, stored.chatId, stored.communityName, chatKey, identity, selectedCommunityId)
         graph = g
+        _currentGraph.value = g
         activeChatIds = allChats
     }
 

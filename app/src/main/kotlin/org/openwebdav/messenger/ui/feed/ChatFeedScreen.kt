@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
@@ -80,6 +81,7 @@ import org.openwebdav.messenger.ui.runtimeScopeKey
 @Composable
 internal fun ChatFeedScreen(
     onShowInvite: () -> Unit,
+    onShowParticipants: () -> Unit = {},
     onBack: () -> Unit = {},
     viewModel: ChatFeedViewModel =
         viewModel(
@@ -224,6 +226,12 @@ internal fun ChatFeedScreen(
                             }
                         is RecipientReadiness.Ready -> Unit
                         is RecipientReadiness.Unavailable -> Unit
+                    }
+                    IconButton(
+                        onClick = onShowParticipants,
+                        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                    ) {
+                        Icon(Icons.Filled.People, contentDescription = stringResource(R.string.participants_action))
                     }
                     IconButton(onClick = onShowInvite) {
                         Icon(Icons.Filled.PersonAdd, contentDescription = "Invite someone")

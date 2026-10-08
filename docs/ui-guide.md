@@ -47,7 +47,8 @@ UI conventions for this project. Read by agents before planning or reviewing any
 - **Error display:** Snackbar for transient errors (sync failures, send retries); inline text for validation errors (bad URL, empty fields).
 - **Confirmation dialogs:** Only for destructive actions (leave chat, delete local data).
 - **Empty states:** "No messages yet" with the chat name and member count in the feed; first launch offers Create, Join, and Restore account so existing members need not create/join before restoring.
-- **Back navigation:** System back button / gesture returns to the previous screen; back from the chat feed returns to Chats.
+- **Back navigation:** System back button / gesture returns to the previous screen; back from the chat feed returns to Chats. The read-only Participants screen returns to the exact feed via system or toolbar Back.
+- **Participants:** Keep the Participants action distinct from Invite, label it for TalkBack, and provide at least a 48×48dp touch target. Show only the current chat's verified roster, with self clearly marked and short public-identity fingerprints rather than raw keys. Loading and retryable failure must leave the feed accessible; never suggest roster rows are membership-management controls.
 - **Notification permission:** On Android 13+, explain the message-alert benefit before an explicit permission request. After denial, show guidance and a system-settings link instead of repeatedly prompting. Older versions do not request runtime notification permission.
 - **Account recovery:** Restore is available from Start and Settings. Success returns to the Chats list only after usable runtime activation; validation/store failures must remain truthful and must not be reported as completed activation.
 

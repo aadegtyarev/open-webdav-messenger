@@ -8,6 +8,16 @@
     <string name="roster_loading_placeholder">Reading participants from server…</string>
     <string name="roster_loading_accessibility">Reading participants from server</string>
     <string name="roster_loading_explanation">Reading participants from server. Sending will be available when complete.</string>
+    <string name="participants_action">Participants</string>
+    <string name="participants_title">Participants</string>
+    <string name="participants_back">Back to chat</string>
+    <string name="participants_you">You</string>
+    <string name="participants_unknown_name">Name unavailable</string>
+    <string name="participants_loading">Loading verified participants…</string>
+    <string name="participants_unavailable">Participants are unavailable right now.</string>
+    <string name="participants_retry">Retry</string>
+    <string name="participants_empty">No other verified participants in this chat.</string>
+    <string name="participants_fingerprint">Identity · %1$s</string>
 
     <!-- Export / Restore -->
     <string name="export_restore_title">Backup &amp; Restore</string>
