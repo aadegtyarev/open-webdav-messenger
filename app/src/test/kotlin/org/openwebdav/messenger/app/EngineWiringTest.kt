@@ -22,6 +22,8 @@ import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.CredentialRotation
+import org.openwebdav.messenger.directory.DirectoryEntry
+import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.keystore.ChatRegistry
@@ -215,11 +217,36 @@ class EngineWiringTest {
             EngineWiring.initialize(deps)
             val peerId = "0123456789abcdef"
             val selfId = Hex.encode(identity.copySignPublic())
-            EngineWiring.switchToChat("opened-group", "Project group", chatKey, listOf(selfId, peerId), mapOf(peerId to "Project peer"))
+            EngineWiring.switchToChat(
+                "opened-group",
+                "Project group",
+                chatKey,
+                listOf(selfId, peerId),
+                mapOf(peerId to "Project peer"),
+                RecipientReadiness.Loading,
+            )
+            val oldGraph = EngineWiring.current()!!
+            val oldReadStarted = CompletableDeferred<Unit>()
+            val oldRead = CompletableDeferred<DirectoryReadResult>()
+            val oldEnrichment =
+                RecipientRosterEnricher(
+                    this,
+                    oldGraph,
+                    { update -> EngineWiring.updateGraphIfCurrent(oldGraph, { EngineWiring.current() === oldGraph }, update) },
+                ) {
+                    oldReadStarted.complete(Unit)
+                    oldRead.await()
+                }.start()
+            oldReadStarted.await()
 
             SyncRunner.current().runOnce()
 
             val rotatedGraph = EngineWiring.current()!!
+            assertTrue(rotatedGraph.recipientSnapshot() is RecipientReadiness.Unavailable)
+            oldRead.complete(DirectoryReadResult(listOf(DirectoryEntry("Stale", ByteArray(32) { 3 }, ByteArray(32) { 4 })), 0))
+            oldEnrichment.join()
+            assertTrue(rotatedGraph.recipientSnapshot() is RecipientReadiness.Unavailable)
+            rotatedGraph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(selfId, peerId)))
             assertEquals("opened-group", rotatedGraph.chatId)
             assertEquals(listOf(selfId, peerId), rotatedGraph.roster)
             assertEquals(mapOf(peerId to "Project peer"), rotatedGraph.memberNames)

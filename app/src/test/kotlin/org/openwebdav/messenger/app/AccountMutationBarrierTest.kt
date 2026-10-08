@@ -11,6 +11,46 @@ import org.openwebdav.messenger.account.AccountMutationBarrier
 
 class AccountMutationBarrierTest {
     @Test
+    fun local_open_is_not_blocked_by_poll_but_does_not_overlap_account_replacement() =
+        runTest {
+            val barrier = AccountMutationBarrier()
+            val pollStarted = CompletableDeferred<Unit>()
+            val pollRelease = CompletableDeferred<Unit>()
+            val openStarted = CompletableDeferred<Unit>()
+            val openRelease = CompletableDeferred<Unit>()
+            val replacementStarted = CompletableDeferred<Unit>()
+            val poll =
+                launch {
+                    barrier.withExclusive {
+                        pollStarted.complete(Unit)
+                        pollRelease.await()
+                    }
+                }
+            pollStarted.await()
+            val open =
+                launch {
+                    barrier.withStableAccount {
+                        openStarted.complete(Unit)
+                        openRelease.await()
+                    }
+                }
+            yield()
+            assertTrue(openStarted.isCompleted)
+            val replacement =
+                launch {
+                    barrier.withAccountReplacement { replacementStarted.complete(Unit) }
+                }
+            yield()
+            assertFalse(replacementStarted.isCompleted)
+            openRelease.complete(Unit)
+            replacementStarted.await()
+            pollRelease.complete(Unit)
+            poll.join()
+            open.join()
+            replacement.join()
+        }
+
+    @Test
     fun restore_waits_for_in_flight_rotation() =
         runTest {
             val barrier = AccountMutationBarrier.process
