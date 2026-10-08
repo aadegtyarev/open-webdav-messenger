@@ -54,6 +54,9 @@ internal class MessageSendService(
         onRecoverablyPersisted: suspend () -> Unit,
     ): SendResult {
         check(isCurrent()) { "Account changed before send" }
+        val recipients =
+            (graph.recipientSnapshot() as? RecipientReadiness.Ready)?.members
+                ?: error("Verified recipients are not ready")
         var persistedMessageId: String? = null
         try {
             val prepared =
@@ -86,13 +89,13 @@ internal class MessageSendService(
                                 receivedAtMillis = now,
                                 sendStatus = MessageEntity.STATUS_SENDING,
                                 outboxEnvelope = envelopeBytes,
-                                outboxRecipients = graph.roster.filter { it != graph.senderIdentifier },
+                                outboxRecipients = recipients.filter { it != graph.senderIdentifier },
                                 outboxCommunityId = graph.communityId,
                             )
                         if (inserted) persistedMessageId = messageId
                     }
                     check(inserted) { "New outgoing message ID already exists" }
-                    PreparedSend(orderToken, messageId, envelopeBytes)
+                    PreparedSend(orderToken, messageId, envelopeBytes, recipients)
                 }
             onRecoverablyPersisted()
             return withContext(ioDispatcher) {
@@ -102,13 +105,13 @@ internal class MessageSendService(
                             graph.chatId,
                             prepared.orderToken,
                             prepared.envelopeBytes,
-                            allMembers = graph.roster,
+                            allMembers = prepared.recipients,
                             graph.senderIdentifier,
                         )
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Exception) {
-                        org.openwebdav.messenger.sync.SendOutcome(false, 0, graph.roster.size)
+                        org.openwebdav.messenger.sync.SendOutcome(false, 0, prepared.recipients.size)
                     }
                 if (outcome.complete) {
                     graph.store.markSent(prepared.messageId, graph.communityId)
@@ -131,6 +134,7 @@ internal class MessageSendService(
         val orderToken: String,
         val messageId: String,
         val envelopeBytes: ByteArray,
+        val recipients: List<String>,
     )
 
     override suspend fun retry(messageId: String): Boolean =

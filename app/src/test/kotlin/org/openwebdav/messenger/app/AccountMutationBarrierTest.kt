@@ -1,9 +1,12 @@
 package org.openwebdav.messenger.app
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,7 +14,103 @@ import org.openwebdav.messenger.account.AccountMutationBarrier
 
 class AccountMutationBarrierTest {
     @Test
-    fun restore_waits_for_in_flight_rotation() =
+    fun account_replacement_generation_invalidates_prior_snapshots() =
+        runTest {
+            val barrier = AccountMutationBarrier()
+            val captured = barrier.replacementGeneration()
+            barrier.withStableAccount { }
+            assertEquals(captured, barrier.replacementGeneration())
+            barrier.withAccountReplacement { }
+            assertTrue(barrier.replacementGeneration() > captured)
+        }
+
+    @Test
+    fun local_open_is_not_blocked_by_poll_but_does_not_overlap_account_replacement() =
+        runTest {
+            val barrier = AccountMutationBarrier()
+            val pollStarted = CompletableDeferred<Unit>()
+            val pollRelease = CompletableDeferred<Unit>()
+            val openStarted = CompletableDeferred<Unit>()
+            val openRelease = CompletableDeferred<Unit>()
+            val replacementStarted = CompletableDeferred<Unit>()
+            val poll =
+                launch {
+                    barrier.withExclusive {
+                        pollStarted.complete(Unit)
+                        pollRelease.await()
+                    }
+                }
+            pollStarted.await()
+            val open =
+                launch {
+                    barrier.withStableAccount {
+                        openStarted.complete(Unit)
+                        openRelease.await()
+                    }
+                }
+            yield()
+            assertTrue(openStarted.isCompleted)
+            val replacement =
+                launch {
+                    barrier.withAccountReplacement { replacementStarted.complete(Unit) }
+                }
+            yield()
+            assertFalse(replacementStarted.isCompleted)
+            openRelease.complete(Unit)
+            replacementStarted.await()
+            pollRelease.complete(Unit)
+            poll.join()
+            open.join()
+            replacement.join()
+        }
+
+    @Test
+    fun community_rotations_serialize_per_owner_release_cancelled_locks_and_allow_other_owners() =
+        runTest {
+            val barrier = AccountMutationBarrier()
+            val firstStarted = CompletableDeferred<Unit>()
+            val releaseFirst = CompletableDeferred<Unit>()
+            val secondStarted = CompletableDeferred<Unit>()
+            val first =
+                launch {
+                    barrier.withCommunityCredentialRotation("community-a") {
+                        firstStarted.complete(Unit)
+                        releaseFirst.await()
+                    }
+                }
+            firstStarted.await()
+            val sameOwner =
+                launch {
+                    barrier.withCommunityCredentialRotation("community-a") {
+                        secondStarted.complete(Unit)
+                    }
+                }
+            yield()
+            assertFalse(secondStarted.isCompleted)
+
+            assertTrue(
+                barrier.withCommunityCredentialRotation("community-b") {
+                    true
+                },
+            )
+            first.cancelAndJoin()
+            secondStarted.await()
+            sameOwner.join()
+
+            val failed =
+                async {
+                    runCatching {
+                        barrier.withCommunityCredentialRotation("community-a") {
+                            error("controlled failure")
+                        }
+                    }
+                }.await()
+            assertTrue(failed.isFailure)
+            assertTrue(barrier.withCommunityCredentialRotation("community-a") { true })
+        }
+
+    @Test
+    fun restore_waits_for_in_flight_exclusive_mutation() =
         runTest {
             val barrier = AccountMutationBarrier.process
             val rotationStarted = CompletableDeferred<Unit>()
@@ -35,7 +134,7 @@ class AccountMutationBarrierTest {
         }
 
     @Test
-    fun restore_drains_in_flight_poll_and_holds_rotation_until_release() =
+    fun restore_drains_poll_and_holds_exclusive_mutation_until_release() =
         runTest {
             val barrier = AccountMutationBarrier.process
             val pollStarted = CompletableDeferred<Unit>()

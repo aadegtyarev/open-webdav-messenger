@@ -108,7 +108,9 @@ class RestoreManager(
                                     ?: return@withContext RestoreResult.CorruptPayload
                             val staged = stage(payload) ?: return@withContext RestoreResult.CorruptPayload
                             return@withContext AccountMutationBarrier.process.withExclusive {
-                                writeWithRollback(staged)
+                                AccountMutationBarrier.process.withAccountReplacement {
+                                    writeWithRollback(staged)
+                                }
                             }
                         } finally {
                             plaintext.fill(0)

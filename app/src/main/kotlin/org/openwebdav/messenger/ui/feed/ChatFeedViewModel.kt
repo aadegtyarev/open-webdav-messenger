@@ -34,26 +34,7 @@ internal class ChatFeedViewModel(
     private val sendService: ChatMessageSender = MessageSendService(graph, isCurrent = { AppContainer.runtimeGraph() === graph }),
 ) : ViewModel() {
     val communityName: String = graph.communityName
-
-    init {
-        // Load member names from directory so sender labels appear without waiting for a poll cycle.
-        viewModelScope.launch {
-            try {
-                val names = AppContainer.loadMemberNames()
-                android.util.Log.d("ChatFeedVM", "loadMemberNames returned ${names.size} names: $names")
-                if (names.isNotEmpty()) {
-                    graph.memberNames = names
-                    graph.setMemberNamesError(null)
-                } else {
-                    android.util.Log.w("ChatFeedVM", "loadMemberNames returned empty — no sender names available")
-                    graph.setMemberNamesError("Member names not available — showing key prefixes")
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("ChatFeedVM", "loadMemberNames failed", e)
-                graph.setMemberNamesError("Couldn't load member names: ${e.message}")
-            }
-        }
-    }
+    val recipientReadiness = graph.recipientReadiness
 
     /** Error from the last member-name load — observed from the shared RuntimeGraph. */
     val memberNamesError: StateFlow<String?> = graph.memberNamesError
@@ -129,6 +110,11 @@ internal class ChatFeedViewModel(
                 reservedSendRevisions.remove(sendDraftRevision)
             }
         }
+    }
+
+    /** Retry the current chat's verified roster lookup without leaving local history. */
+    fun retryRecipientRoster() {
+        AppContainer.retryRecipientRoster(graph)
     }
 
     /** Retry the durable original operation; never mint a replacement message ID or envelope. */

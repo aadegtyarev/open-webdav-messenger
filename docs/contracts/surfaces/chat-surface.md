@@ -71,14 +71,27 @@ text. No markup rendering, no linkification, no auto-loading of remote content.
 This is a conscious security decision — the renderer never interprets any markup
 language.
 
+**Local feed-open latency (3-open):** Every chat type—General, group, and DM—
+installs its local runtime and displays the Room-backed Feed without waiting for
+WebDAV roster, directory, or metadata reads. A slow or unavailable network does
+not delay the local Feed. Opening uses account stability only; it does not wait
+on the network-poll serialization barrier.
+
 **Offline readiness (3-offline):** The feed shows whatever messages are in the
-local Room database. No network indicator, no "pull to refresh" — the underlying
-sync cycle handles freshness transparently. One send is reserved per draft
-revision before asynchronous work starts, preventing a double tap from producing
-two messages. A send creates a local echo only after its retryable envelope is
-durably persisted; the persistence callback and draft compare-and-clear run on
-the UI dispatcher with draft edits. The draft clears after persistence succeeds
-and is not erased by a stale completion.
+local Room database. There is no global network indicator or "pull to refresh" —
+the underlying sync cycle handles freshness transparently. Group and DM feeds
+open before remote directory reads; while verified recipients load, the top bar
+exposes accessible indeterminate progress and Send is disabled. An unavailable
+roster keeps the feed/history/navigation usable, disables Send, and shows a
+compact status with a retry route. General may be Ready immediately when its
+existing verified recipient/key state is sufficient. A new send is accepted
+only from a Ready verified-recipient snapshot; it atomically uses that snapshot
+for both the durable retryable envelope recipients and immediate fan-out. One
+send is reserved per draft revision before asynchronous work starts, preventing
+a double tap from producing two messages. A send creates a local echo only after
+its retryable envelope is durably persisted; the persistence callback and draft
+compare-and-clear run on the UI dispatcher with draft edits. The draft clears
+after persistence succeeds and is not erased by a stale completion.
 
 **Send failure and retry (3-send-fail):** A failed or uncertain send remains in
 the feed with truthful local status. A transient error below the draft clears
@@ -106,20 +119,36 @@ cursors merge to the lexicographically later order token. Legacy rows carrying
 an outbox envelope are never reassigned by this history repair. Repeated repair
 is idempotent. Changing scope must not
 display or send with stale state from the previous runtime. Credential-only
-runtime rotation preserves the active graph's roster and member names so peer
-recipients and change-index notifications remain intact. Group creation uses
+runtime rotation preserves Ready roster/member-name state so peer recipients
+and change-index notifications remain intact; an in-flight Loading roster becomes
+Unavailable with retry rather than remaining stuck on the replaced graph. Local
+chat open/install synchronizes with account replacement, but is not held behind a
+network poll. Group creation uses
 the selected community's stored connection and runtime graph and opens the
 created group in that community. Group creation and chat opening retain one
-production request token issued at the Create/open tap. A delayed operation may
-mutate selection/runtime or install only while its token is current and its
+production request token issued at the Create/open tap. Group/DM roster
+resolution after opening is asynchronous and applies only while its request
+token, exact runtime graph, community, chat, and selection revision remain
+current. Cancellation propagates; stale enrichment cannot alter the active
+runtime. A superseding open converts abandoned Loading to retryable
+Unavailable before the new request establishes its own readiness. A delayed
+operation may mutate selection/runtime or install only while
+its token is current and its
 captured graph and selection revision remain valid; a later chat tap invalidates
 earlier work before mutation and again at install after suspension. When group
 creation intentionally activates a different community, it captures and validates
 the new selected graph/revision; an unrelated intervening context change aborts
 creation/opening. Cancellation of a public-group publication propagates instead
 of being reported as success.
-Credential rotation changes the stored connection credentials while retaining
-the persisted community anchor chat ID and name, even while a group or DM is open.
+Credential rotation serializes the complete operation per owner, including remote
+publication and local commit; independent owners may progress concurrently. The
+snapshot is captured only after acquiring the owner lock. Network work never holds
+the account-stability/replacement gate. The local update retains the captured
+anchor and is committed only to that owner after account-generation and durable-
+state validation; changing the selected community cannot redirect the write.
+Inbound credential application uses the same owner lock. Runtime reinstallation
+occurs only while the captured owner remains selected and its runtime key is
+current. The active group/DM remains intact.
 
 **Accessible retry control:** Failed-message retry is a labelled button with a
 minimum 48×48dp target. It invokes the existing retry operation for the original

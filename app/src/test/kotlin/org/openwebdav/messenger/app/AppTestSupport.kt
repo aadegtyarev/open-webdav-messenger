@@ -3,15 +3,24 @@ package org.openwebdav.messenger.app
 import com.goterl.lazysodium.LazySodiumJava
 import com.goterl.lazysodium.SodiumJava
 import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockWebServer
+import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
+import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.crypto.NativeCrypto
+import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
+import org.openwebdav.messenger.keystore.StoredConnection
+import org.openwebdav.messenger.message.MessageEnvelope
+import org.openwebdav.messenger.protocol.Hex
+import org.openwebdav.messenger.sync.SyncEngine
+import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.Delayer
 import java.util.concurrent.ConcurrentHashMap
@@ -32,6 +41,122 @@ internal object AppTestSupport {
     fun identityCrypto(): IdentityCrypto = IdentityCrypto(native())
 
     fun newIdentity(): Identity = identityCrypto().generateIdentity()
+
+    fun recipientRosterTestGraph(
+        server: MockWebServer,
+        database: MessengerDatabase,
+        readiness: RecipientReadiness = RecipientReadiness.Loading,
+        chatId: String = "group-a",
+        communityName: String = "Group A",
+        communityId: String = "community-a",
+        config: ConnectionConfig = SyncTestSupport.config(server),
+        key: ChatKey = SyncTestSupport.fixedChatKey(),
+        identity: Identity = newIdentity(),
+    ): RuntimeGraph {
+        val store = SyncTestSupport.store(database, communityId)
+        val envelope = MessageEnvelope.create(MessageCrypto(Aead(native())), identityCrypto())
+        val engine = SyncEngine(SyncTestSupport.transport(server), envelope, store, { key })
+        return RuntimeGraph(
+            engine, store, envelope, config, chatId, communityName, key,
+            identity, Hex.encode(identity.copySignPublic()), communityId = communityId,
+            initialRecipientReadiness = readiness,
+        )
+    }
+
+    fun chatOpenTestDeps(
+        server: MockWebServer,
+        database: MessengerDatabase,
+        communityId: String,
+        stored: StoredConnection,
+        identity: Identity,
+        chatKeys: Map<String, ChatKey>,
+        rawFileRead: suspend () -> ByteArray? = { null },
+    ): EngineWiring.Deps {
+        val testCommunityId = communityId
+        return object : EngineWiring.Deps {
+            override fun loadStoredConnection(): StoredConnection = stored
+
+            override fun activeCommunityId(): String = communityId
+
+            override fun loadStoredConnection(communityId: String): StoredConnection? = stored.takeIf { communityId == testCommunityId }
+
+            override fun loadChatKey(chatId: String): ChatKey? = chatKeys[chatId]
+
+            override fun loadIdentity(): Identity = identity
+
+            override fun identityCrypto(): IdentityCrypto = AppTestSupport.identityCrypto()
+
+            override suspend fun readRawFile(
+                config: ConnectionConfig,
+                path: String,
+            ): ByteArray? = rawFileRead()
+
+            override fun saveRotatedConfig(
+                newConfig: ConnectionConfig,
+                communityId: String,
+            ): Boolean = false
+
+            override fun buildGraph(
+                config: ConnectionConfig,
+                chatId: String,
+                communityName: String,
+                chatKey: ChatKey,
+                identity: Identity,
+                communityId: String,
+            ): RuntimeGraph =
+                recipientRosterTestGraph(
+                    server = server,
+                    database = database,
+                    readiness = RecipientReadiness.Ready(emptyList()),
+                    chatId = chatId,
+                    communityName = communityName,
+                    communityId = communityId,
+                    config = config,
+                    key = chatKey,
+                    identity = identity,
+                )
+
+            override fun communityChatIds(communityId: String): List<String> = chatKeys.keys.toList()
+
+            override suspend fun discoverPublicChats() = Unit
+
+            override fun schedulePoll(communityMinPollSeconds: Int?) = Unit
+        }
+    }
+
+    fun emptyEngineDeps(): EngineWiring.Deps =
+        object : EngineWiring.Deps {
+            override fun loadStoredConnection(): StoredConnection? = null
+
+            override fun loadChatKey(chatId: String): ChatKey? = null
+
+            override fun loadIdentity(): Identity? = null
+
+            override fun identityCrypto(): IdentityCrypto = AppTestSupport.identityCrypto()
+
+            override suspend fun readRawFile(
+                config: ConnectionConfig,
+                path: String,
+            ): ByteArray? = null
+
+            override fun saveRotatedConfig(
+                newConfig: ConnectionConfig,
+                communityId: String,
+            ): Boolean = false
+
+            override fun buildGraph(
+                config: ConnectionConfig,
+                chatId: String,
+                communityName: String,
+                chatKey: ChatKey,
+                identity: Identity,
+                communityId: String,
+            ): RuntimeGraph = error("No runtime graph expected")
+
+            override fun communityChatIds(communityId: String): List<String> = emptyList()
+
+            override fun schedulePoll(communityMinPollSeconds: Int?) = Unit
+        }
 
     /** Obvious-fake HTTPS config (SC21 — no real credentials). */
     fun httpsConfig(): ConnectionConfig =
