@@ -31,13 +31,14 @@ Protocol changes; destructive reset; fabricating ownership across genuinely ambi
 - Preserve on-disk data; repair must be idempotent, including for already-schema-v6 databases.
 - Do not claim crash-atomic behavior beyond what is verified.
 - Retain community isolation; never guess between multiple plausible owners.
-- A stale chat open may install only if its captured runtime and selection are still valid; stale failure must not block later requests.
+- Chat-open tokens are issued at tap dispatch and shared across General/group production opening; obsolete work must be rejected before selection/revision/runtime mutation and again at install after suspension.
+- A stale chat open may install only if its request token and captured runtime/selection are still valid; stale failure must not block later requests.
 
 ## Acceptance criteria
 
 - Legitimate recoverable local history is visible after repair without data reset, including databases already at v6; ambiguous history remains unassigned and hidden.
 - Opening a previously unopened group chat does not prevent opening General or another chat after delay/failure.
-- Regression tests exercise actual Room migration/repair and navigation/runtime opening.
+- Regression tests exercise actual Room migration/repair, stale General/group request ordering at the production coordinator boundary, and navigation/runtime opening.
 - Changes agree with both linked surface contracts after required reconciliation.
 - v0.23.1 is delivered.
 

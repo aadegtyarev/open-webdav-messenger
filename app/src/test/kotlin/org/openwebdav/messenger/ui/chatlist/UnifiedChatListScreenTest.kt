@@ -66,7 +66,7 @@ class UnifiedChatListScreenTest {
                 onOpenFeed = { feedOpens.incrementAndGet() },
                 onSettings = {},
                 chatItems = chats,
-                openChat = { chat ->
+                openChat = { chat, _ ->
                     attempts += chat.chatId
                     chat.kind == "general"
                 },
@@ -97,7 +97,7 @@ class UnifiedChatListScreenTest {
                 onOpenFeed = { feedOpens.incrementAndGet() },
                 onSettings = {},
                 chatItems = chats,
-                openChat = {
+                openChat = { _, _ ->
                     val deferred = CompletableDeferred<Boolean>()
                     opens.add(deferred)
                     deferred.await()
@@ -133,7 +133,7 @@ class UnifiedChatListScreenTest {
                 onOpenFeed = { feedOpens.incrementAndGet() },
                 onSettings = {},
                 chatItems = chats,
-                openChat = {
+                openChat = { _, _ ->
                     val deferred = CompletableDeferred<Boolean>()
                     opens.add(deferred)
                     deferred.await()
@@ -169,7 +169,7 @@ class UnifiedChatListScreenTest {
                 onOpenFeed = { feedOpens.incrementAndGet() },
                 onSettings = {},
                 chatItems = chats,
-                openChat = {
+                openChat = { _, _ ->
                     val deferred = CompletableDeferred<Boolean>()
                     opens.add(deferred)
                     deferred.await()
@@ -198,7 +198,7 @@ class UnifiedChatListScreenTest {
                 onOpenFeed = { feedOpens.incrementAndGet() },
                 onSettings = {},
                 chatItems = listOf(AppContainer.UnifiedChat("general-id", "General", "general", "community-a", "A")),
-                openChat = { true },
+                openChat = { _, _ -> true },
                 observeUnreadCount = { _, _ -> flowOf(0) },
             )
         }

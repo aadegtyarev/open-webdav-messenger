@@ -50,6 +50,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppContainer.UnifiedChat
+import org.openwebdav.messenger.app.ChatOpenRequestCoordinator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,11 +60,11 @@ internal fun UnifiedChatListScreen(
     onOpenFeed: () -> Unit,
     onSettings: () -> Unit,
     chatItems: List<UnifiedChat>? = null,
-    openChat: suspend (UnifiedChat) -> Boolean = { chat ->
+    openChat: suspend (UnifiedChat, ChatOpenRequestCoordinator.Token) -> Boolean = { chat, token ->
         if (chat.kind == "general") {
-            AppContainer.switchToCommunity(chat.communityId)
+            AppContainer.switchToCommunity(chat.communityId, token)
         } else {
-            AppContainer.openGroupChat(chat.chatId, chat.name, chat.communityId)
+            AppContainer.openGroupChat(chat.chatId, chat.name, chat.communityId, requestToken = token)
         }
     },
     observeUnreadCount: (String, String) -> Flow<Int> = AppContainer::observeUnreadCount,
@@ -161,10 +162,11 @@ internal fun UnifiedChatListScreen(
                         observeUnreadCount = observeUnreadCount,
                         onClick = {
                             val request = ++openRequestGeneration
+                            val requestToken = AppContainer.beginChatOpenRequest()
                             snackbarHostState.currentSnackbarData?.dismiss()
                             scope.launch {
                                 try {
-                                    val chatReady = withContext(Dispatchers.IO) { openChat(chat) }
+                                    val chatReady = withContext(Dispatchers.IO) { openChat(chat, requestToken) }
                                     if (request != openRequestGeneration) return@launch
                                     if (chatReady) {
                                         onOpenFeed()

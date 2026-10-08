@@ -72,9 +72,11 @@ internal object AppContainer {
     private val warmStarted = AtomicBoolean(false)
     private val communityPolicyCoordinator = CommunityPolicyCoordinator()
     private val runtimeSelectionGuard = RuntimeSelectionGuard()
+    private val chatOpenRequestCoordinator = ChatOpenRequestCoordinator()
     private val groupChatOpenCoordinator by lazy {
         GroupChatOpenCoordinator(
             selectionGuard = runtimeSelectionGuard,
+            requestCoordinator = chatOpenRequestCoordinator,
             currentCommunityId = { currentCommunityId },
             loadChatKey = { chatId -> crypto.chatKeyStore(requireContext()).load(chatId) },
             activateCommunity = ::switchToCommunityExclusive,
@@ -183,7 +185,13 @@ internal object AppContainer {
             },
             create = { context -> createGroupChatForContext(name, access, context) },
             open = { context, chatId ->
-                openGroupChatExclusive(chatId, name, context.communityId, context.selectionRevision)
+                openGroupChatExclusive(
+                    chatId,
+                    name,
+                    context.communityId,
+                    context.selectionRevision,
+                    beginChatOpenRequest(),
+                )
             },
         )
     }
@@ -258,12 +266,15 @@ internal object AppContainer {
         chatName: String,
         communityId: String = currentCommunityId,
         expectedSelectionRevision: Long? = null,
+        requestToken: ChatOpenRequestCoordinator.Token = beginChatOpenRequest(),
     ): Boolean {
+        if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return false
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return false
         val plan =
             AccountMutationBarrier.process.withExclusive {
+                if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return@withExclusive null
                 if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) return@withExclusive null
-                prepareGroupChatOpen(chatId, chatName, communityId, expectedSelectionRevision)
+                prepareGroupChatOpen(chatId, chatName, communityId, expectedSelectionRevision, requestToken)
             } ?: return false
         return installPreparedGroupChat(plan)
     }
@@ -273,8 +284,9 @@ internal object AppContainer {
         chatName: String,
         communityId: String,
         expectedSelectionRevision: Long?,
+        requestToken: ChatOpenRequestCoordinator.Token,
     ): Boolean =
-        prepareGroupChatOpen(chatId, chatName, communityId, expectedSelectionRevision)
+        prepareGroupChatOpen(chatId, chatName, communityId, expectedSelectionRevision, requestToken)
             ?.let { installPreparedGroupChat(it) }
             ?: false
 
@@ -288,14 +300,22 @@ internal object AppContainer {
         chatName: String,
         communityId: String,
         expectedSelectionRevision: Long?,
+        requestToken: ChatOpenRequestCoordinator.Token,
     ): PreparedGroupChatOpen? {
         val selection =
-            groupChatOpenCoordinator.prepare(chatId, chatName, communityId, expectedSelectionRevision) ?: return null
+            groupChatOpenCoordinator.prepare(
+                chatId,
+                chatName,
+                communityId,
+                expectedSelectionRevision,
+                requestToken,
+            ) ?: return null
         return PreparedGroupChatOpen(selection, configStore.loadStored(communityId))
     }
 
     private suspend fun installPreparedGroupChat(plan: PreparedGroupChatOpen): Boolean {
         val selection = plan.selection
+        if (!chatOpenRequestCoordinator.isCurrent(selection.requestToken)) return false
         val roster = mutableListOf(selection.graph.senderIdentifier)
         val memberNames = mutableMapOf<String, String>()
         val stored = plan.stored
@@ -320,17 +340,19 @@ internal object AppContainer {
                 // Best-effort roster — start with just self.
             }
         }
-        return EngineWiring.switchToChatIfCurrent(
-            guard = runtimeSelectionGuard,
-            expectedSelectionRevision = selection.selectionRevision,
-            expectedGraph = selection.graph,
-            chatId = selection.chatId,
-            chatName = selection.chatName,
-            chatKey = selection.chatKey,
-            roster = roster,
-            memberNames = memberNames,
-            isCommunitySelected = { currentCommunityId == selection.communityId },
-        )
+        return chatOpenRequestCoordinator.runIfCurrent(selection.requestToken) {
+            EngineWiring.switchToChatIfCurrent(
+                guard = runtimeSelectionGuard,
+                expectedSelectionRevision = selection.selectionRevision,
+                expectedGraph = selection.graph,
+                chatId = selection.chatId,
+                chatName = selection.chatName,
+                chatKey = selection.chatKey,
+                roster = roster,
+                memberNames = memberNames,
+                isCommunitySelected = { currentCommunityId == selection.communityId },
+            )
+        }
     }
 
     /** All chats registered under [communityId]. */
@@ -429,11 +451,21 @@ internal object AppContainer {
     }
 
     /** Switch the active community to [communityId] — rebuilds the engine for that community. */
-    suspend fun switchToCommunity(communityId: String): Boolean {
+    fun beginChatOpenRequest(): ChatOpenRequestCoordinator.Token = chatOpenRequestCoordinator.begin()
+
+    suspend fun switchToCommunity(
+        communityId: String,
+        requestToken: ChatOpenRequestCoordinator.Token = beginChatOpenRequest(),
+    ): Boolean {
+        if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return false
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey
         return AccountMutationBarrier.process.withExclusive {
-            if (expectedRuntimeKey != null && runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) return@withExclusive false
-            switchToCommunityExclusive(communityId)
+            chatOpenRequestCoordinator.runIfCurrent(requestToken) {
+                if (expectedRuntimeKey != null && runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) {
+                    return@runIfCurrent false
+                }
+                switchToCommunityExclusive(communityId)
+            }
         }
     }
 

@@ -286,12 +286,14 @@ class EngineWiringTest {
         EngineWiring.initialize(JvmDeps(stored = stored, activeCommunity = "community-a"))
         val initialGraph = EngineWiring.current()!!
         val guard = RuntimeSelectionGuard()
+        val requests = ChatOpenRequestCoordinator()
         val keyStore = InMemoryChatKeyStore()
         var selectedCommunity = "community-a"
         var activations = 0
         val coordinator =
             GroupChatOpenCoordinator(
                 selectionGuard = guard,
+                requestCoordinator = requests,
                 currentCommunityId = { selectedCommunity },
                 loadChatKey = keyStore::load,
                 activateCommunity = {
@@ -302,8 +304,9 @@ class EngineWiringTest {
                 currentGraph = EngineWiring::current,
             )
         val initialRevision = guard.current()
+        val missingKeyRequest = requests.begin()
 
-        assertNull(coordinator.prepare("missing-key-group", "Broken", "community-a", null))
+        assertNull(coordinator.prepare("missing-key-group", "Broken", "community-a", null, missingKeyRequest))
         assertEquals(initialRevision, guard.current())
         assertEquals("community-a", selectedCommunity)
         assertEquals(0, activations)
@@ -325,7 +328,8 @@ class EngineWiringTest {
         )
         val generalGraph = EngineWiring.current()!!
         keyStore.store("valid-group", chatKey)
-        val validPlan = coordinator.prepare("valid-group", "Valid group", "community-a", null)!!
+        val validPlan =
+            coordinator.prepare("valid-group", "Valid group", "community-a", null, requests.begin())!!
 
         assertTrue(
             EngineWiring.switchToChatIfCurrent(
@@ -342,6 +346,124 @@ class EngineWiringTest {
         )
         assertEquals(generalGraph.communityId, EngineWiring.current()?.communityId)
         assertEquals("valid-group", EngineWiring.current()?.chatId)
+    }
+
+    @Test
+    fun queued_general_open_is_rejected_after_cross_community_group_install() {
+        val requests = ChatOpenRequestCoordinator()
+        val guard = RuntimeSelectionGuard()
+        var selectedCommunity = "community-a"
+        EngineWiring.initialize(
+            JvmDeps(
+                stored = StoredConnection(SyncTestSupport.config(server), chatId, "A"),
+                activeCommunity = "community-a",
+            ),
+        )
+        val delayedGeneral = requests.begin()
+        val latestGroup = requests.begin()
+        val groupKey = InMemoryChatKeyStore().also { it.store("group-b", chatKey) }
+        val groups =
+            GroupChatOpenCoordinator(
+                guard,
+                requests,
+                { selectedCommunity },
+                groupKey::load,
+                { communityId ->
+                    selectedCommunity = communityId
+                    guard.begin()
+                    EngineWiring.reconfigure(
+                        SyncTestSupport.config(server),
+                        "general-b",
+                        "B",
+                        chatKey,
+                        identity,
+                        communityId,
+                    )
+                    true
+                },
+                EngineWiring::current,
+            )
+        val plan = groups.prepare("group-b", "Group B", "community-b", null, latestGroup)!!
+        assertTrue(
+            requests.runIfCurrent(latestGroup) {
+                EngineWiring.switchToChatIfCurrent(
+                    guard = guard,
+                    expectedSelectionRevision = plan.selectionRevision,
+                    expectedGraph = plan.graph,
+                    chatId = plan.chatId,
+                    chatName = plan.chatName,
+                    chatKey = plan.chatKey,
+                    roster = listOf(plan.graph.senderIdentifier),
+                    memberNames = emptyMap(),
+                    isCommunitySelected = { selectedCommunity == plan.communityId },
+                )
+            },
+        )
+        val installedGraph = EngineWiring.current()
+        val installedRevision = guard.current()
+
+        assertFalse(
+            requests.runIfCurrent(delayedGeneral) {
+                selectedCommunity = "community-a"
+                guard.begin()
+                true
+            },
+        )
+        assertEquals("community-b", selectedCommunity)
+        assertEquals(installedRevision, guard.current())
+        assertEquals(installedGraph, EngineWiring.current())
+    }
+
+    @Test
+    fun queued_group_open_is_rejected_after_cross_community_general_install() {
+        val requests = ChatOpenRequestCoordinator()
+        val guard = RuntimeSelectionGuard()
+        var selectedCommunity = "community-a"
+        EngineWiring.initialize(
+            JvmDeps(
+                stored = StoredConnection(SyncTestSupport.config(server), chatId, "A"),
+                activeCommunity = "community-a",
+            ),
+        )
+        val delayedGroup = requests.begin()
+        val latestGeneral = requests.begin()
+        assertTrue(
+            requests.runIfCurrent(latestGeneral) {
+                guard.begin()
+                selectedCommunity = "community-b"
+                EngineWiring.reconfigure(
+                    SyncTestSupport.config(server),
+                    "general-b",
+                    "B",
+                    chatKey,
+                    identity,
+                    "community-b",
+                )
+                true
+            },
+        )
+        val installedGraph = EngineWiring.current()
+        val installedRevision = guard.current()
+        val groupKey = InMemoryChatKeyStore().also { it.store("group-a", chatKey) }
+        var obsoleteActivations = 0
+        val groups =
+            GroupChatOpenCoordinator(
+                guard,
+                requests,
+                { selectedCommunity },
+                groupKey::load,
+                {
+                    obsoleteActivations++
+                    true
+                },
+                EngineWiring::current,
+            )
+
+        assertNull(groups.prepare("group-a", "Group A", "community-a", null, delayedGroup))
+        assertEquals(0, obsoleteActivations)
+        assertEquals("community-b", selectedCommunity)
+        assertEquals(installedRevision, guard.current())
+        assertEquals(installedGraph, EngineWiring.current())
     }
 
     @Test
