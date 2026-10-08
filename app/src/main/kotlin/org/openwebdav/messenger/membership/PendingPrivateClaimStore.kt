@@ -10,7 +10,8 @@ import java.io.File
 /** Persists the exact encrypted claim for idempotent retry; files are excluded from Android backup. */
 internal class PendingPrivateClaimStore(context: Context, native: NativeCrypto) {
     private val directory = File(context.noBackupFilesDir, "private_membership/pending")
-    private val context = PendingPrivateClaimContext(directory, native)
+    private val pendingContext = PendingPrivateClaimContext(directory, native)
+    private val fileWriter = PendingPrivateClaimFileWriter(pendingContext)
 
     fun load(
         communityId: String,
@@ -19,7 +20,7 @@ internal class PendingPrivateClaimStore(context: Context, native: NativeCrypto) 
         key: ChatKey,
         identity: Identity,
     ): PendingPrivateClaim? {
-        val file = context.file(communityId, chatId, identity)
+        val file = pendingContext.file(communityId, chatId, identity)
         if (!file.exists()) return null
         if (file.length() > PendingPrivateClaimCodec.MAX_BYTES) {
             runCatching { StrictFileOperations.delete(file) }
@@ -30,7 +31,7 @@ internal class PendingPrivateClaimStore(context: Context, native: NativeCrypto) 
                 runCatching { StrictFileOperations.delete(file) }
                 return null
             }
-        val expected = context.digest(communityId, chatId, kind, key, identity)
+        val expected = pendingContext.digest(communityId, chatId, kind, key, identity)
         if (!decoded.second.contentEquals(expected)) {
             runCatching { StrictFileOperations.delete(file) }
             return null
@@ -45,11 +46,11 @@ internal class PendingPrivateClaimStore(context: Context, native: NativeCrypto) 
         key: ChatKey,
         identity: Identity,
         claim: ByteArray,
-    ) = save(
+    ) = fileWriter.save(
         communityId,
         chatId,
         identity,
-        context.digest(communityId, chatId, kind, key, identity),
+        pendingContext.digest(communityId, chatId, kind, key, identity),
         PendingPrivateClaim(claim.copyOf(), false),
     )
 
@@ -60,11 +61,11 @@ internal class PendingPrivateClaimStore(context: Context, native: NativeCrypto) 
         key: ChatKey,
         identity: Identity,
         claim: ByteArray,
-    ) = save(
+    ) = fileWriter.save(
         communityId,
         chatId,
         identity,
-        context.digest(communityId, chatId, kind, key, identity),
+        pendingContext.digest(communityId, chatId, kind, key, identity),
         PendingPrivateClaim(claim.copyOf(), true),
     )
 
@@ -73,30 +74,11 @@ internal class PendingPrivateClaimStore(context: Context, native: NativeCrypto) 
         chatId: String,
         identity: Identity,
     ) {
-        val target = context.file(communityId, chatId, identity)
+        val target = pendingContext.file(communityId, chatId, identity)
         if (target.exists()) StrictFileOperations.delete(target)
     }
 
     fun clearAll() {
         directory.listFiles()?.forEach(StrictFileOperations::delete)
-    }
-
-    private fun save(
-        community: String,
-        chat: String,
-        identity: Identity,
-        digest: ByteArray,
-        record: PendingPrivateClaim,
-    ) {
-        val target = context.file(community, chat, identity)
-        val parent = target.parentFile ?: error("pending claim directory is unavailable")
-        parent.mkdirs()
-        val temp = java.nio.file.Files.createTempFile(parent.toPath(), ".pending-", ".tmp").toFile()
-        try {
-            temp.writeBytes(PendingPrivateClaimCodec.encode(digest, record))
-            StrictFileOperations.atomicReplace(temp, target)
-        } finally {
-            if (temp.exists()) runCatching { StrictFileOperations.delete(temp) }
-        }
     }
 }

@@ -17,53 +17,56 @@ import org.openwebdav.messenger.identity.IdentityTestSupport
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
-class PrivateMembershipPublisherConcurrencyTest {
+class PrivateMembershipPublisherInvalidationTest {
     private val key = ChatKey.fromBytes(ByteArray(ChatKey.KEY_BYTES) { 31 })
     private val identity = IdentityTestSupport.identityCrypto().generateIdentity()
 
     @Test
-    fun concurrent_foreground_and_background_attempts_share_one_upload() =
+    fun restore_during_suspended_put_cannot_repopulate_pending_state() =
         runTest {
             val (store, publisher, barrier) = setup()
             val started = CompletableDeferred<Unit>()
             val release = CompletableDeferred<Unit>()
-            var calls = 0
             val writer =
                 PrivateClaimWriter { _, _ ->
-                    calls++
                     started.complete(Unit)
                     release.await()
                     MembershipPublishOutcome.Published
                 }
-            val first = async { publisher.publish(ChatAccess.PRIVATE, "community", "chat", "A", identity, key, writer) }
+            val operation = async { publisher.publish(ChatAccess.PRIVATE, "community", "chat", "A", identity, key, writer) }
             started.await()
-            val second = async { publisher.publish(ChatAccess.PRIVATE, "community", "chat", "A", identity, key, writer) }
-            kotlinx.coroutines.yield()
-            assertEquals(1, calls)
+            barrier.withAccountReplacement { store.clearAll() }
             release.complete(Unit)
 
-            assertEquals(PrivateClaimPublicationStatus.UPLOADED, first.await())
-            assertEquals(PrivateClaimPublicationStatus.UPLOADED, second.await())
-            assertEquals(1, calls)
-            assertEquals(0L, barrier.replacementGeneration())
+            assertEquals(PrivateClaimPublicationStatus.PENDING, operation.await())
+            assertNull(store.load("community", "chat", "private", key, identity))
         }
 
     @Test
-    fun stale_context_is_rejected_before_remote_start_or_pending_save() =
+    fun key_replacement_during_suspended_put_cannot_commit_old_claim() =
         runTest {
-            val (store, publisher, _) = setup()
-            var calls = 0
+            val (store, publisher, barrier) = setup()
+            val started = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            var current = true
             val writer =
                 PrivateClaimWriter { _, _ ->
-                    calls++
+                    started.complete(Unit)
+                    release.await()
                     MembershipPublishOutcome.Published
                 }
+            val operation =
+                async {
+                    publisher.publish(ChatAccess.PRIVATE, "community", "chat", "A", identity, key, writer, contextCurrent = { current })
+                }
+            started.await()
+            barrier.withAccountReplacement {
+                current = false
+                store.invalidate("community", "chat", identity)
+            }
+            release.complete(Unit)
 
-            assertEquals(
-                PrivateClaimPublicationStatus.PENDING,
-                publisher.publish(ChatAccess.PRIVATE, "community", "chat", "A", identity, key, writer, contextCurrent = { false }),
-            )
-            assertEquals(0, calls)
+            assertEquals(PrivateClaimPublicationStatus.PENDING, operation.await())
             assertNull(store.load("community", "chat", "private", key, identity))
         }
 

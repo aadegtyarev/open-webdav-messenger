@@ -1,7 +1,5 @@
 package org.openwebdav.messenger.membership
 
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.ChatKey
@@ -14,7 +12,7 @@ internal class PrivateMembershipPublisher(
     private val claims: PrivateMembershipClaimCrypto,
     private val barrier: AccountMutationBarrier = AccountMutationBarrier.process,
 ) {
-    private val locks = KeyedMutex()
+    private val locks = PrivateMembershipPublishLock()
 
     suspend fun publish(
         access: ChatAccess,
@@ -85,28 +83,6 @@ internal class PrivateMembershipPublisher(
                 }
             } finally {
                 pending.fileBytes.fill(0)
-            }
-        }
-    }
-
-    private class KeyedMutex {
-        private data class Entry(val mutex: Mutex, var references: Int = 0)
-
-        private val guard = Any()
-        private val entries = mutableMapOf<String, Entry>()
-
-        suspend fun <T> withLock(
-            key: String,
-            block: suspend () -> T,
-        ): T {
-            val entry = synchronized(guard) { entries.getOrPut(key) { Entry(Mutex()) }.also { it.references++ } }
-            try {
-                return entry.mutex.withLock { block() }
-            } finally {
-                synchronized(guard) {
-                    entry.references--
-                    if (entry.references == 0 && entries[key] === entry) entries.remove(key)
-                }
             }
         }
     }
