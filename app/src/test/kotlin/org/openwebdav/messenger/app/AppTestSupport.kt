@@ -54,6 +54,7 @@ internal object AppTestSupport {
         config: ConnectionConfig = SyncTestSupport.config(server),
         key: ChatKey = SyncTestSupport.fixedChatKey(),
         identity: Identity = newIdentity(),
+        privateMembershipChat: Boolean = false,
     ): RuntimeGraph {
         val store = SyncTestSupport.store(database, communityId)
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(native())), identityCrypto())
@@ -61,6 +62,7 @@ internal object AppTestSupport {
         return RuntimeGraph(
             engine, store, envelope, config, chatId, communityName, key,
             identity, Hex.encode(identity.copySignPublic()), communityId = communityId,
+            privateMembershipChat = privateMembershipChat,
             initialRecipientReadiness = readiness,
         )
     }
@@ -73,6 +75,7 @@ internal object AppTestSupport {
         identity: Identity,
         chatKeys: Map<String, ChatKey>,
         rawFileRead: suspend () -> ByteArray? = { null },
+        privateMembershipChat: Boolean = false,
     ): EngineWiring.Deps {
         val testCommunityId = communityId
         return object : EngineWiring.Deps {
@@ -116,6 +119,7 @@ internal object AppTestSupport {
                     config = config,
                     key = chatKey,
                     identity = identity,
+                    privateMembershipChat = privateMembershipChat,
                 )
 
             override fun communityChatIds(communityId: String): List<String> = chatKeys.keys.toList()
