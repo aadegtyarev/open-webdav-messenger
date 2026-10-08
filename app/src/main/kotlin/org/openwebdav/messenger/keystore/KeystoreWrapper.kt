@@ -102,10 +102,8 @@ class KeystoreWrapper(
     /** Whether a wrapped blob file exists. */
     fun exists(): Boolean = file.exists()
 
-    /** Delete the wrapped blob file (best-effort). */
-    fun delete() {
-        file.delete()
-    }
+    /** Delete the wrapped blob file and report failure to replacement/rollback callers. */
+    fun delete() = StrictFileOperations.delete(file)
 
     /** The raw wrapped-on-disk bytes, or `null` if absent — for tests asserting no plaintext leaks. */
     fun rawBlob(): ByteArray? = file.takeIf { it.exists() }?.readBytes()

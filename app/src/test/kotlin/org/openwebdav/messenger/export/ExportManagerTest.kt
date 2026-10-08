@@ -32,7 +32,8 @@ class ExportManagerTest {
         ck: ExportableCommunityKeyStore = ExportTestSupport.inMemoryCommunityKeyStore(),
         ch: ExportableChatKeyStore = ExportTestSupport.inMemoryChatKeyStore(),
         id: ExportableIdentityStore = ExportTestSupport.inMemoryIdentityStore(),
-    ): RestoreManager = RestoreManager(native, cc, ck, ch, id)
+        account: ExportableAccountBackupStore? = null,
+    ): RestoreManager = RestoreManager(native, cc, ck, ch, id, accountBackupStore = account)
 
     // -- basic roundtrip ------------------------------------------------------
 
@@ -48,13 +49,11 @@ class ExportManagerTest {
             val originalConfig = ExportTestSupport.sampleConfig()
             val originalCommunityKey = CryptoTestSupport.fixedKey(seed = 42)
             val originalChatKey1 = CryptoTestSupport.fixedKey(seed = 1)
-            val originalChatKey2 = CryptoTestSupport.fixedKey(seed = 2)
             val originalIdentity = ExportTestSupport.freshIdentity()
 
             ccStore.store(originalConfig)
             ckStore.store(originalCommunityKey)
             chStore.store("chat-1", originalChatKey1)
-            chStore.store("chat-2", originalChatKey2)
             idStore.store(originalIdentity)
 
             val exportManager = newExportManager(ccStore, ckStore, chStore, idStore)
@@ -68,7 +67,16 @@ class ExportManagerTest {
             val ckRestore = ExportTestSupport.inMemoryCommunityKeyStore()
             val chRestore = ExportTestSupport.inMemoryChatKeyStore()
             val idRestore = ExportTestSupport.inMemoryIdentityStore()
-            val restoreManager = newRestoreManager(ccRestore, ckRestore, chRestore, idRestore)
+            val restoreManager =
+                newRestoreManager(
+                    ccRestore,
+                    ckRestore,
+                    chRestore,
+                    idRestore,
+                    ExportTestSupport.InMemoryAccountBackupStore(onReplace = { backup ->
+                        ccRestore.store(backup.communities.single().config)
+                    }),
+                )
 
             val restoreResult = restoreManager.restore(blob, "strong-password-123".toCharArray())
             assertEquals(RestoreResult.Restored, restoreResult)
@@ -82,8 +90,6 @@ class ExportManagerTest {
 
             val restoredChat1 = chRestore.load("chat-1")
             assertTrue(originalChatKey1.export().contentEquals(restoredChat1!!.export()))
-            val restoredChat2 = chRestore.load("chat-2")
-            assertTrue(originalChatKey2.export().contentEquals(restoredChat2!!.export()))
 
             val restoredIdentity =
                 when (val r = idRestore.load()) {
@@ -203,7 +209,49 @@ class ExportManagerTest {
         }
 
     @Test
-    fun empty_stores_roundtrip() =
+    fun export_rejects_account_without_identity() =
+        runTest {
+            val passphrase = "strong-password".toCharArray()
+            val result = newExportManager().export(passphrase)
+            assertEquals(ExportResult.IncompleteAccount, result)
+            assertTrue(passphrase.all { it == ' ' })
+        }
+
+    @Test
+    fun oversized_account_returns_typed_failure_instead_of_ready() =
+        runTest {
+            val keys = ExportTestSupport.inMemoryChatKeyStore().also { it.store("chat-a", CryptoTestSupport.fixedKey(seed = 1)) }
+            val account =
+                ExportTestSupport.InMemoryAccountBackupStore(
+                    AccountBackup(
+                        "community-a",
+                        listOf(
+                            CommunityBackup(
+                                "community-a",
+                                "x".repeat(70_000),
+                                "chat-a",
+                                ExportTestSupport.sampleConfig(),
+                                listOf(ChatBackup("chat-a", "General", "general")),
+                            ),
+                        ),
+                    ),
+                )
+            val password = "strong-password".toCharArray()
+            val result =
+                ExportManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    ExportTestSupport.inMemoryCommunityKeyStore(),
+                    keys,
+                    ExportTestSupport.inMemoryIdentityStore().also { it.store(ExportTestSupport.freshIdentity()) },
+                    accountBackupStore = account,
+                ).export(password)
+            assertEquals(ExportResult.TooLarge, result)
+            assertTrue(password.all { it == ' ' })
+        }
+
+    @Test
+    fun identity_only_legacy_payload_is_not_a_restorable_account() =
         runTest {
             val idStore = ExportTestSupport.inMemoryIdentityStore()
             val originalIdentity = ExportTestSupport.freshIdentity()
@@ -213,19 +261,11 @@ class ExportManagerTest {
             val result = exportManager.export("strong-password".toCharArray())
             val blob = (result as ExportResult.Ready).blob
 
-            // Restore into fresh empty stores.
             val idRestore = ExportTestSupport.inMemoryIdentityStore()
             val restoreManager = newRestoreManager(id = idRestore)
             val restoreResult = restoreManager.restore(blob, "strong-password".toCharArray())
-            assertEquals(RestoreResult.Restored, restoreResult)
-
-            val restoredIdentity =
-                when (val r = idRestore.load()) {
-                    is IdentityLoadResult.Loaded -> r.identity
-                    else -> error("identity not restored")
-                }
-            assertTrue(originalIdentity.copySignPublic().contentEquals(restoredIdentity.copySignPublic()))
-            assertTrue(originalIdentity.copyBoxPublic().contentEquals(restoredIdentity.copyBoxPublic()))
+            assertEquals(RestoreResult.CorruptPayload, restoreResult)
+            assertEquals(IdentityLoadResult.None, idRestore.load())
         }
 
     // -- bad format -----------------------------------------------------------

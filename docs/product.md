@@ -10,7 +10,7 @@ Open WebDAV Messenger is a native Android text messenger that has **no server of
 
 **Privacy-conscious people and small private groups** who already have a cloud disk (Yandex.Disk, Nextcloud, etc.) and want to chat without trusting a messenger operator or running their own server. The customer is someone who is willing to configure a WebDAV connection and share a passphrase out-of-band in exchange for a serverless chat with no operator reading their messages.
 
-**Who it is NOT for:** people who won't configure a WebDAV disk, and people who need iOS (Android only). Sub-15-minute delivery is available as an opt-in foreground service (with a persistent notification), so the product now serves users who want faster polling at the cost of a visible notification; the default remains the battery-friendly WorkManager ~15-min floor.
+**Who it is NOT for:** people who won't configure a WebDAV disk, and people who need iOS (Android only). The current 60-second personal polling default selects a foreground service when below WorkManager's 15-minute floor; Android requires a persistent notification. Users can choose a slower interval to stop fast mode. This behavior is currently automatic, not opt-in.
 
 ## 2. Problem — from their point of view
 
@@ -35,19 +35,20 @@ The customer removes the need for a dedicated chat server or trusting a third-pa
 
 ## 4. Continuity & recovery
 
-**Across devices:** a user's chat history lives on their device in a local Room database (unbounded, offline-available). Messages also live on the shared WebDAV disk (a time-based retention window — 14 days by default, pruned automatically after each poll cycle; see `docs/protocol/webdav-layout.md` §1.4), so a second device joining the same chat can catch up recent messages.
+**Across devices:** a user's chat history lives on their device in a local Room database (unbounded, offline-available). Messages also live on the shared WebDAV disk (a time-based retention window — 14 days by default, pruned automatically after each poll cycle; see `docs/protocol/webdav-layout.md` §1.4), so a second device joining the same chat can catch up recent messages. A restored backup reconstructs registered community connections, chat registries, keys, identity, and active-community selection; Room history remains device-local and is not transferred.
 
-**Device-loss recovery:** the app provides an **export/restore** mechanism: the user can export all device-local secrets (connection config, community key, chat keys, identity keypair) as a password-encrypted blob via the Android Share sheet, and restore it on a new device with the same password. The export password is mandatory — a device-bound key cannot be transferred across devices. The export blob leaves the device only through the user's chosen share target. Identity secret keys are included so the user retains their full account identity after restore.
+**Device-loss recovery:** the app provides a versioned **export/restore** mechanism: the user can export all registered community connection settings and chat registries, community/chat keys, identity keypair, and active-community selection as a password-encrypted blob via the Android Share sheet, and restore it on a new device with the same password. Restore is available from the first-launch Start screen or Settings. Payload validation completes before stores are changed; store-write failure attempts snapshot rollback, but crash-atomicity across independent Keystore/filesystem stores is not guaranteed. Legacy v1 exports remain readable, but they lack membership registries and may not rebuild a usable joined runtime. The export password is mandatory — a device-bound key cannot be transferred across devices. Identity secret keys are included; a cracked export password permits impersonation.
 
-**Across sessions:** the app polls the disk in the background (WorkManager, ~15-min floor). An opt-in foreground service (`FastPollService`, off by default) polls at user-configurable sub-15-min intervals with a persistent notification. Between polls, the local history keeps the chat responsive offline. On reconnect, missed messages are caught up automatically from the shared log on disk.
+**Across sessions:** the app polls the disk in the background through WorkManager and, when the effective interval is below the WorkManager floor, uses `FastPollService` with a persistent notification. Android 13+ notification permission is offered contextually in Settings; a denied request is not repeated automatically and a system-settings recovery link is provided. Background execution and exact delivery time remain subject to Android scheduling, battery controls, network availability, and WebDAV availability. The current personal interval default is 60 seconds, so the foreground service is automatically selected until the member chooses an interval at or above the WorkManager floor; it is not currently an opt-in-only setting. Between polls, local history keeps the chat responsive offline.
 
 **When a user loses access:**
 - **Lost device:** use the export blob + password to restore on a new device. Recent messages on the shared disk are catchable; messages only on the lost device are gone.
 - **Lost export password:** the export IS the recovery path — without it, a lost device means lost account secrets. A new identity + re-join is required.
+- **Legacy export without community registry:** some old backups can restore secrets/configuration but cannot reconstruct all joined community/chat coordinates; restore reports when no usable runtime can be activated.
 - **Lost passphrase:** the passphrase IS the key — there is no recovery. The user must be re-invited or the chat re-keyed (future rotation feature).
 - **Lost disk credential:** the host/owner can create a new app-password and distribute it out-of-band. The old credential must be rotated (future feature).
 
-**Others joining:** a new member needs the WebDAV credential + the chat passphrase, delivered out-of-band (a future invite feature will encode this as a QR or string). Under the shared credential model (Topology A), all members share one disk identity.
+**Others joining:** a new member receives the current bearer invite by QR or string through a trusted out-of-band channel. The token contains disk access and chat-key material; anyone holding it can join and use the shared disk credential. Under the shared credential model (Topology A), all members share one disk identity.
 
 ## 5. Competition / the incumbent
 
@@ -66,11 +67,11 @@ The customer removes the need for a dedicated chat server or trusting a third-pa
 - **Who funds it:** solo hobby project; no funding, no monetization. No server costs — the user pays their own cloud disk (free tier sufficient for text).
 - **Licensing:** AGPL-3.0 — copyleft, source stays open.
 - **Compliance:** GDPR/privacy responsibility rests with the user (they control the disk and the keys). The app processes no data on any server.
-- **Constraints:** native Android only (no iOS); no push notifications; default background delivery bounded by Android platform floors (~15 min); opt-in foreground service available for sub-15-min delivery (persistent notification required by Android, OFF by default).
+- **Constraints:** native Android only (no iOS); no push notifications; WorkManager periodic work has a 15-minute floor and may be deferred; the current 60-second personal default automatically enables foreground fast polling below that floor, requiring a persistent notification. Android scheduling and battery restrictions still prevent exact delivery guarantees.
 
 ## 7. The case against *(conclude)*
 
-**Strongest reason this will not succeed:** the onboarding friction is too high. A user must (1) install an APK not from a store, (2) create a WebDAV app-password, (3) configure a URL + credential, (4) agree on a passphrase out-of-band with every contact, and (5) accept quarter-hour delivery latency. Each of these steps loses a cohort of potential users; together they filter to near-zero. A messenger lives or dies on network effects — and this one makes joining the network the hardest part. Sub-15-min delivery is now available as an opt-in foreground service, but the persistent notification that Android requires for it is itself a drop-off point.
+**Strongest reason this will not succeed:** the onboarding friction is too high. A user must install an APK, configure or receive WebDAV access, and coordinate trusted invite sharing out-of-band. Background delivery is best-effort: WorkManager has a 15-minute floor and the current 60-second default selects fast polling with a persistent notification, which has a battery and notification-permission cost. Each step can lose potential users; a messenger still depends on network effects and this one makes joining the network unusually involved.
 
 **Who this is wrong for:** anyone who values convenience over sovereignty; anyone who cannot configure a WebDAV disk; anyone who expects instant delivery without a persistent notification; anyone on iOS; anyone who needs a chat they can invite a non-technical friend to in 30 seconds.
 

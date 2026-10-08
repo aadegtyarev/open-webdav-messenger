@@ -26,13 +26,13 @@ import java.io.File
  */
 internal class ConnectionConfigStore(
     private val context: Context,
-) : ExportableConnectionConfigStore {
+) : ExportableConnectionConfigStore, AccountBackupConfigStore {
     /** Persist [config] + the [chatId] / [communityName] of the joined community chat (atomic, wrapped). */
-    fun save(
+    override fun save(
         config: ConnectionConfig,
         chatId: String,
         communityName: String,
-        communityId: String = DEFAULT_COMMUNITY_ID,
+        communityId: String,
     ) {
         val serialized = serialize(config, chatId, communityName)
         try {
@@ -54,7 +54,7 @@ internal class ConnectionConfigStore(
     }
 
     /** Load the stored config for [communityId], or `null`. */
-    fun loadStored(communityId: String): StoredConnection? =
+    override fun loadStored(communityId: String): StoredConnection? =
         when (val result = wrapper(communityId).unwrap()) {
             is UnwrapResult.None -> null
             is UnwrapResult.Unrecoverable -> null
@@ -69,14 +69,16 @@ internal class ConnectionConfigStore(
         }
 
     /** Legacy: load the first/default stored config. */
-    fun loadStored(): StoredConnection? = loadStored(DEFAULT_COMMUNITY_ID)
+    override fun loadStored(): StoredConnection? = loadStored(DEFAULT_COMMUNITY_ID)
 
     /** ExportableConnectionConfigStore: load just the [ConnectionConfig], discarding chatId/communityName. */
     override fun load(): ConnectionConfig? = loadStored()?.config
 
+    override fun hasStored(): Boolean = has()
+
     /** ExportableConnectionConfigStore: store a bare config (restore path — no chatId/communityName yet). */
     override fun store(config: ConnectionConfig) {
-        save(config, chatId = "", communityName = "")
+        save(config, chatId = "", communityName = "", communityId = DEFAULT_COMMUNITY_ID)
     }
 
     /** Whether a wrapped config blob exists. */
@@ -84,13 +86,24 @@ internal class ConnectionConfigStore(
 
     fun has(communityId: String): Boolean = wrapper(communityId).exists()
 
+    override fun hasAny(): Boolean = listCommunityIds().isNotEmpty()
+
+    override fun listCommunityIds(): Set<String> {
+        val dir = configDir()
+        if (!dir.exists()) return emptySet()
+        val files = dir.listFiles() ?: throw java.io.IOException("Cannot enumerate connection configs")
+        return files.mapNotNull { file -> file.name.takeIf { it.startsWith("$CONFIG_FILE-") }?.removePrefix("$CONFIG_FILE-") }.toSet()
+    }
+
     /** Delete the stored config. */
-    fun clear() = clear(DEFAULT_COMMUNITY_ID)
+    override fun clear() = clear(DEFAULT_COMMUNITY_ID)
 
-    fun clear(communityId: String) = wrapper(communityId).delete()
+    override fun clear(communityId: String) = wrapper(communityId).delete()
 
-    private fun wrapper(communityId: String): KeystoreWrapper =
-        KeystoreWrapper("${WRAP_KEY_ALIAS}.$communityId", File(configDir(), "$CONFIG_FILE-$communityId"))
+    private fun wrapper(communityId: String): KeystoreWrapper {
+        AccountIdentifier.requireValid(communityId)
+        return KeystoreWrapper("${WRAP_KEY_ALIAS}.$communityId", File(configDir(), "$CONFIG_FILE-$communityId"))
+    }
 
     private fun configDir(): File = File(context.filesDir, CONFIG_DIR).apply { mkdirs() }
 

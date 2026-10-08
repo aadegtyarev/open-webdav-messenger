@@ -33,11 +33,29 @@ class ChatKeyStore(
     override fun store(
         chatId: String,
         chatKey: ChatKey,
+    ) = storeStrict(chatId, chatKey)
+
+    override fun storeStrict(
+        chatId: String,
+        chatKey: ChatKey,
     ) {
         val raw = chatKey.copyBytes()
+        val keyWrapper = wrapper(chatId)
+        val keyWasPresent = keyWrapper.exists()
         try {
-            wrapper(chatId).wrap(raw)
-            addToIndex(chatId)
+            keyWrapper.wrap(raw)
+            try {
+                index().add(chatId)
+            } catch (failure: Exception) {
+                if (!keyWasPresent) {
+                    try {
+                        keyWrapper.delete()
+                    } catch (cleanupFailure: Exception) {
+                        failure.addSuppressed(cleanupFailure)
+                    }
+                }
+                throw failure
+            }
         } finally {
             raw.fill(0)
         }
@@ -64,31 +82,32 @@ class ChatKeyStore(
         }
 
     /**
-     * List all chat-ids for which a wrapped key is currently stored. The index is a best-effort
-     * sidecar file — a missing index entry for a valid key file returns it on the next [store] call
-     * for that chatId only. No secret material lives in the index (chat-ids are not secret).
+     * List indexed chat-ids with an existing wrapped key. Index read failures propagate so account
+     * replacement cannot mistake an unreadable index for an empty key store. No secret material lives
+     * in the index (chat-ids are not secret).
      */
     override fun listChatIds(): List<String> {
-        val idx = indexFile()
-        if (!idx.exists()) return emptyList()
-        return try {
-            idx.readLines()
-                .mapNotNull { line ->
-                    val chatId = line.substringBefore('\t')
-                    if (chatId.isNotEmpty() && has(chatId)) chatId else null
-                }
-        } catch (_: Exception) {
-            emptyList()
-        }
+        return index().list(::has)
     }
 
     /** Whether a wrapped key is stored for [chatId]. */
     fun has(chatId: String): Boolean = wrapper(chatId).exists()
 
     /** Delete the stored wrapped key for [chatId] (e.g. on leaving a chat). */
-    fun remove(chatId: String) {
+    override fun remove(chatId: String) = removeStrict(chatId)
+
+    override fun removeStrict(chatId: String) {
         wrapper(chatId).delete()
-        removeFromIndex(chatId)
+        index().remove(chatId)
+    }
+
+    override fun replaceAll(chatKeys: Map<String, ChatKey>) = replaceAllStrict(chatKeys)
+
+    override fun replaceAllStrict(chatKeys: Map<String, ChatKey>) {
+        val operations = StrictOperationBatch()
+        (listChatIds() - chatKeys.keys).forEach { id -> operations.run { removeStrict(id) } }
+        chatKeys.forEach { (chatId, key) -> operations.run { storeStrict(chatId, key) } }
+        operations.finish()
     }
 
     /** The raw wrapped-on-disk bytes for [chatId] — for tests asserting the raw key is NOT in plaintext. */
@@ -97,6 +116,7 @@ class ChatKeyStore(
     private fun wrapper(chatId: String): KeystoreWrapper = KeystoreWrapper(WRAP_KEY_ALIAS, keyFile(chatId))
 
     private fun keyFile(chatId: String): File {
+        AccountIdentifier.requireValid(chatId)
         val dir = File(context.filesDir, KEY_DIR).apply { mkdirs() }
         // The on-disk file name is a collision-resistant token of the chat-id, NOT a hand-rolled
         // polynomial fold (which collides — two distinct chat-ids could overwrite each other's
@@ -110,38 +130,10 @@ class ChatKeyStore(
 
     // -- sidecar index: chat-id → filename-token mapping (not secret; plaintext on disk) -------
 
-    private fun indexFile(): File =
+    private fun index(): ChatKeyIndex =
         File(context.filesDir, KEY_DIR).apply { mkdirs() }.let { dir ->
-            File(dir, INDEX_FILE_NAME)
+            ChatKeyIndex(File(dir, INDEX_FILE_NAME))
         }
-
-    private fun addToIndex(chatId: String) {
-        val file = indexFile()
-        val lines = if (file.exists()) file.readLines().toMutableList() else mutableListOf()
-        val entry = "$chatId\t"
-        lines.removeAll { it.startsWith(entry) || it.startsWith("$chatId\t") }
-        lines.add(entry)
-        try {
-            file.writeText(lines.joinToString("\n") + "\n")
-        } catch (_: Exception) {
-            // Best-effort: the key file is already written; a missing index entry just means
-            // the chat won't be in listChatIds(), not data loss.
-        }
-    }
-
-    private fun removeFromIndex(chatId: String) {
-        val file = indexFile()
-        if (!file.exists()) return
-        try {
-            val lines =
-                file.readLines().filter { line ->
-                    !line.startsWith("$chatId\t")
-                }
-            file.writeText(lines.joinToString("\n").let { if (it.isNotEmpty()) it + "\n" else it })
-        } catch (_: Exception) {
-            // Best-effort.
-        }
-    }
 
     companion object {
         private const val WRAP_KEY_ALIAS = "owdm.chatkey.wrap.v1"

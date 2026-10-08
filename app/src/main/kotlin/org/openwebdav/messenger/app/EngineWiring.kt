@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.data.MessageStore
@@ -300,13 +301,19 @@ internal object EngineWiring {
     ) {
         synchronized(runtimeInstallLock) {
             if (graph?.communityRuntimeKey != expectedCommunityRuntimeKey) return
-            if (communityMinPollSeconds != null) {
-                org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds = communityMinPollSeconds
-                deps.schedulePoll(communityMinPollSeconds)
-            }
-            if (retentionWindowDays != null) {
-                org.openwebdav.messenger.ui.settings.UserSettings.communityRetentionWindowDays = retentionWindowDays
-            }
+            val active = graph ?: return
+            val currentFloor =
+                communityMinPollSeconds
+                    ?: org.openwebdav.messenger.ui.settings.UserSettings.pollFloorFor(active.communityId)
+            val currentRetention =
+                retentionWindowDays
+                    ?: org.openwebdav.messenger.ui.settings.UserSettings.retentionDaysFor(active.communityId)
+            org.openwebdav.messenger.ui.settings.UserSettings.setCommunityMetadata(
+                active.communityId,
+                currentFloor,
+                currentRetention,
+            )
+            if (communityMinPollSeconds != null) deps.schedulePoll(communityMinPollSeconds)
         }
     }
 
@@ -316,96 +323,100 @@ internal object EngineWiring {
     ) {
         SyncRunner.install(
             object : SyncRunner {
-                override suspend fun runOnce(): CycleOutcome {
-                    // Pre-poll credential rotation check: if the host rotated the WebDAV credential,
-                    // a blob at meta/credentials/<mySignPubHex> exists on disk. Download it, open it
-                    // with our box keypair, verify the host's Ed25519 signature, and auto-replace the
-                    // local config so the poll cycle below uses the new credential.
-                    val mySignPubHex = g.senderIdentifier
-                    val credentialPath = "meta/credentials/$mySignPubHex"
-                    val idCrypto = deps.identityCrypto()
-                    try {
-                        val blob = deps.readRawFile(g.config, credentialPath)
-                        if (blob != null) {
-                            val newConfig =
-                                CredentialRotation.openForMember(
-                                    blob = blob,
-                                    identity = g.identity,
-                                    identityCrypto = idCrypto,
-                                )
-                            if (newConfig != null) {
-                                // Apply the new credential: persist it and rebuild the engine so
-                                // the poll cycle below (and all future cycles) use the new URL.
-                                if (deps.saveRotatedConfig(newConfig, selectedCommunityId)) {
-                                    // Delete the credential blob from disk (best-effort — if it
-                                    // stays, the next cycle re-opens and no-ops idempotently).
-                                    try {
-                                        val delTransport = TransportFactory.create(newConfig)
-                                        @Suppress("TooGenericExceptionCaught")
-                                        delTransport.delete(credentialPath)
-                                    } catch (_: Exception) {
-                                        // best-effort — blob stays on disk, next cycle retries
+                override suspend fun runOnce(): CycleOutcome =
+                    AccountMutationBarrier.process.withExclusive {
+                        if (current()?.communityRuntimeKey != g.communityRuntimeKey) {
+                            return@withExclusive CycleOutcome(0, 0, backedOff = false)
+                        }
+                        // Pre-poll credential rotation check: if the host rotated the WebDAV credential,
+                        // a blob at meta/credentials/<mySignPubHex> exists on disk. Download it, open it
+                        // with our box keypair, verify the host's Ed25519 signature, and auto-replace the
+                        // local config so the poll cycle below uses the new credential.
+                        val mySignPubHex = g.senderIdentifier
+                        val credentialPath = "meta/credentials/$mySignPubHex"
+                        val idCrypto = deps.identityCrypto()
+                        try {
+                            val blob = deps.readRawFile(g.config, credentialPath)
+                            if (blob != null) {
+                                val newConfig =
+                                    CredentialRotation.openForMember(
+                                        blob = blob,
+                                        identity = g.identity,
+                                        identityCrypto = idCrypto,
+                                    )
+                                if (newConfig != null) {
+                                    // Apply the new credential: persist it and rebuild the engine so
+                                    // the poll cycle below (and all future cycles) use the new URL.
+                                    if (deps.saveRotatedConfig(newConfig, selectedCommunityId)) {
+                                        // Delete the credential blob from disk (best-effort — if it
+                                        // stays, the next cycle re-opens and no-ops idempotently).
+                                        try {
+                                            val delTransport = TransportFactory.create(newConfig)
+                                            @Suppress("TooGenericExceptionCaught")
+                                            delTransport.delete(credentialPath)
+                                        } catch (_: Exception) {
+                                            // best-effort — blob stays on disk, next cycle retries
+                                        }
+                                        // Rebuild the engine with the new config. The current graph
+                                        // fields (chatId, communityName, chatKey, identity) stay the same;
+                                        // only the ConnectionConfig changes.
+                                        reconfigureIfCurrent(
+                                            expectedCommunityRuntimeKey = g.communityRuntimeKey,
+                                            config = newConfig,
+                                            communityId = selectedCommunityId,
+                                        )
+                                        // Return immediately — the engine was rebuilt with the new
+                                        // credential; the next scheduled poll will use it.
+                                        return@withExclusive CycleOutcome(
+                                            newCount = 0,
+                                            skippedCount = 0,
+                                            backedOff = false,
+                                        )
                                     }
-                                    // Rebuild the engine with the new config. The current graph
-                                    // fields (chatId, communityName, chatKey, identity) stay the same;
-                                    // only the ConnectionConfig changes.
-                                    reconfigureIfCurrent(
-                                        expectedCommunityRuntimeKey = g.communityRuntimeKey,
-                                        config = newConfig,
-                                        communityId = selectedCommunityId,
-                                    )
-                                    // Return immediately — the engine was rebuilt with the new
-                                    // credential; the next scheduled poll will use it.
-                                    return CycleOutcome(
-                                        newCount = 0,
-                                        skippedCount = 0,
-                                        backedOff = false,
-                                    )
                                 }
                             }
+                        } catch (_: Exception) {
+                            // Credential check failure is never a poll failure — the next cycle retries.
                         }
-                    } catch (_: Exception) {
-                        // Credential check failure is never a poll failure — the next cycle retries.
-                    }
 
-                    // Publish the current member's directory entry so other members can resolve
-                    // display names. Content-addressed (same entry → same file), idempotent, and
-                    // best-effort: a failure leaves the hex-key fallback working as before.
-                    try {
-                        deps.publishDirectoryEntry(
-                            config = g.config,
-                            identity = g.identity,
-                            chatKey = g.chatKey,
-                            displayName = org.openwebdav.messenger.ui.settings.UserSettings.displayName,
+                        // Publish the current member's directory entry so other members can resolve
+                        // display names. Content-addressed (same entry → same file), idempotent, and
+                        // best-effort: a failure leaves the hex-key fallback working as before.
+                        try {
+                            deps.publishDirectoryEntry(
+                                config = g.config,
+                                identity = g.identity,
+                                chatKey = g.chatKey,
+                                displayName = org.openwebdav.messenger.ui.settings.UserSettings.displayName,
+                            )
+                        } catch (_: Exception) {
+                            // best-effort — directory publish failure is never a poll failure
+                        }
+
+                        // Discover new public group chats from the on-disk chat-directory.
+                        try {
+                            deps.discoverPublicChats()
+                        } catch (_: Exception) {
+                            // best-effort — retry next cycle
+                        }
+
+                        val subscriptions =
+                            (deps.communityChatIds(selectedCommunityId) + g.chatId).distinct().map(::ChatSubscription)
+                        val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions, selectedCommunityId)
+                        val otherCommunities = pollOtherCommunities(selectedCommunityId, g)
+                        val combinedOutcome =
+                            outcome.copy(
+                                newCount = outcome.newCount + otherCommunities.newCount,
+                                skippedCount = outcome.skippedCount + otherCommunities.skippedCount,
+                                backedOff = outcome.backedOff || otherCommunities.backedOff,
+                            )
+                        updateActiveCommunitySettings(
+                            expectedCommunityRuntimeKey = g.communityRuntimeKey,
+                            communityMinPollSeconds = outcome.communityMinPollSeconds,
+                            retentionWindowDays = outcome.retentionWindowDays,
                         )
-                    } catch (_: Exception) {
-                        // best-effort — directory publish failure is never a poll failure
+                        combinedOutcome
                     }
-
-                    // Discover new public group chats from the on-disk chat-directory.
-                    try {
-                        deps.discoverPublicChats()
-                    } catch (_: Exception) {
-                        // best-effort — retry next cycle
-                    }
-
-                    val subscriptions =
-                        (deps.communityChatIds(selectedCommunityId) + g.chatId).distinct().map(::ChatSubscription)
-                    val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions, selectedCommunityId)
-                    val otherCommunities = pollOtherCommunities(selectedCommunityId, g)
-                    val combinedOutcome =
-                        outcome.copy(
-                            newCount = outcome.newCount + otherCommunities.newCount,
-                            skippedCount = outcome.skippedCount + otherCommunities.skippedCount,
-                            backedOff = outcome.backedOff || otherCommunities.backedOff,
-                        )
-                    updateActiveCommunitySettings(
-                        expectedCommunityRuntimeKey = g.communityRuntimeKey,
-                        communityMinPollSeconds = outcome.communityMinPollSeconds,
-                        retentionWindowDays = outcome.retentionWindowDays,
-                    )
-                    return combinedOutcome
-                }
             },
         )
         deps.schedulePoll()

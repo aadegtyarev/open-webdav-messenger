@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 internal fun StartScreen(
     onCreate: () -> Unit,
     onJoin: () -> Unit,
+    onRestore: () -> Unit,
 ) {
     Scaffold { padding ->
         Column(
@@ -86,6 +87,20 @@ internal fun StartScreen(
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "Someone sent me an invite (a string or a QR code).",
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(Modifier.height(24.dp))
+            OutlinedButton(
+                onClick = onRestore,
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Restore account backup" },
+            ) {
+                Text("Restore account")
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "I have an encrypted backup from another device.",
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                 modifier = Modifier.fillMaxWidth(),
             )

@@ -9,7 +9,10 @@ import java.io.File
  * Stores the list of chats within a community. One chat per community is the "General" default.
  */
 internal class ChatRegistry(private val context: Context) {
-    private fun file(communityId: String) = File(context.filesDir, "connconfig/chats-$communityId.json")
+    private fun file(communityId: String): File {
+        AccountIdentifier.requireValid(communityId)
+        return File(context.filesDir, "connconfig/chats-$communityId.json")
+    }
 
     fun all(communityId: String): List<Entry> {
         val f = file(communityId)
@@ -30,10 +33,24 @@ internal class ChatRegistry(private val context: Context) {
         write(communityId, list)
     }
 
+    fun replace(
+        communityId: String,
+        entries: List<Entry>,
+    ) {
+        write(communityId, entries.distinctBy { it.id })
+    }
+
+    fun clear(communityId: String) {
+        StrictFileOperations.delete(file(communityId))
+    }
+
+    fun hasAny(): Boolean = File(context.filesDir, "connconfig").listFiles()?.any { it.name.startsWith("chats-") } == true
+
     private fun write(
         communityId: String,
         list: List<Entry>,
     ) {
+        list.forEach { AccountIdentifier.requireValid(it.id) }
         val arr = JSONArray()
         for (e in list) {
             arr.put(

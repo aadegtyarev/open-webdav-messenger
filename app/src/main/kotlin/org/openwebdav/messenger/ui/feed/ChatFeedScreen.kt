@@ -3,7 +3,6 @@ package org.openwebdav.messenger.ui.feed
 import android.app.NotificationManager
 import android.content.Context
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -343,15 +342,16 @@ private fun MessageRow(
                             tint = MaterialTheme.colorScheme.outline,
                         )
                     MessageEntity.STATUS_FAILED ->
-                        Icon(
-                            Icons.Filled.ErrorOutline,
-                            contentDescription = "Failed — tap to retry",
-                            modifier =
-                                Modifier
-                                    .size(14.dp)
-                                    .clickable { onRetry() },
-                            tint = MaterialTheme.colorScheme.error,
-                        )
+                        IconButton(
+                            onClick = onRetry,
+                            modifier = Modifier.size(48.dp).semantics { contentDescription = "Retry failed message" },
+                        ) {
+                            Icon(
+                                Icons.Filled.ErrorOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
                 }
             }
 

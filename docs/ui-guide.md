@@ -46,8 +46,10 @@ UI conventions for this project. Read by agents before planning or reviewing any
 - **Loading states:** Circular progress indicator for connection setup and disk operations; shimmer placeholder for the chat feed (future).
 - **Error display:** Snackbar for transient errors (sync failures, send retries); inline text for validation errors (bad URL, empty fields).
 - **Confirmation dialogs:** Only for destructive actions (leave chat, delete local data).
-- **Empty states:** "No messages yet" with the chat name and member count in the feed; "Create a community to get started" on first launch.
-- **Back navigation:** System back button / gesture returns to the previous screen; back from the chat feed exits the app.
+- **Empty states:** "No messages yet" with the chat name and member count in the feed; first launch offers Create, Join, and Restore account so existing members need not create/join before restoring.
+- **Back navigation:** System back button / gesture returns to the previous screen; back from the chat feed returns to Chats.
+- **Notification permission:** On Android 13+, explain the message-alert benefit before an explicit permission request. After denial, show guidance and a system-settings link instead of repeatedly prompting. Older versions do not request runtime notification permission.
+- **Account recovery:** Restore is available from Start and Settings. Success returns to the Chats list only after usable runtime activation; validation/store failures must remain truthful and must not be reported as completed activation.
 
 ---
 

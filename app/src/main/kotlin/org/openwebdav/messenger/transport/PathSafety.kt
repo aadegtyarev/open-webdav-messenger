@@ -1,5 +1,7 @@
 package org.openwebdav.messenger.transport
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
 /**
  * Fail-closed validation of WebDAV targets before any request is built
  * (`docs/protocol/webdav-layout.md` §0 character set; Security constraints).
@@ -15,6 +17,18 @@ package org.openwebdav.messenger.transport
 internal object PathSafety {
     /** §0: allowed characters in a single path segment (`~` is allowed inside message-ids). */
     private val SAFE_SEGMENT = Regex("[A-Za-z0-9._~-]+")
+
+    fun isValidConnectionConfig(config: ConnectionConfig): Boolean {
+        val url = config.normalizedBaseUrl.toHttpUrlOrNull() ?: return false
+        if (requireHttps(config.normalizedBaseUrl) != null || config.baseUrl != config.baseUrl.trim() ||
+            url.username.isNotEmpty() || url.password.isNotEmpty() || url.encodedQuery != null || url.encodedFragment != null
+        ) {
+            return false
+        }
+        val root = config.chatRoot
+        return root.isNotBlank() && root == root.trim('/') && validatePath(root) == null &&
+            config.username.isNotBlank() && config.appPassword.isNotBlank()
+    }
 
     /** Loopback hosts: cleartext here never leaves the device, so the credential is not exposed. */
     private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "[::1]", "::1")

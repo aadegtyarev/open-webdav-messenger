@@ -1,7 +1,10 @@
 package org.openwebdav.messenger.ui
 
+import android.app.Activity
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -12,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
@@ -22,6 +26,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.ui.chatlist.UnifiedChatListScreen
@@ -86,6 +92,17 @@ private fun AppNav() {
             },
         )
     }
+    var restoredAccountRevision by rememberSaveable { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    val exportRestoreLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val update = accountRestoreNavigationResult(screen, restoredAccountRevision, result.resultCode)
+            screen = update.screen
+            restoredAccountRevision = update.revision
+        }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (screen == Screen.Start && AppContainer.runtimeGraph() != null) screen = Screen.CommunityList
+    }
     BackHandler(
         enabled = screen != Screen.Start && screen != Screen.CommunityList,
     ) {
@@ -93,11 +110,18 @@ private fun AppNav() {
     }
 
     when (screen) {
-        Screen.Start ->
+        Screen.Start -> {
             StartScreen(
                 onCreate = { screen = Screen.CreateCommunity },
                 onJoin = { screen = Screen.Join },
+                onRestore = {
+                    exportRestoreLauncher.launch(
+                        Intent(context, ExportRestoreActivity::class.java)
+                            .putExtra(ExportRestoreActivity.EXTRA_OPEN_RESTORE, true),
+                    )
+                },
             )
+        }
 
         Screen.CommunityList ->
             UnifiedChatListScreen(
@@ -108,33 +132,36 @@ private fun AppNav() {
             )
 
         Screen.Settings -> {
-            val context = LocalContext.current
-            val host = remember { UserSettings.isHost }
-            val retentionDays = remember { UserSettings.communityRetentionWindowDays }
-            val pollFloor = remember { UserSettings.communityMinPollSeconds }
-            val metadataError = remember { mutableStateOf<String?>(null) }
+            val communityId = AppContainer.activeCommunityId
+            val host = remember(communityId, restoredAccountRevision) { UserSettings.isHostFor(communityId) }
+            var retentionDays by remember(
+                communityId,
+                restoredAccountRevision,
+            ) { mutableStateOf(UserSettings.retentionDaysFor(communityId)) }
+            var pollFloor by remember(communityId, restoredAccountRevision) { mutableStateOf(UserSettings.pollFloorFor(communityId)) }
             SettingsScreen(
                 onBack = { screen = Screen.CommunityList },
                 isHost = host,
                 retentionWindowDays = retentionDays,
                 communityPollFloor = pollFloor,
-                metadataError = metadataError.value,
                 onRetentionChanged = { days ->
-                    AppContainer.updateCommunityMetadata(
-                        days,
-                        UserSettings.communityMinPollSeconds,
-                        onError = { metadataError.value = it },
-                    )
+                    val result = AppContainer.updateCommunityRetention(days)
+                    if (result == org.openwebdav.messenger.app.CommunityMetadataUpdate.Saved) {
+                        retentionDays = UserSettings.retentionDaysFor(communityId)
+                        pollFloor = UserSettings.pollFloorFor(communityId)
+                    }
+                    result
                 },
                 onPollFloorChanged = { seconds ->
-                    AppContainer.updateCommunityMetadata(
-                        UserSettings.communityRetentionWindowDays,
-                        seconds,
-                        onError = { metadataError.value = it },
-                    )
+                    val result = AppContainer.updateCommunityPollFloor(seconds)
+                    if (result == org.openwebdav.messenger.app.CommunityMetadataUpdate.Saved) {
+                        retentionDays = UserSettings.retentionDaysFor(communityId)
+                        pollFloor = UserSettings.pollFloorFor(communityId)
+                    }
+                    result
                 },
                 onExportRestore = {
-                    context.startActivity(Intent(context, ExportRestoreActivity::class.java))
+                    exportRestoreLauncher.launch(Intent(context, ExportRestoreActivity::class.java))
                 },
             )
         }
@@ -170,6 +197,19 @@ internal val ScreenSaver =
         save = { it.persistedRoute() },
         restore = ::screenForSavedRoute,
     )
+
+internal data class AccountRestoreNavigationUpdate(val screen: Screen, val revision: Int)
+
+internal fun accountRestoreNavigationResult(
+    current: Screen,
+    revision: Int,
+    resultCode: Int,
+): AccountRestoreNavigationUpdate =
+    if (resultCode == Activity.RESULT_OK) {
+        AccountRestoreNavigationUpdate(Screen.CommunityList, revision + 1)
+    } else {
+        AccountRestoreNavigationUpdate(current, revision)
+    }
 
 internal sealed interface Screen {
     data object Start : Screen

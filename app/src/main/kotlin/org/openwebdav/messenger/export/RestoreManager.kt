@@ -3,9 +3,13 @@ package org.openwebdav.messenger.export
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.identity.IdentityLoadResult
+import org.openwebdav.messenger.keystore.AccountIdentifier
+import org.openwebdav.messenger.transport.PathSafety
 import java.util.Base64
 
 /**
@@ -25,6 +29,9 @@ class RestoreManager(
     private val chatKeyStore: ExportableChatKeyStore,
     private val identityStore: ExportableIdentityStore,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val accountBackupStore: ExportableAccountBackupStore? = null,
+    private val activateRuntime: () -> Unit = {},
+    private val restorePreviousRuntime: () -> Unit = activateRuntime,
 ) {
     /**
      * Decrypt [blob] (base64-encoded export) with [passphrase] and populate all stores.
@@ -40,6 +47,10 @@ class RestoreManager(
             return RestoreResult.WeakPassword
         }
 
+        if (blob.length > ExportManager.MAX_BLOB_BASE64_CHARS) {
+            passphrase.fill(' ')
+            return RestoreResult.BadFormat
+        }
         val blobBytes: ByteArray =
             try {
                 Base64.getDecoder().decode(blob)
@@ -48,6 +59,11 @@ class RestoreManager(
                 return RestoreResult.BadFormat
             }
 
+        if (blobBytes.size > ExportManager.MAX_BLOB_BYTES) {
+            passphrase.fill(' ')
+            blobBytes.fill(0)
+            return RestoreResult.BadFormat
+        }
         return withContext(ioDispatcher) {
             try {
                 val passwordBytes = passphraseToBytes(passphrase)
@@ -84,22 +100,19 @@ class RestoreManager(
                         val plaintext =
                             native.aeadDecrypt(ciphertext, magic, nonce, key)
                                 ?: return@withContext RestoreResult.WrongPasswordOrTampered
-
-                        // Parse the inner JSON payload.
-                        val json = String(plaintext, Charsets.UTF_8)
-                        val payload =
-                            ExportPayload.fromJson(json)
-                                ?: return@withContext RestoreResult.CorruptPayload
-
-                        // Validate payload — identity is mandatory for a complete restore.
-                        if (payload.identitySerialized == null) {
-                            return@withContext RestoreResult.CorruptPayload
+                        try {
+                            if (plaintext.size > ExportPayload.MAX_PLAINTEXT_BYTES) return@withContext RestoreResult.CorruptPayload
+                            val json = String(plaintext, Charsets.UTF_8)
+                            val payload =
+                                ExportPayload.fromJson(json)
+                                    ?: return@withContext RestoreResult.CorruptPayload
+                            val staged = stage(payload) ?: return@withContext RestoreResult.CorruptPayload
+                            return@withContext AccountMutationBarrier.process.withExclusive {
+                                writeWithRollback(staged)
+                            }
+                        } finally {
+                            plaintext.fill(0)
                         }
-
-                        // Populate all stores (all-or-nothing).
-                        populateStores(payload)
-
-                        RestoreResult.Restored
                     } finally {
                         key.fill(0)
                     }
@@ -112,47 +125,195 @@ class RestoreManager(
         }
     }
 
-    /** Populate all stores from the validated payload. Any store write failure here is an exception. */
-    private fun populateStores(payload: ExportPayload) {
-        // Connection config.
-        val cc = payload.connectionConfig
-        if (cc != null) {
-            connectionConfigStore.store(cc)
-        }
+    private data class StagedRestore(
+        val chatKeys: Map<String, ChatKey>,
+        val identity: Identity,
+        val accountBackup: AccountBackup,
+        val accountCommunityKeys: Map<String, ChatKey>,
+        val legacy: Boolean,
+    )
 
-        // Community key.
-        val ckB64 = payload.communityKeyBase64
-        if (ckB64 != null) {
-            val raw = ExportPayload.decodeBase64(ckB64)
-            try {
-                communityKeyStore.store(ChatKey.fromBytes(raw))
-            } finally {
-                raw.fill(0)
+    private fun stage(payload: ExportPayload): StagedRestore? {
+        return try {
+            val chatKeys = payload.chatKeys.mapValues { (_, encoded) -> decodeKey(encoded) ?: return null }
+            val serializedIdentity = payload.identitySerialized?.let(ExportPayload::decodeBase64) ?: return null
+            val identity =
+                try {
+                    Identity.deserialize(serializedIdentity) ?: return null
+                } finally {
+                    serializedIdentity.fill(0)
+                }
+            val legacy = payload.accountBackupBase64 == null
+            val communityKey = payload.communityKeyBase64?.let { decodeKey(it) ?: return null }
+            if (accountBackupStore == null || (!legacy && communityKey != null)) return null
+            val backup =
+                payload.accountBackupBase64?.let { encoded ->
+                    val raw = ExportPayload.decodeBase64(encoded)
+                    try {
+                        AccountBackupCodec.decode(raw) ?: return null
+                    } finally {
+                        raw.fill(0)
+                    }
+                } ?: legacyBackup(payload.connectionConfig, communityKey, chatKeys) ?: return null
+            if (!validateBackup(backup, chatKeys)) return null
+            val accountCommunityKeys = mutableMapOf<String, ChatKey>()
+            backup.communities.forEach { community ->
+                community.communityKeyBase64?.let { encoded ->
+                    accountCommunityKeys[community.id] = decodeKey(encoded) ?: return null
+                }
             }
+            if (legacy) accountCommunityKeys["default"] = checkNotNull(communityKey)
+            StagedRestore(chatKeys, identity, backup, accountCommunityKeys, legacy)
+        } catch (_: Exception) {
+            null
         }
+    }
 
-        // Chat keys.
-        for ((chatId, keyB64) in payload.chatKeys) {
-            val raw = ExportPayload.decodeBase64(keyB64)
+    private fun legacyBackup(
+        config: org.openwebdav.messenger.transport.ConnectionConfig?,
+        communityKey: ChatKey?,
+        chatKeys: Map<String, ChatKey>,
+    ): AccountBackup? {
+        if (accountBackupStore == null || config == null || communityKey == null || chatKeys.size != 1) return null
+        val chatId = chatKeys.keys.single()
+        val rawKey = communityKey.export()
+        val encodedKey =
             try {
-                chatKeyStore.store(chatId, ChatKey.fromBytes(raw))
+                java.util.Base64.getEncoder().encodeToString(rawKey)
             } finally {
-                raw.fill(0)
+                rawKey.fill(0)
             }
+        return AccountBackup(
+            "default",
+            listOf(
+                CommunityBackup(
+                    "default",
+                    "Restored community",
+                    chatId,
+                    config,
+                    listOf(ChatBackup(chatId, "General", "general")),
+                    encodedKey,
+                ),
+            ),
+        )
+    }
+
+    private fun validateBackup(
+        backup: AccountBackup,
+        chatKeys: Map<String, ChatKey>,
+    ): Boolean =
+        chatKeys.keys.all(AccountIdentifier::isValid) &&
+            backup.communities.map { it.id }.distinct().size == backup.communities.size &&
+            backup.communities.any { it.id == backup.activeCommunityId } &&
+            backup.communities.all { community ->
+                AccountIdentifier.isValid(community.id) && community.name.isNotBlank() &&
+                    PathSafety.isValidConnectionConfig(community.config) &&
+                    AccountIdentifier.isValid(community.anchorChatId) &&
+                    community.anchorChatId in community.chats.map { it.id } &&
+                    community.chats.isNotEmpty() && community.chats.map { it.id }.distinct().size == community.chats.size &&
+                    community.chats.all {
+                        AccountIdentifier.isValid(it.id) && it.name.isNotBlank() && it.kind in setOf("general", "group", "dm") &&
+                            it.id in chatKeys
+                    }
+            }
+
+    private fun decodeKey(encoded: String): ChatKey? {
+        val raw = ExportPayload.decodeBase64(encoded)
+        return try {
+            if (raw.size != ChatKey.KEY_BYTES) null else ChatKey.fromBytes(raw)
+        } finally {
+            raw.fill(0)
         }
+    }
 
-        // Identity.
-        val idB64 = payload.identitySerialized
-        if (idB64 != null) {
-            val ser = ExportPayload.decodeBase64(idB64)
+    private data class RestoreSnapshot(
+        val config: org.openwebdav.messenger.transport.ConnectionConfig?,
+        val communityKeys: Map<String, ChatKey>,
+        val chatKeys: Map<String, ChatKey>,
+        val identity: IdentityLoadResult,
+        val accountBackup: AccountBackup?,
+        val membershipState: Boolean,
+        val registryState: Boolean,
+    ) {
+        fun isEmpty(): Boolean =
+            config == null && communityKeys.isEmpty() && chatKeys.isEmpty() &&
+                identity is IdentityLoadResult.None && accountBackup == null && !membershipState && !registryState
+    }
+
+    private suspend fun writeWithRollback(staged: StagedRestore): RestoreResult {
+        val previous =
             try {
-                val identity =
-                    Identity.deserialize(ser)
-                        ?: error("corrupt identity in payload")
-                identityStore.store(identity)
-            } finally {
-                ser.fill(0)
+                val configPresent = connectionConfigStore.hasStored()
+                val config = connectionConfigStore.load()
+                check(!configPresent || config != null) { "Stored connection config is unreadable" }
+                val communityKeys =
+                    communityKeyStore.listCommunityIds().associateWith { id ->
+                        checkNotNull(communityKeyStore.load(id)) { "Stored community key is unreadable: $id" }
+                    }
+                val chatKeys =
+                    chatKeyStore.listChatIds().associateWith { id ->
+                        checkNotNull(chatKeyStore.load(id)) { "Stored chat key is unreadable: $id" }
+                    }
+                RestoreSnapshot(
+                    config,
+                    communityKeys,
+                    chatKeys,
+                    identityStore.load(),
+                    accountBackupStore?.snapshot(),
+                    accountBackupStore?.hasMembershipState() ?: false,
+                    accountBackupStore?.hasRegistryState() ?: false,
+                )
+            } catch (_: Exception) {
+                return RestoreResult.StoreFailure(rollbackSucceeded = true)
             }
+        if (previous.identity is IdentityLoadResult.Unrecoverable) return RestoreResult.StoreFailure(rollbackSucceeded = true)
+        if (previous.registryState && previous.accountBackup == null) return RestoreResult.StoreFailure(rollbackSucceeded = true)
+        if (staged.legacy && !previous.isEmpty()) return RestoreResult.IncompatibleTarget
+
+        var activationAttempted = false
+        return try {
+            communityKeyStore.replaceAllStrict(staged.accountCommunityKeys)
+            chatKeyStore.replaceAllStrict(staged.chatKeys)
+            identityStore.store(staged.identity)
+            checkNotNull(accountBackupStore).replace(staged.accountBackup)
+            activationAttempted = true
+            activateRuntime()
+            RestoreResult.Restored
+        } catch (_: Exception) {
+            var rolledBack = true
+
+            fun attempt(action: () -> Unit) {
+                try {
+                    action()
+                } catch (_: Exception) {
+                    rolledBack = false
+                }
+            }
+            attempt {
+                if (previous.accountBackup != null) {
+                    checkNotNull(accountBackupStore).replace(previous.accountBackup)
+                } else {
+                    checkNotNull(accountBackupStore).clearCommunityIds(staged.accountBackup.communities.mapTo(mutableSetOf()) { it.id })
+                }
+            }
+            attempt {
+                if (previous.accountBackup == null) {
+                    if (previous.config == null) connectionConfigStore.clear() else connectionConfigStore.store(previous.config)
+                }
+            }
+            attempt { communityKeyStore.replaceAllStrict(previous.communityKeys) }
+            previous.chatKeys.forEach { (id, key) -> attempt { chatKeyStore.storeStrict(id, key) } }
+            (staged.chatKeys.keys - previous.chatKeys.keys).forEach { id -> attempt { chatKeyStore.removeStrict(id) } }
+            attempt { chatKeyStore.replaceAllStrict(previous.chatKeys) }
+            attempt {
+                when (val oldIdentity = previous.identity) {
+                    is IdentityLoadResult.Loaded -> identityStore.store(oldIdentity.identity)
+                    IdentityLoadResult.None -> identityStore.clear()
+                    is IdentityLoadResult.Unrecoverable -> error("Previous identity was unrecoverable")
+                }
+            }
+            if (activationAttempted) attempt(restorePreviousRuntime)
+            RestoreResult.StoreFailure(rollbackSucceeded = rolledBack)
         }
     }
 

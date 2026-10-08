@@ -1,12 +1,6 @@
 package org.openwebdav.messenger.sync
 
-import androidx.test.core.app.ApplicationProvider
-import androidx.work.Configuration
 import androidx.work.PeriodicWorkRequest
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
-import androidx.work.testing.SynchronousExecutor
-import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -70,29 +64,29 @@ class SyncStackSpecTest {
         )
     }
 
-    /**
-     * The WorkManager Worker runs one poll cycle and maps backedOff→retry / else→success, driven by the
-     * `androidx.work:work-testing` TestDriver under `./gradlew test`.
-     * Source: <https://developer.android.com/develop/background-work/background-tasks/persistent/how-to/integration-testing>
-     */
+    /** The worker waits for cold-start wiring before capturing and running the installed poll cycle. */
     @Test
-    fun `worker runs a cycle via the work-testing TestDriver`() {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val config = Configuration.Builder().setExecutor(SynchronousExecutor()).build()
-        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
-        val wm = WorkManager.getInstance(context)
+    fun `worker warms the app before running the installed cycle`() =
+        runTest {
+            var warmed = false
+            var runs = 0
+            val expected = CycleOutcome(newCount = 0, skippedCount = 0, backedOff = false)
 
-        // The installed runner reports a clean cycle → the Worker must succeed.
-        SyncRunner.install(SyncRunner { CycleOutcome(newCount = 0, skippedCount = 0, backedOff = false) })
-        val request = SyncScheduler.pollRequest(requestedSeconds = 900)
-        wm.enqueue(request).result.get()
+            val outcome =
+                runSyncWorkerCycle(
+                    ensureWarmStarted = { warmed = true },
+                    currentRunner = {
+                        SyncRunner {
+                            assertTrue(warmed)
+                            runs++
+                            expected
+                        }
+                    },
+                )
 
-        // Drive the periodic work's first run deterministically (TestDriver).
-        WorkManagerTestInitHelper.getTestDriver(context)!!.setPeriodDelayMet(request.id)
-        val info = wm.getWorkInfoById(request.id).get()
-        // After a successful periodic run the work returns to ENQUEUED (awaiting the next period).
-        assertTrue(info.state == WorkInfo.State.ENQUEUED || info.state == WorkInfo.State.RUNNING)
-    }
+            assertEquals(expected, outcome)
+            assertEquals(1, runs)
+        }
 
     /**
      * propfind_uses_depth_1 — the poll lists collections with `Depth: 1`, never `infinity` (servers MAY

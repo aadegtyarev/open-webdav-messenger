@@ -74,6 +74,7 @@ class EngineWiringTest {
 
     @After
     fun tearDown() {
+        SyncRunner.install(SyncRunner { CycleOutcome(0, 0, backedOff = false) })
         server.shutdown()
         db.close()
     }

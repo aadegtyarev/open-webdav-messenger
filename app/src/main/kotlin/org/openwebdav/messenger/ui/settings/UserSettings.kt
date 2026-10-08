@@ -14,8 +14,10 @@ internal object UserSettings {
     private const val KEY_IS_HOST = "is_host"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_COMMUNITY_RETENTION_WINDOW_DAYS = "community_retention_window_days"
+    private const val KEY_COMMUNITY_SETTINGS_MIGRATED = "community_settings_migrated"
 
     private lateinit var prefs: SharedPreferences
+    private var activeCommunityId: String = "default"
     private val _fontScale = MutableStateFlow(1.0f)
     val fontScaleFlow: StateFlow<Float> = _fontScale
 
@@ -36,6 +38,101 @@ internal object UserSettings {
         _fontScale.value = prefs.getFloat(KEY_FONT_SCALE, 1.0f).coerceIn(0.8f, 1.5f)
         _themeMode.value = prefs.getString(KEY_THEME_MODE, "system") ?: "system"
     }
+
+    fun selectCommunity(communityId: String) {
+        activeCommunityId = communityId
+    }
+
+    fun migrateLegacyCommunitySettings(
+        communityId: String,
+        soleRegisteredCommunity: Boolean,
+    ) {
+        if (prefs.getBoolean(KEY_COMMUNITY_SETTINGS_MIGRATED, false)) return
+        val editor = prefs.edit()
+        if (soleRegisteredCommunity) {
+            val hostKey = scopedKey(KEY_IS_HOST, communityId)
+            val pollKey = scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId)
+            val retentionKey = scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId)
+            if (!prefs.contains(hostKey) && prefs.contains(KEY_IS_HOST)) editor.putBoolean(hostKey, prefs.getBoolean(KEY_IS_HOST, false))
+            if (!prefs.contains(pollKey) && prefs.contains(KEY_COMMUNITY_MIN_POLL_SECONDS)) {
+                editor.putInt(pollKey, prefs.getInt(KEY_COMMUNITY_MIN_POLL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS))
+            }
+            if (!prefs.contains(retentionKey) && prefs.contains(KEY_COMMUNITY_RETENTION_WINDOW_DAYS)) {
+                editor.putInt(retentionKey, prefs.getInt(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, DEFAULT_RETENTION_WINDOW_DAYS))
+            }
+        }
+        editor.putBoolean(KEY_COMMUNITY_SETTINGS_MIGRATED, true).apply()
+    }
+
+    fun isHostFor(communityId: String): Boolean = prefs.getBoolean(scopedKey(KEY_IS_HOST, communityId), false)
+
+    fun setHostFor(
+        communityId: String,
+        value: Boolean,
+    ) {
+        prefs.edit().putBoolean(scopedKey(KEY_IS_HOST, communityId), value).apply()
+    }
+
+    fun setHostForStrict(
+        communityId: String,
+        value: Boolean,
+    ) {
+        check(prefs.edit().putBoolean(scopedKey(KEY_IS_HOST, communityId), value).commit()) { "Failed to persist community role" }
+    }
+
+    fun pollFloorFor(communityId: String): Int =
+        prefs.getInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId), DEFAULT_POLL_INTERVAL_SECONDS).coerceIn(1, 3600)
+
+    fun retentionDaysFor(communityId: String): Int =
+        prefs.getInt(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId), DEFAULT_RETENTION_WINDOW_DAYS).coerceIn(7, 90)
+
+    fun clearCommunitySettings(communityId: String) {
+        prefs.edit()
+            .remove(scopedKey(KEY_IS_HOST, communityId))
+            .remove(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId))
+            .remove(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId))
+            .apply()
+    }
+
+    fun clearCommunitySettingsStrict(communityId: String) {
+        val cleared =
+            prefs.edit()
+                .remove(scopedKey(KEY_IS_HOST, communityId))
+                .remove(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId))
+                .remove(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId))
+                .commit()
+        check(cleared) { "Failed to clear community settings" }
+    }
+
+    fun setCommunityMetadata(
+        communityId: String,
+        pollFloor: Int,
+        retentionDays: Int,
+    ) {
+        val floor = pollFloor.coerceIn(1, 3600)
+        prefs.edit()
+            .putInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId), floor)
+            .putInt(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId), retentionDays.coerceIn(7, 90))
+            .apply()
+    }
+
+    fun setCommunityMetadataStrict(
+        communityId: String,
+        pollFloor: Int,
+        retentionDays: Int,
+    ) {
+        val saved =
+            prefs.edit()
+                .putInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId), pollFloor.coerceIn(1, 3600))
+                .putInt(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId), retentionDays.coerceIn(7, 90))
+                .commit()
+        check(saved) { "Failed to persist community policy" }
+    }
+
+    private fun scopedKey(
+        key: String,
+        communityId: String,
+    ) = "$key.$communityId"
 
     var displayName: String
         get() = prefs.getString(KEY_DISPLAY_NAME, "") ?: ""
@@ -71,15 +168,10 @@ internal object UserSettings {
      */
     var communityMinPollSeconds: Int
         get() =
-            prefs.getInt(KEY_COMMUNITY_MIN_POLL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS)
-                .coerceIn(1, 3600)
+            pollFloorFor(activeCommunityId)
         set(value) {
             val clamped = value.coerceIn(1, 3600)
-            prefs.edit().putInt(KEY_COMMUNITY_MIN_POLL_SECONDS, clamped).apply()
-            // Auto-adjust the member's personal interval up to the new floor.
-            if (pollIntervalSeconds < clamped) {
-                pollIntervalSeconds = clamped
-            }
+            prefs.edit().putInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, activeCommunityId), clamped).apply()
         }
 
     /**
@@ -104,11 +196,10 @@ internal object UserSettings {
      */
     var communityRetentionWindowDays: Int
         get() =
-            prefs.getInt(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, DEFAULT_RETENTION_WINDOW_DAYS)
-                .coerceIn(7, 90)
+            retentionDaysFor(activeCommunityId)
         set(value) {
             val clamped = value.coerceIn(7, 90)
-            prefs.edit().putInt(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, clamped).apply()
+            prefs.edit().putInt(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, activeCommunityId), clamped).apply()
         }
 
     /**
@@ -116,8 +207,8 @@ internal object UserSettings {
      * Persisted across app restarts; set during onboarding.
      */
     var isHost: Boolean
-        get() = prefs.getBoolean(KEY_IS_HOST, false)
-        set(value) = prefs.edit().putBoolean(KEY_IS_HOST, value).apply()
+        get() = isHostFor(activeCommunityId)
+        set(value) = setHostFor(activeCommunityId, value)
 
     /**
      * Convert a poll interval in seconds to a human-readable string.

@@ -147,9 +147,12 @@ class IdentityStore(
 
     /** Delete the stored identity (e.g. on an explicit, user-confirmed reset). Blocking — must not be called on the main thread. */
     @WorkerThread
-    fun remove() {
+    override fun clear() {
         wrapper().delete()
     }
+
+    /** Backward-compatible explicit reset operation. */
+    fun remove() = clear()
 
     /** The raw wrapped-on-disk bytes — for tests asserting the secret keys are NOT in plaintext. */
     internal fun rawStoredBlob(): ByteArray? = wrapper().rawBlob()

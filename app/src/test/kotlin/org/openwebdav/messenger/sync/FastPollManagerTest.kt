@@ -7,6 +7,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -40,9 +41,18 @@ class FastPollManagerTest {
         WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
         workManager = WorkManager.getInstance(context)
 
-        // Start clean: disable fast polling before each test
+        workManager.cancelAllWork().result.get()
         FastPollManager.disable(context, workManager)
+        workManager.cancelAllWork().result.get()
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    @After
+    fun tearDown() {
+        FastPollManager.disable(context, workManager)
+        workManager.cancelAllWork().result.get()
+        shadowOf(Looper.getMainLooper()).idle()
+        SyncRunner.install(SyncRunner { CycleOutcome(0, 0, backedOff = false) })
     }
 
     @Test

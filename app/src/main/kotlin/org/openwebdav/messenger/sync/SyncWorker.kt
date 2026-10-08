@@ -29,12 +29,25 @@ class SyncWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        AppContainer.bind(applicationContext)
-        AppContainer.ensureWarmStarted()
-        val outcome = SyncRunner.current().runOnce()
+        val outcome =
+            runSyncWorkerCycle(
+                ensureWarmStarted = {
+                    AppContainer.bind(applicationContext)
+                    AppContainer.ensureWarmStarted()
+                },
+                currentRunner = SyncRunner::current,
+            )
         if (outcome.newCount > 0) {
             SyncNotifier.showMessages(applicationContext, outcome.newCount)
         }
         return if (outcome.backedOff) Result.retry() else Result.success()
     }
+}
+
+internal suspend fun runSyncWorkerCycle(
+    ensureWarmStarted: suspend () -> Unit,
+    currentRunner: () -> SyncRunner,
+): CycleOutcome {
+    ensureWarmStarted()
+    return currentRunner().runOnce()
 }

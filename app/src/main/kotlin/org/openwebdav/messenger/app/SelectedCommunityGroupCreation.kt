@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.app
 
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.keystore.StoredConnection
 
 internal data class SelectedCommunityGroupContext(
@@ -21,17 +22,20 @@ internal fun selectedCommunityGroupContext(
     return SelectedCommunityGroupContext(communityId, stored, graph, selectionRevision)
 }
 
-/** Resolve, create, and open a group using one community-scoped runtime context. */
+/** Resolve, create, and open under one account barrier; activation must use its exclusive path. */
 internal suspend fun <Context> createGroupInSelectedCommunity(
     communityId: String,
     activeCommunityId: String,
+    isRuntimeCurrent: () -> Boolean = { true },
     activateCommunity: suspend (String) -> Boolean,
     resolveContext: suspend (String) -> Context?,
     create: suspend (Context) -> String?,
     open: suspend (Context, String) -> Boolean,
-): String? {
-    if (communityId != activeCommunityId && !activateCommunity(communityId)) return null
-    val context = resolveContext(communityId) ?: return null
-    val chatId = create(context) ?: return null
-    return chatId.takeIf { open(context, it) }
-}
+): String? =
+    AccountMutationBarrier.process.withExclusive {
+        if (!isRuntimeCurrent()) return@withExclusive null
+        if (communityId != activeCommunityId && !activateCommunity(communityId)) return@withExclusive null
+        val context = resolveContext(communityId) ?: return@withExclusive null
+        val chatId = create(context) ?: return@withExclusive null
+        chatId.takeIf { open(context, it) }
+    }

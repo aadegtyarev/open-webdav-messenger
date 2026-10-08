@@ -3,6 +3,7 @@ package org.openwebdav.messenger.app
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.identity.Identity
@@ -49,29 +50,31 @@ internal class OnboardingService(
         chatRoot: String,
         communityName: String,
     ): CreateResult =
-        withContext(ioDispatcher) {
-            if (!isHttps(baseUrl)) return@withContext CreateResult.CleartextRefused
-            val root = generateFolderName(baseUrl.trim(), communityName.trim())
-            // Always nest under the shared parent folder so multiple communities coexist cleanly.
-            val fullRoot = "$PARENT_FOLDER/$root"
-            val config =
-                ConnectionConfig(
-                    baseUrl = baseUrl.trim(),
-                    username = username.trim(),
-                    appPassword = appPassword,
-                    chatRoot = fullRoot,
-                )
-            // Check if the folder already exists and has content — refuse to write into an occupied folder.
-            when (val folderCheck = deps.checkFolder(config, fullRoot)) {
-                is FolderCheck.Occupied -> return@withContext CreateResult.FolderOccupied
-                is FolderCheck.Error -> return@withContext CreateResult.FolderError(folderCheck.message)
-                is FolderCheck.Ok -> { /* proceed */ }
+        AccountMutationBarrier.process.withExclusive {
+            withContext(ioDispatcher) {
+                if (!isHttps(baseUrl)) return@withContext CreateResult.CleartextRefused
+                val root = generateFolderName(baseUrl.trim(), communityName.trim())
+                // Always nest under the shared parent folder so multiple communities coexist cleanly.
+                val fullRoot = "$PARENT_FOLDER/$root"
+                val config =
+                    ConnectionConfig(
+                        baseUrl = baseUrl.trim(),
+                        username = username.trim(),
+                        appPassword = appPassword,
+                        chatRoot = fullRoot,
+                    )
+                // Check if the folder already exists and has content — refuse to write into an occupied folder.
+                when (val folderCheck = deps.checkFolder(config, fullRoot)) {
+                    is FolderCheck.Occupied -> return@withContext CreateResult.FolderOccupied
+                    is FolderCheck.Error -> return@withContext CreateResult.FolderError(folderCheck.message)
+                    is FolderCheck.Ok -> { /* proceed */ }
+                }
+                val identity = deps.ensureIdentity()
+                val chatId = deps.newChatId()
+                val chatKey = deps.keySources().newRandomKey()
+                persistAndReconfigure(config, chatId, communityName.trim(), chatKey, identity, isHost = true)
+                CreateResult.Created(chatId, communityName.trim(), fullRoot)
             }
-            val identity = deps.ensureIdentity()
-            val chatId = deps.newChatId()
-            val chatKey = deps.keySources().newRandomKey()
-            persistAndReconfigure(config, chatId, communityName.trim(), chatKey, identity, isHost = true)
-            CreateResult.Created(chatId, communityName.trim(), fullRoot)
         }
 
     /**
@@ -81,10 +84,12 @@ internal class OnboardingService(
      * carries ONLY the community name + chat-id — never the disk URL/username/password/folder.
      */
     suspend fun joinFromInvite(inviteString: String): JoinResult =
-        withContext(ioDispatcher) {
-            when (val decoded = codec.decodeBlocking(inviteString)) {
-                is InviteCodec.Result.Rejected -> JoinResult.Invalid
-                is InviteCodec.Result.Decoded -> joinFromToken(decoded.token)
+        AccountMutationBarrier.process.withExclusive {
+            withContext(ioDispatcher) {
+                when (val decoded = codec.decodeBlocking(inviteString)) {
+                    is InviteCodec.Result.Rejected -> JoinResult.Invalid
+                    is InviteCodec.Result.Decoded -> joinFromToken(decoded.token)
+                }
             }
         }
 

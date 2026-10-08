@@ -18,6 +18,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.R
+import org.openwebdav.messenger.account.AccountMutationBarrier
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
 import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.export.ExportManager
@@ -26,6 +28,7 @@ import org.openwebdav.messenger.export.RestoreManager
 import org.openwebdav.messenger.export.RestoreResult
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityStore
+import org.openwebdav.messenger.keystore.AccountBackupStore
 import org.openwebdav.messenger.keystore.ChatKeyStore
 import org.openwebdav.messenger.keystore.CommunityKeyStore
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
@@ -75,7 +78,7 @@ class ExportRestoreActivity : Activity() {
         setupTabs()
         setupExport()
         setupRestore()
-        showExportPanel()
+        if (intent.getBooleanExtra(EXTRA_OPEN_RESTORE, false)) showRestorePanel() else showExportPanel()
     }
 
     override fun onDestroy() {
@@ -110,8 +113,27 @@ class ExportRestoreActivity : Activity() {
         communityKeyStore = CommunityKeyStore(applicationContext)
         chatKeyStore = ChatKeyStore(applicationContext, native)
         identityStore = IdentityStore(applicationContext, IdentityCrypto(native))
-        exportManager = ExportManager(native, connectionConfigStore, communityKeyStore, chatKeyStore, identityStore)
-        restoreManager = RestoreManager(native, connectionConfigStore, communityKeyStore, chatKeyStore, identityStore)
+        val accountBackupStore = AccountBackupStore(applicationContext)
+        exportManager =
+            ExportManager(
+                native,
+                connectionConfigStore,
+                communityKeyStore,
+                chatKeyStore,
+                identityStore,
+                accountBackupStore = accountBackupStore,
+            )
+        restoreManager =
+            RestoreManager(
+                native,
+                connectionConfigStore,
+                communityKeyStore,
+                chatKeyStore,
+                identityStore,
+                accountBackupStore = accountBackupStore,
+                activateRuntime = AppContainer::rebuildAfterRestore,
+                restorePreviousRuntime = AppContainer::restorePreviousRuntime,
+            )
     }
 
     // -- tabs ----------------------------------------------------------------
@@ -155,7 +177,10 @@ class ExportRestoreActivity : Activity() {
             showExportStatus("Encrypting…", isError = false)
 
             scope.launch(Dispatchers.IO) {
-                val result = exportManager.export(pw.toCharArray())
+                val result =
+                    AccountMutationBarrier.process.withExclusive {
+                        exportManager.export(pw.toCharArray())
+                    }
                 launch(Dispatchers.Main) {
                     exportButton.isEnabled = true
                     handleExportResult(result)
@@ -173,6 +198,10 @@ class ExportRestoreActivity : Activity() {
             ExportResult.WeakPassword -> {
                 showExportStatus(getString(R.string.export_weak_password), isError = true)
             }
+            ExportResult.IncompleteAccount -> {
+                showExportStatus("Couldn't read all account keys or community data. No backup was created.", isError = true)
+            }
+            ExportResult.TooLarge -> showExportStatus("This account is too large to export.", isError = true)
         }
     }
 
@@ -231,6 +260,8 @@ class ExportRestoreActivity : Activity() {
         when (result) {
             RestoreResult.Restored -> {
                 showRestoreStatus(getString(R.string.restore_success), isError = false)
+                setResult(RESULT_OK)
+                finish()
             }
             RestoreResult.BadFormat -> {
                 showRestoreStatus(getString(R.string.restore_bad_format), isError = true)
@@ -241,8 +272,20 @@ class ExportRestoreActivity : Activity() {
             RestoreResult.CorruptPayload -> {
                 showRestoreStatus(getString(R.string.restore_corrupt), isError = true)
             }
+            RestoreResult.IncompatibleTarget -> {
+                showRestoreStatus("Legacy backups can only be restored when no account is currently joined.", isError = true)
+            }
             RestoreResult.WeakPassword -> {
                 showRestoreStatus(getString(R.string.restore_weak_password), isError = true)
+            }
+            is RestoreResult.StoreFailure -> {
+                val message =
+                    if (result.rollbackSucceeded) {
+                        "Restore could not be saved. Existing account data was restored."
+                    } else {
+                        "Restore failed and existing account data could not be fully restored. Do not continue using this account."
+                    }
+                showRestoreStatus(message, isError = true)
             }
         }
     }
@@ -268,6 +311,7 @@ class ExportRestoreActivity : Activity() {
     }
 
     companion object {
+        const val EXTRA_OPEN_RESTORE = "open_restore"
         private const val TAG = "ExportRestore"
     }
 }
