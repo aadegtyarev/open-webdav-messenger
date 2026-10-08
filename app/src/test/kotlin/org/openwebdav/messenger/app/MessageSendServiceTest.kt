@@ -131,6 +131,28 @@ class MessageSendServiceTest {
         }
 
     @Test
+    fun send_requires_verified_roster_and_persists_the_same_recipient_snapshot() =
+        runTest {
+            val store = store("community-a")
+            val graph = graph(store, communityId = "community-a")
+            graph.updateRecipientReadiness(RecipientReadiness.Loading)
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined)
+
+            val pendingFailure = runCatching { service.send("must wait") }.exceptionOrNull()
+            assertTrue(pendingFailure is IllegalStateException)
+            assertTrue(store.messagesForChat(chatId).isEmpty())
+
+            val peer = "0123456789abcdef"
+            graph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(peer)))
+            disk.failPutAfterStoreUnderPrefix[ChatPaths.LOG] = 503
+            assertFalse(service.send("verified snapshot").complete)
+            val pending = store.messagesForChat(chatId).single()
+            assertEquals(peer, pending.outboxRecipients)
+            graph.updateRecipientReadiness(RecipientReadiness.Unavailable("roster changed"))
+            assertEquals(peer, pending.outboxRecipients)
+        }
+
+    @Test
     fun send_for_replaced_account_is_rejected_before_persistence_or_webdav() =
         runTest {
             val store = store()

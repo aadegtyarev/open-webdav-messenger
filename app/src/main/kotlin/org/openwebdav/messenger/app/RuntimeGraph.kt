@@ -41,11 +41,23 @@ internal class RuntimeGraph(
     val identity: Identity,
     val senderIdentifier: String,
     val scopeKey: String = UUID.randomUUID().toString(),
-    /** All member identifiers in this chat (for change-entry fan-out). */
-    val roster: List<String> = listOf(senderIdentifier),
+    /** Initial verified member identifiers; pending chats publish [RecipientReadiness.Loading]. */
+    roster: List<String> = listOf(senderIdentifier),
     val communityId: String = "default",
     val communityRuntimeKey: String = UUID.randomUUID().toString(),
+    initialRecipientReadiness: RecipientReadiness = RecipientReadiness.Ready(roster),
 ) {
+    private val recipientRoster = VerifiedRecipientRoster(initialRecipientReadiness, senderIdentifier)
+    val recipientReadiness: StateFlow<RecipientReadiness> = recipientRoster.state
+
+    /** Current verified member identifiers; pending/error snapshots expose only the local sender. */
+    val roster: List<String>
+        get() = (recipientRoster.snapshot() as? RecipientReadiness.Ready)?.members ?: listOf(senderIdentifier)
+
+    fun recipientSnapshot(): RecipientReadiness = recipientRoster.snapshot()
+
+    fun updateRecipientReadiness(readiness: RecipientReadiness) = recipientRoster.update(readiness)
+
     /** Signing-pubkey-hex → display name (from directory). Updated asynchronously. */
     private val _memberNames = MutableStateFlow<Map<String, String>>(emptyMap())
     val memberNamesFlow: StateFlow<Map<String, String>> = _memberNames

@@ -345,10 +345,13 @@ class EngineWiringTest {
                 listOf(validPlan.graph.senderIdentifier),
                 emptyMap(),
                 { selectedCommunity == validPlan.communityId },
+                recipientReadiness = RecipientReadiness.Loading,
             ),
         )
+        assertTrue(generalGraph.recipientSnapshot() is RecipientReadiness.Ready)
         assertEquals(generalGraph.communityId, EngineWiring.current()?.communityId)
         assertEquals("valid-group", EngineWiring.current()?.chatId)
+        assertEquals(RecipientReadiness.Loading, EngineWiring.current()?.recipientSnapshot())
     }
 
     @Test

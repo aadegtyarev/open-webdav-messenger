@@ -85,6 +85,18 @@ internal object EngineWiring {
     /** The composed graph for the active chat, or `null` if no config exists yet (no chat joined). */
     fun current(): RuntimeGraph? = graph
 
+    /** Apply asynchronous enrichment only while the exact captured graph is still installed. */
+    fun updateGraphIfCurrent(
+        expectedGraph: RuntimeGraph,
+        isContextCurrent: () -> Boolean,
+        update: () -> Unit,
+    ): Boolean =
+        synchronized(runtimeInstallLock) {
+            if (graph !== expectedGraph || !isContextCurrent()) return@synchronized false
+            update()
+            true
+        }
+
     /** Suspend until process-start [initialize] has resolved the graph (used by the cold-start poll path). */
     suspend fun awaitReady() {
         ready.first { it }
@@ -128,6 +140,7 @@ internal object EngineWiring {
         communityId: String = "default",
         roster: List<String>? = null,
         memberNames: Map<String, String> = emptyMap(),
+        recipientReadiness: RecipientReadiness? = null,
     ) {
         // Onboarding can only run after the UI is shown, which waits on [ready] (i.e. after [initialize]
         // assigned [deps]); this guard makes the narrow process-start window explicit rather than letting
@@ -155,6 +168,7 @@ internal object EngineWiring {
                         roster = roster,
                         communityId = built.communityId,
                         communityRuntimeKey = built.communityRuntimeKey,
+                        initialRecipientReadiness = recipientReadiness ?: RecipientReadiness.Ready(roster),
                     ).also { it.memberNames = memberNames }
                 }
             graph = g
@@ -183,6 +197,7 @@ internal object EngineWiring {
                 communityId = communityId,
                 roster = activeGraph.roster,
                 memberNames = activeGraph.memberNames,
+                recipientReadiness = activeGraph.recipientSnapshot(),
             )
             true
         }
@@ -202,13 +217,14 @@ internal object EngineWiring {
         roster: List<String>,
         memberNames: Map<String, String>,
         isCommunitySelected: () -> Boolean,
+        recipientReadiness: RecipientReadiness = RecipientReadiness.Ready(roster),
         beforeInstall: () -> Unit = {},
     ): Boolean =
         guard.runIfCurrent(expectedSelectionRevision) {
             synchronized(runtimeInstallLock) {
                 if (graph !== expectedGraph || !isCommunitySelected()) return@synchronized false
                 beforeInstall()
-                installChatLocked(expectedGraph, chatId, chatName, chatKey, roster, memberNames)
+                installChatLocked(expectedGraph, chatId, chatName, chatKey, roster, memberNames, recipientReadiness)
                 true
             }
         }
@@ -219,10 +235,11 @@ internal object EngineWiring {
         chatKey: ChatKey,
         roster: List<String>,
         memberNames: Map<String, String> = emptyMap(),
+        recipientReadiness: RecipientReadiness = RecipientReadiness.Ready(roster),
     ) {
         synchronized(runtimeInstallLock) {
             val base = graph ?: return
-            installChatLocked(base, chatId, chatName, chatKey, roster, memberNames)
+            installChatLocked(base, chatId, chatName, chatKey, roster, memberNames, recipientReadiness)
         }
     }
 
@@ -233,6 +250,7 @@ internal object EngineWiring {
         chatKey: ChatKey,
         roster: List<String>,
         memberNames: Map<String, String>,
+        recipientReadiness: RecipientReadiness,
     ) {
         val switched =
             RuntimeGraph(
@@ -248,6 +266,7 @@ internal object EngineWiring {
                 roster = roster,
                 communityId = base.communityId,
                 communityRuntimeKey = base.communityRuntimeKey,
+                initialRecipientReadiness = recipientReadiness,
             )
         switched.memberNames = memberNames
         graph = switched

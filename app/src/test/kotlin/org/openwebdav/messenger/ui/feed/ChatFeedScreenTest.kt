@@ -17,6 +17,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.openwebdav.messenger.app.AppTestSupport
+import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RuntimeGraph
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
@@ -111,6 +112,31 @@ class ChatFeedScreenTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText("No messages yet — say hello.").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
+    }
+
+    @Test
+    fun group_send_waits_for_verified_roster_and_surfaces_retry_state_accessibly() {
+        val graph = graph().apply { updateRecipientReadiness(RecipientReadiness.Loading) }
+        composeRule.setContent {
+            ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph))
+        }
+        composeRule.onNodeWithContentDescription("Connecting — loading verified chat members").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Message").performTextInput("hello")
+        composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
+
+        graph.updateRecipientReadiness(
+            RecipientReadiness.Ready(listOf(graph.senderIdentifier, "peer")),
+        )
+        composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("Send").assertIsEnabled()
+
+        graph.updateRecipientReadiness(
+            RecipientReadiness.Unavailable("Verified members unavailable — reconnect and retry"),
+        )
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Verified members unavailable — reconnect and retry").assertIsDisplayed()
+        composeRule.onNodeWithText("Retry").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
     }
 

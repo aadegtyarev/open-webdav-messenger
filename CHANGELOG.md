@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.23.2] — 2026-10-08
+
+### Fixed
+
+- Group and DM chats show their Room-backed feed before remote roster lookup;
+  sending stays disabled until a verified roster is ready, and stale or failed
+  enrichment cannot affect another active chat.
+
 ## [0.23.1] — 2026-10-08
 
 ### Fixed

@@ -3,15 +3,23 @@ package org.openwebdav.messenger.app
 import com.goterl.lazysodium.LazySodiumJava
 import com.goterl.lazysodium.SodiumJava
 import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockWebServer
+import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
+import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.crypto.NativeCrypto
+import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
+import org.openwebdav.messenger.message.MessageEnvelope
+import org.openwebdav.messenger.protocol.Hex
+import org.openwebdav.messenger.sync.SyncEngine
+import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.transport.ConnectionConfig
 import org.openwebdav.messenger.transport.Delayer
 import java.util.concurrent.ConcurrentHashMap
@@ -32,6 +40,23 @@ internal object AppTestSupport {
     fun identityCrypto(): IdentityCrypto = IdentityCrypto(native())
 
     fun newIdentity(): Identity = identityCrypto().generateIdentity()
+
+    fun recipientRosterTestGraph(
+        server: MockWebServer,
+        database: MessengerDatabase,
+        readiness: RecipientReadiness = RecipientReadiness.Loading,
+    ): RuntimeGraph {
+        val identity = newIdentity()
+        val key = SyncTestSupport.fixedChatKey()
+        val store = SyncTestSupport.store(database, "community-a")
+        val envelope = MessageEnvelope.create(MessageCrypto(Aead(native())), identityCrypto())
+        val engine = SyncEngine(SyncTestSupport.transport(server), envelope, store, { key })
+        return RuntimeGraph(
+            engine, store, envelope, SyncTestSupport.config(server), "group-a", "Group A", key,
+            identity, Hex.encode(identity.copySignPublic()), communityId = "community-a",
+            initialRecipientReadiness = readiness,
+        )
+    }
 
     /** Obvious-fake HTTPS config (SC21 — no real credentials). */
     fun httpsConfig(): ConnectionConfig =

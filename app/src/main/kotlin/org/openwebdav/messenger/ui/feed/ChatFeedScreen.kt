@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -35,6 +36,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -47,7 +49,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -56,6 +60,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
+import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.ui.FeedViewModelFactory
 import org.openwebdav.messenger.ui.runtimeScopeKey
@@ -83,6 +88,7 @@ internal fun ChatFeedScreen(
     val lastSyncText by viewModel.lastSyncText.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     val memberNamesError by viewModel.memberNamesError.collectAsStateWithLifecycle()
+    val recipientReadiness by viewModel.recipientReadiness.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -191,6 +197,19 @@ internal fun ChatFeedScreen(
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh messages")
                     }
+                    when (recipientReadiness) {
+                        RecipientReadiness.Loading ->
+                            CircularProgressIndicator(
+                                modifier =
+                                    Modifier.size(24.dp).semantics {
+                                        contentDescription = "Connecting — loading verified chat members"
+                                        progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+                                    },
+                                strokeWidth = 2.dp,
+                            )
+                        is RecipientReadiness.Ready -> Unit
+                        is RecipientReadiness.Unavailable -> Unit
+                    }
                     IconButton(onClick = onShowInvite) {
                         Icon(Icons.Filled.PersonAdd, contentDescription = "Invite someone")
                     }
@@ -203,6 +222,9 @@ internal fun ChatFeedScreen(
                 sendError = sendError,
                 onDraft = viewModel::onDraft,
                 onSend = viewModel::send,
+                sendEnabled = recipientReadiness is RecipientReadiness.Ready,
+                rosterUnavailable = recipientReadiness as? RecipientReadiness.Unavailable,
+                onRetryRoster = viewModel::retryRecipientRoster,
             )
         },
     ) { padding ->
@@ -374,6 +396,9 @@ private fun Composer(
     sendError: String?,
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
+    sendEnabled: Boolean,
+    rosterUnavailable: RecipientReadiness.Unavailable?,
+    onRetryRoster: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
         sendError?.let {
@@ -383,6 +408,15 @@ private fun Composer(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
+        }
+        rosterUnavailable?.let {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(it.message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onRetryRoster) { Text("Retry") }
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -400,7 +434,7 @@ private fun Composer(
             )
             IconButton(
                 onClick = onSend,
-                enabled = draft.isNotBlank(),
+                enabled = draft.isNotBlank() && sendEnabled,
                 modifier = Modifier.semantics { contentDescription = "Send" },
             ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
