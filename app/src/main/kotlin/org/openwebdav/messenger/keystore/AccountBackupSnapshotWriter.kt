@@ -5,7 +5,7 @@ import org.openwebdav.messenger.ui.settings.UserSettings
 
 /** Applies account-backup snapshots to the existing stores. */
 internal class AccountBackupSnapshotWriter(
-    private val configStore: ConnectionConfigStore,
+    private val configStore: AccountBackupConfigStore,
     private val communityRegistry: CommunityRegistry,
     private val chatRegistry: ChatRegistry,
     private val activeStore: ActiveCommunityStore,

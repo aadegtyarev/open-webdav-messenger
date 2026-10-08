@@ -143,7 +143,10 @@ class RestoreManagerTest {
             val ckRestore = ExportTestSupport.inMemoryCommunityKeyStore()
             val chRestore = ExportTestSupport.inMemoryChatKeyStore()
             val idRestore = ExportTestSupport.inMemoryIdentityStore()
-            val accountRestore = ExportTestSupport.InMemoryAccountBackupStore()
+            val accountRestore =
+                ExportTestSupport.InMemoryAccountBackupStore(onReplace = { backup ->
+                    ccRestore.store(backup.communities.single().config)
+                })
 
             val result =
                 newRestoreManager(ccRestore, ckRestore, chRestore, idRestore, accountRestore)

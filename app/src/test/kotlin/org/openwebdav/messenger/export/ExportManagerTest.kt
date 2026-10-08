@@ -73,7 +73,9 @@ class ExportManagerTest {
                     ckRestore,
                     chRestore,
                     idRestore,
-                    ExportTestSupport.InMemoryAccountBackupStore(),
+                    ExportTestSupport.InMemoryAccountBackupStore(onReplace = { backup ->
+                        ccRestore.store(backup.communities.single().config)
+                    }),
                 )
 
             val restoreResult = restoreManager.restore(blob, "strong-password-123".toCharArray())

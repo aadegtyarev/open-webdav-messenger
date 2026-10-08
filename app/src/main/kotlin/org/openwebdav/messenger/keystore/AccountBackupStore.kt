@@ -8,8 +8,10 @@ import org.openwebdav.messenger.export.ExportableAccountBackupStore
 import org.openwebdav.messenger.ui.settings.UserSettings
 
 /** Bridges the encrypted account backup to the existing per-community secure and registry stores. */
-internal class AccountBackupStore(private val context: Context) : ExportableAccountBackupStore {
-    private val configStore = ConnectionConfigStore(context)
+internal class AccountBackupStore(
+    private val context: Context,
+    private val configStore: AccountBackupConfigStore = ConnectionConfigStore(context),
+) : ExportableAccountBackupStore {
     private val communityRegistry = CommunityRegistry(context)
     private val chatRegistry = ChatRegistry(context)
     private val activeStore = ActiveCommunityStore(context)

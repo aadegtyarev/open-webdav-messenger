@@ -272,7 +272,6 @@ class RestoreManager(
 
         var activationAttempted = false
         return try {
-            if (staged.legacy) connectionConfigStore.store(staged.accountBackup.communities.single().config)
             communityKeyStore.replaceAllStrict(staged.accountCommunityKeys)
             chatKeyStore.replaceAllStrict(staged.chatKeys)
             identityStore.store(staged.identity)

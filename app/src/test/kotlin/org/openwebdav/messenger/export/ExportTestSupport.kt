@@ -13,11 +13,15 @@ import org.openwebdav.messenger.transport.ConnectionConfig
  * Each holds a single value; `null` means "not stored."
  */
 internal object ExportTestSupport {
-    class InMemoryAccountBackupStore(var value: AccountBackup? = null) : ExportableAccountBackupStore {
+    class InMemoryAccountBackupStore(
+        var value: AccountBackup? = null,
+        private val onReplace: (AccountBackup) -> Unit = {},
+    ) : ExportableAccountBackupStore {
         override fun snapshot(): AccountBackup? = value
 
         override fun replace(backup: AccountBackup) {
             value = backup
+            onReplace(backup)
         }
 
         override fun clear() {

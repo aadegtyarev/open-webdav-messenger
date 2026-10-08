@@ -10,7 +10,7 @@ internal data class CommunityPolicyRequest(val communityId: String, val revision
 /** Merges rapid edits to different policy controls into one latest combined value. */
 internal class CommunityPolicyCoordinator {
     private val pending = mutableMapOf<String, CommunityPolicyRequest>()
-    private val revisions = mutableMapOf<String, Long>()
+    private var revisionSequence = 0L
 
     @Synchronized
     fun retention(
@@ -67,7 +67,6 @@ internal class CommunityPolicyCoordinator {
     @Synchronized
     fun reset() {
         pending.clear()
-        revisions.clear()
     }
 
     @Synchronized
@@ -85,8 +84,7 @@ internal class CommunityPolicyCoordinator {
         update: (CommunityPolicy) -> CommunityPolicy,
     ): CommunityPolicyRequest {
         val base = pending[id]?.policy ?: committed
-        val revision = (revisions[id] ?: 0L) + 1L
-        revisions[id] = revision
-        return CommunityPolicyRequest(id, revision, update(base)).also { pending[id] = it }
+        revisionSequence = Math.incrementExact(revisionSequence)
+        return CommunityPolicyRequest(id, revisionSequence, update(base)).also { pending[id] = it }
     }
 }
