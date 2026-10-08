@@ -25,6 +25,7 @@ class ExportManager(
     private val chatKeyStore: ExportableChatKeyStore,
     private val identityStore: ExportableIdentityStore,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val accountBackupStore: ExportableAccountBackupStore? = null,
 ) {
     /**
      * Collect all device-local secrets, encrypt under [passphrase], and return a base64 blob.
@@ -94,7 +95,8 @@ class ExportManager(
 
     private fun collect(): ExportPayload {
         val connectionConfig = connectionConfigStore.load()
-        val communityKey = communityKeyStore.load()
+        val accountBackup = accountBackupStore?.snapshot()
+        val communityKey = if (accountBackup == null) communityKeyStore.load() else null
         val chatIds = chatKeyStore.listChatIds()
         val chatKeys = mutableMapOf<String, ChatKey>()
         for (chatId in chatIds) {
@@ -114,6 +116,7 @@ class ExportManager(
             communityKey = communityKey,
             chatKeys = chatKeys,
             identity = identity,
+            accountBackup = accountBackup,
         )
     }
 

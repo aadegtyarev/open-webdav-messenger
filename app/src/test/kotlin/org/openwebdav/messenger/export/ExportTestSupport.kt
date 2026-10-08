@@ -13,6 +13,18 @@ import org.openwebdav.messenger.transport.ConnectionConfig
  * Each holds a single value; `null` means "not stored."
  */
 internal object ExportTestSupport {
+    class InMemoryAccountBackupStore(var value: AccountBackup? = null) : ExportableAccountBackupStore {
+        override fun snapshot(): AccountBackup? = value
+
+        override fun replace(backup: AccountBackup) {
+            value = backup
+        }
+
+        override fun clear() {
+            value = null
+        }
+    }
+
     fun native(): NativeCrypto = CryptoTestSupport.native()
 
     fun inMemoryConnectionConfigStore(): InMemoryConnectionConfigStore = InMemoryConnectionConfigStore()
@@ -50,16 +62,34 @@ internal object ExportTestSupport {
     }
 
     class InMemoryCommunityKeyStore : ExportableCommunityKeyStore {
-        private var key: ChatKey? = null
+        private val keys = mutableMapOf<String, ChatKey>()
 
-        override fun load(): ChatKey? = key
+        override fun load(): ChatKey? = load("default")
 
-        override fun store(key: ChatKey) {
-            this.key = key
+        override fun load(communityId: String): ChatKey? = keys[communityId]
+
+        override fun store(key: ChatKey) = store("default", key)
+
+        override fun store(
+            communityId: String,
+            key: ChatKey,
+        ) {
+            keys[communityId] = key
+        }
+
+        override fun remove(communityId: String) {
+            keys.remove(communityId)
+        }
+
+        override fun listCommunityIds(): Set<String> = keys.keys
+
+        override fun replaceAll(keys: Map<String, ChatKey>) {
+            this.keys.clear()
+            this.keys.putAll(keys)
         }
 
         override fun clear() {
-            key = null
+            keys.clear()
         }
     }
 
@@ -79,6 +109,11 @@ internal object ExportTestSupport {
 
         override fun remove(chatId: String) {
             keys.remove(chatId)
+        }
+
+        override fun replaceAll(chatKeys: Map<String, ChatKey>) {
+            keys.clear()
+            keys.putAll(chatKeys)
         }
     }
 

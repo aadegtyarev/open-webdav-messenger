@@ -18,20 +18,27 @@ import java.io.File
  *
  * Android-only — exercised by connectedAndroidTest.
  */
-class CommunityKeyStore(context: Context) : ExportableCommunityKeyStore {
-    /** Wrap and persist [key]. Overwrites any existing stored key atomically. */
-    override fun store(key: ChatKey) {
+class CommunityKeyStore(private val context: Context) : ExportableCommunityKeyStore {
+    /** Wrap and persist the legacy default community key. */
+    override fun store(key: ChatKey) = store("default", key)
+
+    override fun store(
+        communityId: String,
+        key: ChatKey,
+    ) {
         val raw = key.export()
         try {
-            wrapper.wrap(raw)
+            wrapper(communityId).wrap(raw)
         } finally {
             raw.fill(0)
         }
     }
 
-    /** Load and unwrap the stored key, or null if none stored or blob is unrecoverable. */
-    override fun load(): ChatKey? {
-        return when (val result = wrapper.unwrap()) {
+    /** Load and unwrap the legacy default community key. */
+    override fun load(): ChatKey? = load("default")
+
+    override fun load(communityId: String): ChatKey? {
+        return when (val result = wrapper(communityId).unwrap()) {
             is UnwrapResult.None -> null
             is UnwrapResult.Unrecoverable -> null
             is UnwrapResult.Unwrapped -> {
@@ -46,21 +53,45 @@ class CommunityKeyStore(context: Context) : ExportableCommunityKeyStore {
     }
 
     /** Whether a wrapped key blob exists. */
-    fun has(): Boolean = wrapper.exists()
+    fun has(): Boolean = wrapper("default").exists()
 
-    /** Delete the stored key. */
-    override fun clear() {
-        wrapper.delete()
+    /** Delete the stored legacy default key. */
+    override fun clear() = remove("default")
+
+    override fun remove(communityId: String) {
+        wrapper(communityId).delete()
     }
 
-    private val wrapper =
-        KeystoreWrapper(
-            WRAP_KEY_ALIAS,
-            File(context.filesDir, KEY_DIR).let { dir ->
-                dir.mkdirs()
-                File(dir, KEY_FILE)
-            },
-        )
+    override fun listCommunityIds(): Set<String> = storedIds()
+
+    override fun replaceAll(keys: Map<String, ChatKey>) {
+        (storedIds() - keys.keys).forEach(::remove)
+        keys.forEach { (communityId, key) -> store(communityId, key) }
+    }
+
+    private fun wrapper(communityId: String): KeystoreWrapper {
+        require(communityId == "default" || COMMUNITY_ID.matches(communityId)) { "Invalid community identifier" }
+        val fileName = if (communityId == "default") KEY_FILE else "${token(communityId)}.bin"
+        val alias = if (communityId == "default") WRAP_KEY_ALIAS else "$WRAP_KEY_ALIAS.$communityId"
+        val dir = File(context.filesDir, KEY_DIR).apply { mkdirs() }
+        return KeystoreWrapper(alias, File(dir, fileName))
+    }
+
+    private fun storedIds(): Set<String> {
+        val dir = File(context.filesDir, KEY_DIR)
+        val ids =
+            dir.listFiles()?.mapNotNull { file ->
+                if (file.name == KEY_FILE) "default" else file.name.removeSuffix(".bin").let(::decodeToken)
+            }.orEmpty()
+        return ids.toSet()
+    }
+
+    private fun token(id: String): String = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(id.toByteArray())
+
+    private fun decodeToken(token: String): String? =
+        runCatching {
+            String(java.util.Base64.getUrlDecoder().decode(token), Charsets.UTF_8).takeIf { COMMUNITY_ID.matches(it) }
+        }.getOrNull()
 
     private companion object {
         /** Distinct alias from chat-key, identity, history, and connection-config. */
@@ -68,5 +99,6 @@ class CommunityKeyStore(context: Context) : ExportableCommunityKeyStore {
 
         private const val KEY_DIR = "community_key"
         private const val KEY_FILE = "community_key.bin"
+        private val COMMUNITY_ID = Regex("[A-Za-z0-9_-]{1,96}")
     }
 }

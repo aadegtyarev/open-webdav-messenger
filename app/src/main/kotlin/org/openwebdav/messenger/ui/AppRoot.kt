@@ -22,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.ui.chatlist.UnifiedChatListScreen
@@ -86,6 +88,9 @@ private fun AppNav() {
             },
         )
     }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (screen == Screen.Start && AppContainer.runtimeGraph() != null) screen = Screen.CommunityList
+    }
     BackHandler(
         enabled = screen != Screen.Start && screen != Screen.CommunityList,
     ) {
@@ -98,7 +103,12 @@ private fun AppNav() {
             StartScreen(
                 onCreate = { screen = Screen.CreateCommunity },
                 onJoin = { screen = Screen.Join },
-                onRestore = { context.startActivity(Intent(context, ExportRestoreActivity::class.java)) },
+                onRestore = {
+                    context.startActivity(
+                        Intent(context, ExportRestoreActivity::class.java)
+                            .putExtra(ExportRestoreActivity.EXTRA_OPEN_RESTORE, true),
+                    )
+                },
             )
         }
 
@@ -112,29 +122,24 @@ private fun AppNav() {
 
         Screen.Settings -> {
             val context = LocalContext.current
-            val host = remember { UserSettings.isHost }
-            val retentionDays = remember { UserSettings.communityRetentionWindowDays }
-            val pollFloor = remember { UserSettings.communityMinPollSeconds }
-            val metadataError = remember { mutableStateOf<String?>(null) }
+            val communityId = AppContainer.activeCommunityId
+            val host = remember(communityId) { UserSettings.isHostFor(communityId) }
+            var retentionDays by remember(communityId) { mutableStateOf(UserSettings.retentionDaysFor(communityId)) }
+            var pollFloor by remember(communityId) { mutableStateOf(UserSettings.pollFloorFor(communityId)) }
             SettingsScreen(
                 onBack = { screen = Screen.CommunityList },
                 isHost = host,
                 retentionWindowDays = retentionDays,
                 communityPollFloor = pollFloor,
-                metadataError = metadataError.value,
                 onRetentionChanged = { days ->
-                    AppContainer.updateCommunityMetadata(
-                        days,
-                        UserSettings.communityMinPollSeconds,
-                        onError = { metadataError.value = it },
-                    )
+                    val result = AppContainer.updateCommunityMetadata(days, pollFloor)
+                    if (result == org.openwebdav.messenger.app.CommunityMetadataUpdate.Saved) retentionDays = days
+                    result
                 },
                 onPollFloorChanged = { seconds ->
-                    AppContainer.updateCommunityMetadata(
-                        UserSettings.communityRetentionWindowDays,
-                        seconds,
-                        onError = { metadataError.value = it },
-                    )
+                    val result = AppContainer.updateCommunityMetadata(retentionDays, seconds)
+                    if (result == org.openwebdav.messenger.app.CommunityMetadataUpdate.Saved) pollFloor = seconds
+                    result
                 },
                 onExportRestore = {
                     context.startActivity(Intent(context, ExportRestoreActivity::class.java))

@@ -300,13 +300,19 @@ internal object EngineWiring {
     ) {
         synchronized(runtimeInstallLock) {
             if (graph?.communityRuntimeKey != expectedCommunityRuntimeKey) return
-            if (communityMinPollSeconds != null) {
-                org.openwebdav.messenger.ui.settings.UserSettings.communityMinPollSeconds = communityMinPollSeconds
-                deps.schedulePoll(communityMinPollSeconds)
-            }
-            if (retentionWindowDays != null) {
-                org.openwebdav.messenger.ui.settings.UserSettings.communityRetentionWindowDays = retentionWindowDays
-            }
+            val active = graph ?: return
+            val currentFloor =
+                communityMinPollSeconds
+                    ?: org.openwebdav.messenger.ui.settings.UserSettings.pollFloorFor(active.communityId)
+            val currentRetention =
+                retentionWindowDays
+                    ?: org.openwebdav.messenger.ui.settings.UserSettings.retentionDaysFor(active.communityId)
+            org.openwebdav.messenger.ui.settings.UserSettings.setCommunityMetadata(
+                active.communityId,
+                currentFloor,
+                currentRetention,
+            )
+            if (communityMinPollSeconds != null) deps.schedulePoll(communityMinPollSeconds)
         }
     }
 

@@ -17,7 +17,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.R
+import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
 import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.export.ExportManager
@@ -26,6 +28,7 @@ import org.openwebdav.messenger.export.RestoreManager
 import org.openwebdav.messenger.export.RestoreResult
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityStore
+import org.openwebdav.messenger.keystore.AccountBackupStore
 import org.openwebdav.messenger.keystore.ChatKeyStore
 import org.openwebdav.messenger.keystore.CommunityKeyStore
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
@@ -75,7 +78,7 @@ class ExportRestoreActivity : Activity() {
         setupTabs()
         setupExport()
         setupRestore()
-        showExportPanel()
+        if (intent.getBooleanExtra(EXTRA_OPEN_RESTORE, false)) showRestorePanel() else showExportPanel()
     }
 
     override fun onDestroy() {
@@ -110,8 +113,25 @@ class ExportRestoreActivity : Activity() {
         communityKeyStore = CommunityKeyStore(applicationContext)
         chatKeyStore = ChatKeyStore(applicationContext, native)
         identityStore = IdentityStore(applicationContext, IdentityCrypto(native))
-        exportManager = ExportManager(native, connectionConfigStore, communityKeyStore, chatKeyStore, identityStore)
-        restoreManager = RestoreManager(native, connectionConfigStore, communityKeyStore, chatKeyStore, identityStore)
+        val accountBackupStore = AccountBackupStore(applicationContext)
+        exportManager =
+            ExportManager(
+                native,
+                connectionConfigStore,
+                communityKeyStore,
+                chatKeyStore,
+                identityStore,
+                accountBackupStore = accountBackupStore,
+            )
+        restoreManager =
+            RestoreManager(
+                native,
+                connectionConfigStore,
+                communityKeyStore,
+                chatKeyStore,
+                identityStore,
+                accountBackupStore = accountBackupStore,
+            )
     }
 
     // -- tabs ----------------------------------------------------------------
@@ -230,7 +250,24 @@ class ExportRestoreActivity : Activity() {
     private fun handleRestoreResult(result: RestoreResult) {
         when (result) {
             RestoreResult.Restored -> {
-                showRestoreStatus(getString(R.string.restore_success), isError = false)
+                restoreButton.isEnabled = false
+                scope.launch(Dispatchers.IO) {
+                    val activationError =
+                        runCatching {
+                            AppContainer.rebuildAfterRestore()
+                            check(AppContainer.runtimeGraph() != null) { "Backup contains no usable community" }
+                        }.exceptionOrNull()
+                    withContext(Dispatchers.Main) {
+                        restoreButton.isEnabled = true
+                        if (activationError == null) {
+                            showRestoreStatus(getString(R.string.restore_success), isError = false)
+                            setResult(RESULT_OK)
+                            finish()
+                        } else {
+                            showRestoreStatus("Backup restored, but account startup failed. Reopen the app to retry.", isError = true)
+                        }
+                    }
+                }
             }
             RestoreResult.BadFormat -> {
                 showRestoreStatus(getString(R.string.restore_bad_format), isError = true)
@@ -277,6 +314,7 @@ class ExportRestoreActivity : Activity() {
     }
 
     companion object {
+        const val EXTRA_OPEN_RESTORE = "open_restore"
         private const val TAG = "ExportRestore"
     }
 }

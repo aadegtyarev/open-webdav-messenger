@@ -16,13 +16,14 @@ The system decodes it (see Invite format), imports the community identity, and
 persists the configuration. An invalid, expired, or tampered token is rejected
 with a user-visible error — never silently ignored, never a crash.
 
-**Onboarding is linear, not skippable:** The app starts at `StartScreen`. No
-chat feed is reachable without a configured community. The flow cannot be
-back-navigated past `StartScreen` (the back stack is cleared on completion).
-After onboarding, and on a returning launch with a restored runtime, the home
-screen is `UnifiedChatListScreen` — a flat list of chats across joined
-communities. Cold start restores the persisted active community without forcing
-a feed open.
+**Onboarding and recovery entry:** The app starts at `StartScreen`, offering
+Create, Join, and Restore account. Create/join remains linear; no chat feed is
+reachable until a community runtime is configured. Restore is a separate path
+and is not blocked by create/join. After create, join, or a successful v2
+restore, the home screen is `UnifiedChatListScreen` — a flat list of chats across
+joined communities. Cold start restores the persisted active community without
+forcing a feed open. Legacy backup content that lacks registry data may not
+reconstruct a usable runtime.
 
 **Destination restoration and Back:** The current destination is saveable across
 activity recreation. System Back returns from the feed to Chats and from Invite
@@ -100,3 +101,11 @@ created group in that community. A delayed open atomically installs only against
 the graph and selection revision it captured. Credential rotation changes the
 stored connection credentials while retaining the persisted community anchor
 chat ID and name, even while a group or DM is open.
+
+**Accessible retry control:** Failed-message retry is a labelled button with a
+minimum 48×48dp target. It invokes the existing retry operation for the original
+message; it does not change envelope or message-ID semantics.
+
+**Related surfaces:** [Account recovery](account-recovery.md),
+[Community settings](community-settings.md), and
+[Background delivery](background-delivery.md).

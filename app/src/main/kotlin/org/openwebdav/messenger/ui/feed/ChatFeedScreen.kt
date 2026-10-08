@@ -344,7 +344,7 @@ private fun MessageRow(
                     MessageEntity.STATUS_FAILED ->
                         IconButton(
                             onClick = onRetry,
-                            modifier = Modifier.semantics { contentDescription = "Retry failed message" },
+                            modifier = Modifier.size(48.dp).semantics { contentDescription = "Retry failed message" },
                         ) {
                             Icon(
                                 Icons.Filled.ErrorOutline,

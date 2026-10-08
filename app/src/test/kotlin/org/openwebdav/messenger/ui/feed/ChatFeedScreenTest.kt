@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.ui.feed
 
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -7,6 +8,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -125,6 +127,23 @@ class ChatFeedScreenTest {
 
         // The verbatim string is on screen — no markdown styling, no tappable link rewrites the text.
         composeRule.onNodeWithText(body).assertIsDisplayed()
+    }
+
+    @Test
+    fun failed_message_retry_is_a_labelled_accessible_target() {
+        runBlocking {
+            val body = "retry me"
+            val message = TextMessage(chatId, identity.publicIdentity(), replyTo = null, body = body, sendTimestampMillis = 3)
+            val orderToken = OrderToken.build(1_717_000_000_000L, Hex.encode(identity.copySignPublic()), 3)
+            val messageId = MessageId.messageId(orderToken, body.toByteArray())
+            store.persist(messageId, orderToken, message, 3, sendStatus = org.openwebdav.messenger.data.MessageEntity.STATUS_FAILED)
+        }
+        composeRule.setContent {
+            ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph()))
+        }
+        composeRule.onNodeWithContentDescription("Retry failed message")
+            .assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
     }
 
     /** The Send action enables once the composer draft is non-blank. */

@@ -22,6 +22,7 @@ internal data class ExportPayload(
     val chatKeys: Map<String, String>,
     /** Identity keypair, or null if not generated yet. */
     val identitySerialized: String?,
+    val accountBackupBase64: String? = null,
 ) {
     companion object {
         fun build(
@@ -29,12 +30,14 @@ internal data class ExportPayload(
             communityKey: ChatKey?,
             chatKeys: Map<String, ChatKey>,
             identity: Identity?,
+            accountBackup: AccountBackup? = null,
         ): ExportPayload =
             ExportPayload(
                 connectionConfig = connectionConfig,
                 communityKeyBase64 = communityKey?.let { base64(it.export()) },
                 chatKeys = chatKeys.mapValues { (_, key) -> base64(key.export()) },
                 identitySerialized = identity?.let { base64(Identity.serialize(it)) },
+                accountBackupBase64 = accountBackup?.let { base64(AccountBackupCodec.encode(it)) },
             )
 
         /**
@@ -45,7 +48,7 @@ internal data class ExportPayload(
         fun toJson(payload: ExportPayload): String {
             val sb = StringBuilder(4096)
             sb.append('{')
-            sb.append("\"v\":1")
+            sb.append("\"v\":${if (payload.accountBackupBase64 == null) 1 else 2}")
 
             // connectionConfig
             sb.append(",\"cc\":")
@@ -86,6 +89,10 @@ internal data class ExportPayload(
             val id = payload.identitySerialized
             if (id == null) sb.append("null") else appendJsonString(sb, id)
 
+            payload.accountBackupBase64?.let {
+                sb.append(",\"mb\":")
+                appendJsonString(sb, it)
+            }
             sb.append('}')
             return sb.toString()
         }
@@ -100,6 +107,7 @@ internal data class ExportPayload(
                 var ck: String? = null
                 val ch = mutableMapOf<String, String>()
                 var id: String? = null
+                var accountBackup: String? = null
 
                 val p = JsonParser(json)
                 p.enterObject()
@@ -110,18 +118,20 @@ internal data class ExportPayload(
                         "ck" -> ck = p.parseNullableString()
                         "ch" -> p.parseStringMap(ch)
                         "id" -> id = p.parseNullableString()
+                        "mb" -> accountBackup = p.parseNullableString()
                         else -> p.skipValue()
                     }
                     p.consumeComma()
                 }
                 p.exitObject()
 
-                if (v != 1) return null
+                if (v !in 1..2 || (v == 1 && accountBackup != null) || (v == 2 && accountBackup == null)) return null
                 ExportPayload(
                     connectionConfig = cc,
                     communityKeyBase64 = ck,
                     chatKeys = ch,
                     identitySerialized = id,
+                    accountBackupBase64 = accountBackup,
                 )
             } catch (_: Exception) {
                 null

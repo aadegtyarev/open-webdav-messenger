@@ -35,6 +35,10 @@ internal class CommunityRegistry(context: Context) {
         write(all().filter { it.id != id })
     }
 
+    fun replace(entries: List<Entry>) {
+        write(entries.distinctBy { it.id })
+    }
+
     private fun write(list: List<Entry>) {
         val arr = JSONArray()
         for (e in list) {

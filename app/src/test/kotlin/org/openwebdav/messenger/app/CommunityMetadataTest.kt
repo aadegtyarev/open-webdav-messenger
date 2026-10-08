@@ -2,12 +2,20 @@ package org.openwebdav.messenger.app
 
 import com.goterl.lazysodium.LazySodiumJava
 import com.goterl.lazysodium.SodiumJava
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
 import org.openwebdav.messenger.identity.IdentityCrypto
+import org.openwebdav.messenger.sync.SyncTestSupport
+import org.openwebdav.messenger.transport.WebDavResult
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class CommunityMetadataTest {
     private val sodium = SodiumJava()
     private val crypto = IdentityCrypto(LazySodiumCrypto(LazySodiumJava(sodium)))
@@ -54,6 +62,46 @@ class CommunityMetadataTest {
 
         assertTrue(!crypto.verify(attackerSig, payloadBytes, hostIdentity.copySignPublic()))
     }
+
+    @Test
+    fun write_propagates_http_rejection_as_typed_result() =
+        runBlocking {
+            val server = MockWebServer().apply { start() }
+            try {
+                server.enqueue(MockResponse().setResponseCode(201))
+                server.enqueue(MockResponse().setResponseCode(412))
+                val result =
+                    CommunityMetadata.write(
+                        SyncTestSupport.transport(server),
+                        CommunityMetadata(60, 30),
+                        crypto.generateIdentity(),
+                        crypto,
+                    )
+                assertEquals(WebDavResult.Conflict, result)
+            } finally {
+                server.shutdown()
+            }
+        }
+
+    @Test
+    fun write_stops_after_collection_creation_failure() =
+        runBlocking {
+            val server = MockWebServer().apply { start() }
+            try {
+                server.enqueue(MockResponse().setResponseCode(401))
+                val result =
+                    CommunityMetadata.write(
+                        SyncTestSupport.transport(server),
+                        CommunityMetadata(60, 30),
+                        crypto.generateIdentity(),
+                        crypto,
+                    )
+                assertTrue(result is WebDavResult.TransportError)
+                assertEquals(1, server.requestCount)
+            } finally {
+                server.shutdown()
+            }
+        }
 
     @Test
     fun floorSeconds_clamps_to_default_when_null() {

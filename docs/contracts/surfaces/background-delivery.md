@@ -18,7 +18,7 @@ Legacy outbox rows created before community ownership existed remain ownerless a
 
 ## Failure behavior and limits
 
-If the platform denies or interrupts foreground-service startup, periodic work remains scheduled. A service notification can be hidden when notification permission is denied, but this does not itself disable service execution. Android battery controls, force-stop, network availability, WebDAV availability, and WorkManager scheduling remain outside the app's timing guarantee; no exact background delivery latency is promised.
+If the platform denies or interrupts foreground-service startup, periodic work remains scheduled. A service notification can be hidden when notification permission is denied, but this does not itself disable service execution. On Android 13+, Settings explains the notification benefit and offers a contextual permission request; after denial, the user is guided to system notification settings rather than repeatedly prompted. Older Android versions do not request this runtime permission. Android battery controls, force-stop, network availability, WebDAV availability, and WorkManager scheduling remain outside the app's timing guarantee; no exact background delivery latency is promised.
 
 ## Security and non-goals
 
@@ -27,3 +27,5 @@ Credentials, identity keys, and message plaintext are not placed in WorkManager 
 ## Related surfaces
 
 - [Chat surface](chat-surface.md)
+- [Account recovery](account-recovery.md)
+- [Community settings](community-settings.md)

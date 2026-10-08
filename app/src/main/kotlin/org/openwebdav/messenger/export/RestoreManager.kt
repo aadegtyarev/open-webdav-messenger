@@ -26,6 +26,7 @@ class RestoreManager(
     private val chatKeyStore: ExportableChatKeyStore,
     private val identityStore: ExportableIdentityStore,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val accountBackupStore: ExportableAccountBackupStore? = null,
 ) {
     /**
      * Decrypt [blob] (base64-encoded export) with [passphrase] and populate all stores.
@@ -112,10 +113,12 @@ class RestoreManager(
         val communityKey: ChatKey?,
         val chatKeys: Map<String, ChatKey>,
         val identity: Identity,
+        val accountBackup: AccountBackup?,
+        val accountCommunityKeys: Map<String, ChatKey>,
     )
 
-    private fun stage(payload: ExportPayload): StagedRestore? =
-        try {
+    private fun stage(payload: ExportPayload): StagedRestore? {
+        return try {
             val communityKey = payload.communityKeyBase64?.let { decodeKey(it) ?: return null }
             val chatKeys = payload.chatKeys.mapValues { (_, encoded) -> decodeKey(encoded) ?: return null }
             val serializedIdentity = payload.identitySerialized?.let(ExportPayload::decodeBase64) ?: return null
@@ -125,17 +128,49 @@ class RestoreManager(
                 } finally {
                     serializedIdentity.fill(0)
                 }
+            val accountBackup =
+                payload.accountBackupBase64?.let { encoded ->
+                    val raw = ExportPayload.decodeBase64(encoded)
+                    try {
+                        AccountBackupCodec.decode(raw) ?: return null
+                    } finally {
+                        raw.fill(0)
+                    }
+                }
             payload.connectionConfig?.let { config ->
-                if (!config.baseUrl.startsWith("https://") || config.username.isBlank() ||
-                    config.appPassword.isBlank() || config.chatRoot.isBlank()
+                if (!isValidConfig(config)) return null
+            }
+            if (accountBackup != null && communityKey != null) return null
+            val accountCommunityKeys = mutableMapOf<String, ChatKey>()
+            accountBackup?.let { backup ->
+                if (backup.communities.map { it.id }.distinct().size != backup.communities.size) return null
+                if (backup.communities.any { community ->
+                        !isValidConfig(community.config) || community.anchorChatId !in community.chats.map { it.id } ||
+                            community.chats.any { it.id.isBlank() || it.name.isBlank() } ||
+                            community.chats.map { it.id }.distinct().size != community.chats.size
+                    }
                 ) {
                     return null
                 }
+                backup.communities.forEach { community ->
+                    community.communityKeyBase64?.let { encoded ->
+                        accountCommunityKeys[community.id] = decodeKey(encoded) ?: return null
+                    }
+                }
             }
-            StagedRestore(payload, communityKey, chatKeys, identity)
+            StagedRestore(payload, communityKey, chatKeys, identity, accountBackup, accountCommunityKeys)
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun isValidConfig(config: org.openwebdav.messenger.transport.ConnectionConfig): Boolean {
+        val uri = java.net.URI(config.baseUrl)
+        return uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() &&
+            config.username.isNotBlank() && config.appPassword.isNotBlank() && config.chatRoot.isNotBlank() &&
+            !config.chatRoot.startsWith('/') && !config.chatRoot.contains('\\') &&
+            config.chatRoot.split('/').none { it == "." || it == ".." || it.isEmpty() }
+    }
 
     private fun decodeKey(encoded: String): ChatKey? {
         val raw = ExportPayload.decodeBase64(encoded)
@@ -146,29 +181,57 @@ class RestoreManager(
         }
     }
 
+    private data class RestoreSnapshot(
+        val config: org.openwebdav.messenger.transport.ConnectionConfig?,
+        val communityKeys: Map<String, ChatKey>,
+        val chatKeys: Map<String, ChatKey>,
+        val identity: IdentityLoadResult,
+        val accountBackup: AccountBackup?,
+    )
+
     private fun writeWithRollback(staged: StagedRestore): RestoreResult {
-        val previousConfig = connectionConfigStore.load()
-        val previousCommunityKey = communityKeyStore.load()
-        val previousChatKeys = chatKeyStore.listChatIds().mapNotNull { id -> chatKeyStore.load(id)?.let { id to it } }.toMap()
-        val previousIdentity = identityStore.load()
-        if (previousIdentity is IdentityLoadResult.Unrecoverable) return RestoreResult.StoreFailure(rollbackSucceeded = true)
+        val previous =
+            try {
+                RestoreSnapshot(
+                    connectionConfigStore.load(),
+                    communityKeyStore.listCommunityIds().mapNotNull { id -> communityKeyStore.load(id)?.let { id to it } }.toMap(),
+                    chatKeyStore.listChatIds().mapNotNull { id -> chatKeyStore.load(id)?.let { id to it } }.toMap(),
+                    identityStore.load(),
+                    accountBackupStore?.snapshot(),
+                )
+            } catch (_: Exception) {
+                return RestoreResult.StoreFailure(rollbackSucceeded = true)
+            }
+        if (previous.identity is IdentityLoadResult.Unrecoverable) return RestoreResult.StoreFailure(rollbackSucceeded = true)
         return try {
             staged.payload.connectionConfig?.let(connectionConfigStore::store)
-            staged.communityKey?.let(communityKeyStore::store)
-            staged.chatKeys.forEach { (id, key) -> chatKeyStore.store(id, key) }
+            if (staged.accountBackup != null) {
+                communityKeyStore.replaceAll(staged.accountCommunityKeys)
+                staged.communityKey?.let(communityKeyStore::store)
+                chatKeyStore.replaceAll(staged.chatKeys)
+            } else {
+                staged.communityKey?.let(communityKeyStore::store)
+                staged.chatKeys.forEach { (id, key) -> chatKeyStore.store(id, key) }
+            }
             identityStore.store(staged.identity)
+            staged.accountBackup?.let { backup ->
+                checkNotNull(accountBackupStore) { "This app version cannot restore account registries" }.replace(backup)
+            }
             RestoreResult.Restored
         } catch (_: Exception) {
             val rolledBack =
                 runCatching {
                     connectionConfigStore.clear()
-                    previousConfig?.let(connectionConfigStore::store)
-                    communityKeyStore.clear()
-                    previousCommunityKey?.let(communityKeyStore::store)
-                    (chatKeyStore.listChatIds() - previousChatKeys.keys).forEach(chatKeyStore::remove)
-                    previousChatKeys.forEach(chatKeyStore::store)
+                    previous.config?.let(connectionConfigStore::store)
+                    communityKeyStore.replaceAll(previous.communityKeys)
+                    chatKeyStore.replaceAll(previous.chatKeys)
                     identityStore.clear()
-                    (previousIdentity as? IdentityLoadResult.Loaded)?.identity?.let(identityStore::store)
+                    (previous.identity as? IdentityLoadResult.Loaded)?.identity?.let(identityStore::store)
+                    if (previous.accountBackup != null) {
+                        accountBackupStore?.replace(previous.accountBackup)
+                    } else if (staged.accountBackup != null) {
+                        accountBackupStore?.clear()
+                    }
                 }.isSuccess
             RestoreResult.StoreFailure(rollbackSucceeded = rolledBack)
         }

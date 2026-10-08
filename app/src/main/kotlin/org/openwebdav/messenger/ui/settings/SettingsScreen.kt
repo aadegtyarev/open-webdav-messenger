@@ -1,5 +1,12 @@
 package org.openwebdav.messenger.ui.settings
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -48,14 +56,27 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.CommunityMetadataUpdate
+import org.openwebdav.messenger.app.NotificationPermissionPolicy
 import org.openwebdav.messenger.app.UpdateChecker
 import kotlin.math.abs
 import kotlin.math.roundToInt
+
+private fun CommunityMetadataUpdate.message(policy: String): String =
+    when (this) {
+        CommunityMetadataUpdate.Saved -> "$policy saved."
+        CommunityMetadataUpdate.Superseded -> "A newer $policy change is pending."
+        is CommunityMetadataUpdate.Rejected -> "Couldn't save $policy: $transport"
+        is CommunityMetadataUpdate.Failed -> "Couldn't save $policy: $message"
+    }
 
 private val RETENTION_OPTIONS = listOf(7, 14, 30, 60, 90)
 private val POLL_FLOOR_OPTIONS = listOf(15, 30, 60, 120, 300, 600, 900, 1800, 3600)
@@ -68,8 +89,8 @@ internal fun SettingsScreen(
     retentionWindowDays: Int = UserSettings.DEFAULT_RETENTION_WINDOW_DAYS,
     communityPollFloor: Int = UserSettings.DEFAULT_POLL_INTERVAL_SECONDS,
     metadataError: String? = null,
-    onRetentionChanged: (Int) -> Unit = {},
-    onPollFloorChanged: (Int) -> Unit = {},
+    onRetentionChanged: suspend (Int) -> CommunityMetadataUpdate = { CommunityMetadataUpdate.Saved },
+    onPollFloorChanged: suspend (Int) -> CommunityMetadataUpdate = { CommunityMetadataUpdate.Saved },
     onExportRestore: () -> Unit = {},
 ) {
     var name by remember { mutableStateOf(UserSettings.displayName) }
@@ -126,11 +147,13 @@ internal fun SettingsScreen(
 
             ThemeSection()
 
-            RetentionSection(isHost, retentionWindowDays, onRetentionChanged)
+            RetentionSection(isHost, retentionWindowDays, onRetentionChanged, snackbarHostState)
 
             PollFloorSection(isHost, communityPollFloor, onPollFloorChanged, snackbarHostState)
 
             PersonalPollSection(snackbarHostState)
+
+            NotificationPermissionSection()
 
             Spacer(Modifier.height(8.dp))
 
@@ -177,13 +200,15 @@ private fun ThemeSection() {
 private fun RetentionSection(
     isHost: Boolean,
     currentDays: Int,
-    onChanged: (Int) -> Unit,
+    onChanged: suspend (Int) -> CommunityMetadataUpdate,
+    snackbarHostState: SnackbarHostState,
 ) {
     Text("Keep messages", style = MaterialTheme.typography.titleMedium)
 
     if (isHost) {
         var expanded by remember { mutableStateOf(false) }
-        var selectedDays by remember { mutableIntStateOf(currentDays) }
+        var selectedDays by remember(currentDays) { mutableIntStateOf(currentDays) }
+        val scope = rememberCoroutineScope()
 
         ExposedDropdownMenuBox(
             expanded = expanded,
@@ -207,9 +232,12 @@ private fun RetentionSection(
                     DropdownMenuItem(
                         text = { Text("$days days") },
                         onClick = {
-                            selectedDays = days
                             expanded = false
-                            onChanged(days)
+                            scope.launch {
+                                val result = onChanged(days)
+                                if (result == CommunityMetadataUpdate.Saved) selectedDays = days
+                                snackbarHostState.showSnackbar(result.message("Retention"))
+                            }
                         },
                     )
                 }
@@ -230,7 +258,7 @@ private fun RetentionSection(
 private fun PollFloorSection(
     isHost: Boolean,
     currentFloor: Int,
-    onChanged: (Int) -> Unit,
+    onChanged: suspend (Int) -> CommunityMetadataUpdate,
     snackbarHostState: SnackbarHostState,
 ) {
     val scope = rememberCoroutineScope()
@@ -239,7 +267,7 @@ private fun PollFloorSection(
 
     if (isHost) {
         var expanded by remember { mutableStateOf(false) }
-        var selectedFloor by remember { mutableIntStateOf(currentFloor) }
+        var selectedFloor by remember(currentFloor) { mutableIntStateOf(currentFloor) }
 
         ExposedDropdownMenuBox(
             expanded = expanded,
@@ -264,10 +292,12 @@ private fun PollFloorSection(
                     DropdownMenuItem(
                         text = { Text(label) },
                         onClick = {
-                            selectedFloor = seconds
                             expanded = false
-                            onChanged(seconds)
-                            scope.launch { snackbarHostState.showSnackbar("Poll floor: $label") }
+                            scope.launch {
+                                val result = onChanged(seconds)
+                                if (result == CommunityMetadataUpdate.Saved) selectedFloor = seconds
+                                snackbarHostState.showSnackbar(result.message("Poll floor"))
+                            }
                         },
                     )
                 }
@@ -351,6 +381,49 @@ private fun PersonalPollSection(snackbarHostState: SnackbarHostState) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun NotificationPermissionSection() {
+    if (Build.VERSION.SDK_INT < NotificationPermissionPolicy.ANDROID_13_API) return
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("owdm.notification-permission", 0) }
+    var asked by remember { mutableStateOf(preferences.getBoolean("asked", false)) }
+    var granted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val launcher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+            granted = it
+            asked = true
+            preferences.edit().putBoolean("asked", true).apply()
+        }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    }
+    when (NotificationPermissionPolicy.state(Build.VERSION.SDK_INT, granted, asked)) {
+        NotificationPermissionPolicy.State.NotRequired -> Unit
+        NotificationPermissionPolicy.State.Granted -> Text("Message notifications are enabled.")
+        NotificationPermissionPolicy.State.RequestAvailable -> {
+            Text("Allow notifications to be alerted when new messages arrive.")
+            Button(onClick = {
+                asked = true
+                preferences.edit().putBoolean("asked", true).apply()
+                launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }) { Text("Enable notifications") }
+        }
+        NotificationPermissionPolicy.State.SettingsRecovery -> {
+            Text("Notifications are off. Enable them in system settings to receive message alerts.")
+            OutlinedButton(onClick = {
+                context.startActivity(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                )
+            }) { Text("Open notification settings") }
+        }
     }
 }
 

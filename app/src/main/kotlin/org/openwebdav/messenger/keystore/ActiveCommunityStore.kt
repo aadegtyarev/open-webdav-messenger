@@ -12,6 +12,10 @@ internal class ActiveCommunityStore(context: Context) {
         preferences.edit().putString(KEY, communityId).apply()
     }
 
+    fun clear() {
+        preferences.edit().remove(KEY).apply()
+    }
+
     private companion object {
         const val PREFS = "owdm.active-community"
         const val KEY = "community_id"

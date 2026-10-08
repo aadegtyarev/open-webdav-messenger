@@ -11,6 +11,14 @@ import org.openwebdav.messenger.transport.ConnectionConfig
  * device-backed Keystore). Each production store implements its seam trivially.
  */
 
+interface ExportableAccountBackupStore {
+    fun snapshot(): AccountBackup?
+
+    fun replace(backup: AccountBackup)
+
+    fun clear()
+}
+
 interface ExportableConnectionConfigStore {
     fun load(): ConnectionConfig?
 
@@ -25,6 +33,26 @@ interface ExportableCommunityKeyStore {
     fun store(key: ChatKey)
 
     fun clear()
+
+    fun load(communityId: String): ChatKey? = if (communityId == "default") load() else null
+
+    fun store(
+        communityId: String,
+        key: ChatKey,
+    ) {
+        if (communityId == "default") store(key) else error("Community-scoped key storage is unavailable")
+    }
+
+    fun remove(communityId: String) {
+        if (communityId == "default") clear()
+    }
+
+    fun listCommunityIds(): Set<String> = if (load() != null) setOf("default") else emptySet()
+
+    fun replaceAll(keys: Map<String, ChatKey>) {
+        clear()
+        keys.forEach { (communityId, key) -> store(communityId, key) }
+    }
 }
 
 interface ExportableChatKeyStore {
@@ -38,6 +66,8 @@ interface ExportableChatKeyStore {
     fun listChatIds(): List<String>
 
     fun remove(chatId: String)
+
+    fun replaceAll(chatKeys: Map<String, ChatKey>)
 }
 
 interface ExportableIdentityStore {

@@ -69,6 +69,7 @@ internal object AppContainer {
     private val directoryFactory by lazy { DirectoryFactory() }
     private val chatDirectoryFactory by lazy { ChatDirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
+    private val metadataWriteCoordinator = LatestCommunityWriteCoordinator()
     private val runtimeSelectionGuard = RuntimeSelectionGuard()
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -99,6 +100,7 @@ internal object AppContainer {
     fun warmStart() {
         if (warmStarted.compareAndSet(false, true)) {
             currentCommunityId = activeCommunityStore.load(communityRegistry.all().firstOrNull()?.id ?: "default")
+            UserSettings.selectCommunity(currentCommunityId)
             EngineWiring.initialize(
                 AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory),
             )
@@ -114,6 +116,17 @@ internal object AppContainer {
     suspend fun ensureWarmStarted() {
         warmStart()
         EngineWiring.awaitReady()
+    }
+
+    /** Rebuild the installed graph after a validated account restore has replaced device stores. */
+    fun rebuildAfterRestore() {
+        val fallback = communityRegistry.all().firstOrNull()?.id ?: "default"
+        currentCommunityId = activeCommunityStore.load(fallback)
+        UserSettings.selectCommunity(currentCommunityId)
+        EngineWiring.initialize(
+            AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory),
+        )
+        refreshMemberNames()
     }
 
     /** The composed onboarding service (owner-create / member-join). */
@@ -369,6 +382,7 @@ internal object AppContainer {
         val identity = runBlocking { identityFactory.identityStore(requireContext()).loadOrCreate() }
         runtimeSelectionGuard.begin()
         currentCommunityId = communityId
+        UserSettings.selectCommunity(communityId)
         activeCommunityStore.select(communityId)
         EngineWiring.reconfigure(
             config = stored.config,
@@ -547,48 +561,50 @@ internal object AppContainer {
 
     /**
      * Write community metadata (poll floor + retention window) to `meta/community.json` on the WebDAV
-     * disk, signed by the host identity. Best-effort — failures are silently ignored; the next poll
-     * cycle will re-read the current value from the disk.
-     *
-     * Also updates the local UserSettings cache immediately so the settings UI reflects the new values
-     * without waiting for the next poll cycle.
+     * disk, signed by the host identity. Writes are serialized per community; a superseded request
+     * cannot become the final remote or cached policy.
      */
-    fun updateCommunityMetadata(
+    suspend fun updateCommunityMetadata(
         retentionDays: Int,
         pollSeconds: Int,
-        onError: ((String) -> Unit)? = null,
-    ) {
-        val graph = runtimeGraph() ?: return
-        appScope.launch {
+    ): CommunityMetadataUpdate {
+        val graph = runtimeGraph() ?: return CommunityMetadataUpdate.Failed("Community runtime is unavailable")
+        val communityId = graph.communityId
+        val revision = metadataWriteCoordinator.submit(communityId)
+        var outcome: CommunityMetadataUpdate = CommunityMetadataUpdate.Superseded
+        val ran =
             try {
-                val transport = TransportFactory.create(graph.config)
-                val metadata =
-                    CommunityMetadata(
-                        minPollIntervalSeconds = pollSeconds,
-                        retentionWindowDays = retentionDays,
-                    )
-                val result =
-                    CommunityMetadata.write(
-                        transport = transport,
-                        metadata = metadata,
-                        hostIdentity = graph.identity,
-                        identityCrypto = identityFactory.identityCrypto(),
-                    )
-                if (result !is WebDavResult.Success) {
-                    onError?.invoke("Couldn't save settings: $result")
-                    return@launch
+                metadataWriteCoordinator.runIfLatest(communityId, revision) {
+                    outcome =
+                        try {
+                            val result =
+                                CommunityMetadata.write(
+                                    TransportFactory.create(graph.config),
+                                    CommunityMetadata(pollSeconds, retentionDays),
+                                    graph.identity,
+                                    identityFactory.identityCrypto(),
+                                )
+                            if (result !is WebDavResult.Success) {
+                                CommunityMetadataUpdate.Rejected(result)
+                            } else if (metadataWriteCoordinator.isLatest(communityId, revision)) {
+                                UserSettings.setCommunityMetadata(communityId, pollSeconds, retentionDays)
+                                CommunityMetadataUpdate.Saved
+                            } else {
+                                CommunityMetadataUpdate.Superseded
+                            }
+                        } catch (failure: Exception) {
+                            CommunityMetadataUpdate.Failed(failure.message ?: "Unknown write failure")
+                        }
                 }
-                // Update local cache immediately so the UI reflects the change.
-                UserSettings.communityMinPollSeconds = pollSeconds
-                UserSettings.communityRetentionWindowDays = retentionDays
-            } catch (e: Exception) {
-                onError?.invoke("Couldn't save settings: ${e.message}")
+            } catch (failure: Exception) {
+                outcome = CommunityMetadataUpdate.Failed(failure.message ?: "Unknown write failure")
+                true
             }
-        }
+        return if (ran) outcome else CommunityMetadataUpdate.Superseded
     }
 
     /** Whether the current user is the host of the active community. */
-    val isHost: Boolean get() = UserSettings.isHost
+    val isHost: Boolean get() = UserSettings.isHostFor(currentCommunityId)
 
     /**
      * Rotate the WebDAV credential for all members EXCEPT [excludeMemberSignPub]. The host provides a new
@@ -727,6 +743,7 @@ internal object AppContainer {
                 runtimeSelectionGuard.begin()
                 currentCommunityId = chatId
                 activeCommunityStore.select(chatId)
+                UserSettings.selectCommunity(chatId)
                 communityRegistry.add(CommunityRegistry.Entry(chatId, communityName, chatId))
                 // Auto-create the "General" chat for the new community.
                 chatRegistry.add(chatId, ChatRegistry.Entry(chatId, "General", "general"))
@@ -744,7 +761,7 @@ internal object AppContainer {
                 identity: Identity,
                 isHost: Boolean,
             ) {
-                UserSettings.isHost = isHost
+                UserSettings.setHostFor(chatId, isHost)
                 EngineWiring.reconfigure(config, chatId, communityName, chatKey, identity, communityId = chatId)
                 // Write on-disk metadata (async, best-effort).
                 appScope.launch {

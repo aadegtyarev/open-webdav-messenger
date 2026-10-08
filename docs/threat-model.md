@@ -21,7 +21,7 @@
 - **A5: Membership / social-graph metadata** — who is in which chat, who talks to whom, when, message volume/timing/structure on disk. Deliberately not fully protected in the MVP.
 - **A6: Message integrity & authorship** — guarantee that content is untampered and authored by the claimed member (SC15 signature; content-addressing SC11).
 - **A7: Availability of message delivery** — ability to send/receive within retention window. Bounded by no-server, rate-limited, finite-retention design.
-- **A8: Export blob — encrypted secret bundle** — the password-encrypted bundle carrying all device-local secrets (connection config, community key, chat keys, identity keypair) as a base64 blob. Compromise grants full account takeover including impersonation (the identity secret keys are inside). Mitigated by Argon2id memory-hard KDF (64 MiB INTERACTIVE preset) and password-strength nudge in UI; the blob leaves the device only through the user's chosen Share-sheet target.
+- **A8: Export blob — encrypted secret bundle** — the password-encrypted bundle carrying registered community connection configs, community/chat registries and keys, active selection, and identity keypair as a base64 blob. Compromise grants full account takeover including impersonation (the identity secret keys and disk credentials are inside). Mitigated by Argon2id memory-hard KDF (64 MiB INTERACTIVE preset) and password-strength nudge in UI; the blob leaves the device only through the user's chosen Share-sheet target. Local Room history is not included.
 
 ## 3. Trust boundaries — where untrusted meets trusted
 
@@ -74,7 +74,7 @@ Each row: threat → affected assets → likelihood/impact → mitigation (SCn I
 | T25 | Chat-directory metadata exposure to disk operator | A5 | M/L | SC19, SC1 |
 | T26 | Native AEAD seal failure crashes publish path | A7 | L/L | SC14 |
 | T27 | Secret material committed to source tree / git history | A2, A3, A4 | L/H | SC21 |
-| T28 | Foreground fast-poll service drains device battery | A7 | M/L | Explicit user opt-in; persistent notification visible at all times; OFF by default; user can disable at any time. The battery cost is the user-visible trade-off for sub-15-min delivery. No new security surface — the service reuses the existing [SyncRunner] seam, adds no new network paths or data flows. |
+| T28 | Foreground fast-poll service drains device battery | A7 | M/L | Current effective poll intervals below the WorkManager floor automatically start the foreground service (60-second personal default); a persistent notification is required by Android, and users can select an interval at/above the WorkManager floor to stop fast mode. Android 13+ notification permission has a contextual request and settings recovery path; denial can hide the notification but does not itself disable service execution. No new security surface — the service reuses the existing [SyncRunner] seam, adds no new network paths or data flows. |
 | T29 | Offline brute-force of weak export password → full account takeover including impersonation | A1, A2, A3, A4, A8 | M/H | Argon2id INTERACTIVE preset (64 MiB memory-hard) makes brute-force expensive per guess; password-strength nudge in UI (min 8 chars). The export blob carries the identity secret keys (complete restore = the product need), so a cracked password grants impersonation capability — this is a documented, accepted risk. Mitigation: user education (strong password), Argon2id memory hardness slows GPU/ASIC attacks. |
 
 Likelihood/Impact: L/M/H.

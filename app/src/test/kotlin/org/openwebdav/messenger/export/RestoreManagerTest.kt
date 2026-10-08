@@ -74,6 +74,139 @@ class RestoreManagerTest {
             assertTrue("identity should be restored", idRestore.load() is IdentityLoadResult.Loaded)
         }
 
+    @Test
+    fun encrypted_multi_community_backup_restores_configs_registries_and_active_selection() =
+        runTest {
+            val communities =
+                listOf(
+                    CommunityBackup(
+                        "community-a",
+                        "A",
+                        "anchor-a",
+                        ExportTestSupport.sampleConfig(),
+                        listOf(ChatBackup("anchor-a", "General", "general")),
+                        Base64.getEncoder().encodeToString(CryptoTestSupport.fixedKey(seed = 11).export()),
+                    ),
+                    CommunityBackup(
+                        "community-b",
+                        "B",
+                        "anchor-b",
+                        ExportTestSupport.sampleConfig().copy(chatRoot = "root-b"),
+                        listOf(ChatBackup("anchor-b", "General", "general"), ChatBackup("group-b", "Group", "group")),
+                        Base64.getEncoder().encodeToString(CryptoTestSupport.fixedKey(seed = 12).export()),
+                    ),
+                )
+            val accountBackup = AccountBackup("community-b", communities)
+            val sourceAccount = ExportTestSupport.InMemoryAccountBackupStore(accountBackup)
+            val sourceChatKeys =
+                ExportTestSupport.inMemoryChatKeyStore().also {
+                    it.store("anchor-a", CryptoTestSupport.fixedKey(seed = 21))
+                    it.store("anchor-b", CryptoTestSupport.fixedKey(seed = 22))
+                    it.store("group-b", CryptoTestSupport.fixedKey(seed = 23))
+                }
+            val sourceIdentity = ExportTestSupport.inMemoryIdentityStore().also { it.store(ExportTestSupport.freshIdentity()) }
+            val blob =
+                ExportManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    ExportTestSupport.inMemoryCommunityKeyStore(),
+                    sourceChatKeys,
+                    sourceIdentity,
+                    accountBackupStore = sourceAccount,
+                ).export("test-password-123".toCharArray()) as ExportResult.Ready
+
+            val targetAccount = ExportTestSupport.InMemoryAccountBackupStore()
+            val targetCommunityKeys = ExportTestSupport.inMemoryCommunityKeyStore()
+            val targetChatKeys = ExportTestSupport.inMemoryChatKeyStore()
+            val result =
+                RestoreManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    targetCommunityKeys,
+                    targetChatKeys,
+                    ExportTestSupport.inMemoryIdentityStore(),
+                    accountBackupStore = targetAccount,
+                ).restore(blob.blob, "test-password-123".toCharArray())
+
+            assertEquals(RestoreResult.Restored, result)
+            assertEquals(accountBackup, targetAccount.snapshot())
+            assertTrue(CryptoTestSupport.fixedKey(seed = 11).export().contentEquals(targetCommunityKeys.load("community-a")?.export()))
+            assertTrue(CryptoTestSupport.fixedKey(seed = 12).export().contentEquals(targetCommunityKeys.load("community-b")?.export()))
+            assertTrue(CryptoTestSupport.fixedKey(seed = 21).export().contentEquals(targetChatKeys.load("anchor-a")?.export()))
+            assertTrue(CryptoTestSupport.fixedKey(seed = 22).export().contentEquals(targetChatKeys.load("anchor-b")?.export()))
+            assertTrue(CryptoTestSupport.fixedKey(seed = 23).export().contentEquals(targetChatKeys.load("group-b")?.export()))
+        }
+
+    @Test
+    fun registry_write_failure_rolls_back_multi_community_restore() =
+        runTest {
+            val newBackup =
+                AccountBackup(
+                    "community-new",
+                    listOf(
+                        CommunityBackup(
+                            "community-new",
+                            "New",
+                            "anchor-new",
+                            ExportTestSupport.sampleConfig(),
+                            listOf(ChatBackup("anchor-new", "General", "general")),
+                        ),
+                    ),
+                )
+            val sourceAccount = ExportTestSupport.InMemoryAccountBackupStore(newBackup)
+            val sourceIdentity = ExportTestSupport.inMemoryIdentityStore().also { it.store(ExportTestSupport.freshIdentity()) }
+            val blob =
+                ExportManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    ExportTestSupport.inMemoryCommunityKeyStore(),
+                    ExportTestSupport.inMemoryChatKeyStore(),
+                    sourceIdentity,
+                    accountBackupStore = sourceAccount,
+                ).export("test-password-123".toCharArray()) as ExportResult.Ready
+            val oldBackup =
+                AccountBackup(
+                    "community-old",
+                    listOf(
+                        CommunityBackup(
+                            "community-old",
+                            "Old",
+                            "anchor-old",
+                            ExportTestSupport.sampleConfig(),
+                            listOf(ChatBackup("anchor-old", "General", "general")),
+                        ),
+                    ),
+                )
+            val backingStore = ExportTestSupport.InMemoryAccountBackupStore(oldBackup)
+            var failOnce = true
+            val failingStore =
+                object : ExportableAccountBackupStore by backingStore {
+                    override fun replace(backup: AccountBackup) {
+                        if (failOnce) {
+                            failOnce = false
+                            error("injected registry write failure")
+                        }
+                        backingStore.replace(backup)
+                    }
+                }
+            val oldKey = CryptoTestSupport.fixedKey(seed = 31)
+            val communityKeys = ExportTestSupport.inMemoryCommunityKeyStore().also { it.store("community-old", oldKey) }
+            val result =
+                RestoreManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    communityKeys,
+                    ExportTestSupport.inMemoryChatKeyStore(),
+                    ExportTestSupport.inMemoryIdentityStore(),
+                    accountBackupStore = failingStore,
+                ).restore(blob.blob, "test-password-123".toCharArray())
+
+            assertEquals(RestoreResult.StoreFailure(rollbackSucceeded = true), result)
+            assertEquals(oldBackup, backingStore.snapshot())
+            assertTrue(oldKey.export().contentEquals(communityKeys.load("community-old")?.export()))
+            assertEquals(setOf("community-old"), communityKeys.listCommunityIds())
+        }
+
     // -- restore does not partially populate on failure -----------------------
 
     @Test

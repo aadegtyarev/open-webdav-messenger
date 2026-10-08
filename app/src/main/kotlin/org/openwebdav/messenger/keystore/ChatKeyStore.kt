@@ -91,6 +91,11 @@ class ChatKeyStore(
         removeFromIndex(chatId)
     }
 
+    override fun replaceAll(chatKeys: Map<String, ChatKey>) {
+        (listChatIds() - chatKeys.keys).forEach(::remove)
+        chatKeys.forEach { (chatId, key) -> store(chatId, key) }
+    }
+
     /** The raw wrapped-on-disk bytes for [chatId] — for tests asserting the raw key is NOT in plaintext. */
     internal fun rawStoredBlob(chatId: String): ByteArray? = wrapper(chatId).rawBlob()
 

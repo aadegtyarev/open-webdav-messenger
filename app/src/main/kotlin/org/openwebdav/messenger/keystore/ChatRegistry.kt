@@ -30,6 +30,17 @@ internal class ChatRegistry(private val context: Context) {
         write(communityId, list)
     }
 
+    fun replace(
+        communityId: String,
+        entries: List<Entry>,
+    ) {
+        write(communityId, entries.distinctBy { it.id })
+    }
+
+    fun clear(communityId: String) {
+        file(communityId).delete()
+    }
+
     private fun write(
         communityId: String,
         list: List<Entry>,

@@ -27,7 +27,7 @@ Message path: typed → signed (Ed25519) → compressed (DEFLATE) → AEAD-encry
 |---|---|---|
 | Language | Kotlin | Native Android, null-safety, coroutines |
 | UI | Jetpack Compose | Declarative, full chat-surface control |
-| Background sync | WorkManager + opt-in foreground service | OS-friendly periodic polling (15-min floor); fast mode via `FastPollService` with persistent notification for sub-15-min delivery |
+| Background sync | WorkManager + conditional foreground service | OS-friendly periodic polling (15-min floor); current effective intervals below the floor auto-start `FastPollService` with persistent notification |
 | Transport | WebDAV over OkHttp | PROPFIND/GET/PUT/DELETE, 429 back-off |
 | Crypto | libsodium (lazysodium-android) | Argon2id + XChaCha20-Poly1305 AEAD (Tink lacks password-KDF) |
 | Key storage | Android Keystore (direct) | Hardware-backed wrap; `security-crypto` deprecated |
@@ -83,7 +83,7 @@ One line per decision. Detail in git history. OPEN items are flagged for resolut
 3. **Aggregated sync:** shared `log/` + per-member `changes/` + retention window (replaced v1 per-recipient inbox fan-out).
 4. **Compression (Implemented — 2026-06-14):** DEFLATE (`java.util.zip`), compress-then-encrypt, per-message independent, codec-id in envelope.
 5. **Markdown rendering:** hand-rolled `AnnotatedString` parser for 6 elements (smallest untrusted-input surface).
-6. **RESOLVED** — Polling: WorkManager background floor (default) + opt-in foreground service (`FastPollService`, `foregroundServiceType="dataSync"`) for sub-15-min delivery. Static analysis: ktlint chosen (detekt not used). **DESCOPED** — CI emulator for `connectedAndroidTest` (device-gated tests run locally; build-beat JVM gates also local-only during active development).
+6. **RESOLVED** — Polling: WorkManager background floor plus `FastPollService` (`foregroundServiceType="dataSync"`) when effective member/community interval is below the WorkManager floor. The current 60-second personal default auto-starts fast mode; a persistent notification is required. Android 13+ notification permission is requested contextually from Settings and denial links to system notification settings. Static analysis: ktlint chosen (detekt not used). **DESCOPED** — CI emulator for `connectedAndroidTest` (device-gated tests run locally; build-beat JVM gates also local-only during active development).
 7. **Crypto substrate:** 3 key sources (random/passphrase/DH); public-chat = community-key (world-readable tier retired 2026-06-06).
 8. **Identity substrate:** Ed25519 (signing) + X25519 (box) keypairs; DH→KDF→ChatKey; sealed-box; BLAKE2b fingerprint.
 9. **Message model:** versioned TLV plaintext; per-message Ed25519 signature; reaction = first-class msg kind (0..4); reject-don't-guess.
@@ -91,7 +91,7 @@ One line per decision. Detail in git history. OPEN items are flagged for resolut
 11. **Chat directory substrate:** group-only (DMs hard-rejected); self-signed/community-key-sealed; superseded per chat-id.
 12. **Codec dedup:** shared parse cursor + shared community-directory engine + single-source constant homes.
 13. **Local history encryption (Implemented — 2026-06-14):** Room DB encrypted at rest via SQLCipher + Keystore-wrapped AES-256 key; unencrypted→encrypted migration on first upgrade (ATTACH + sqlcipher_export).
-14. **Account export/restore (Implemented — 2026-06-14):** password-encrypted backup of all device-local secrets (connection config, community key, chat keys, identity keypair) via Argon2id→XChaCha20-Poly1305, base64 blob shareable through Android Share sheet. Password is mandatory — a device-bound Keystore key cannot carry cross-device. Identity secret keys are included in the export (complete restore); a cracked export password grants impersonation capability (mitigated by Argon2id INTERACTIVE preset, 64 MiB memory-hard). Restore is all-or-nothing: every validation failure (wrong password, tampered blob, wrong version) is a typed rejection, never a partial restore.
+14. **Account export/restore:** versioned v2 password-encrypted backup includes registered community connection configs, community/chat registries and keys, active selection, and identity keypair via Argon2id→XChaCha20-Poly1305, base64 blob shareable through Android Share sheet. Password is mandatory — a device-bound Keystore key cannot carry cross-device. Identity keys and disk credentials are included; a cracked export password grants impersonation/access. Restore validates before writes and attempts snapshot rollback on store failure; it does not claim crash-atomicity across Keystore/filesystem. Legacy v1 remains readable but lacks registries and may not rebuild a usable runtime.
 
 ## Architectural constraints
 
@@ -118,8 +118,8 @@ Package root: `org.openwebdav.messenger` under `app/src/main/kotlin/`.
 | `directory/` | Implemented | Community user directory — signed/sealed entries |
 | `chatdirectory/` | Implemented | Community chat directory — group-only descriptors |
 | `data/` | Implemented | Room local cache — history + sync cursors |
-| `sync/` | Implemented | Poll-cycle: send (log+changes), poll, background scheduling, opt-in foreground fast-poll |
-| `export/` | Implemented | Account export/restore: password-encrypted backup of all device-local secrets |
+| `sync/` | Implemented | Poll-cycle: send (log+changes), poll, background scheduling, conditional foreground fast-poll |
+| `export/` | Implemented | Versioned password-encrypted multi-community account export/restore with validated staging and rollback attempts |
 | `ui/` | Implemented | Onboarding, invite QR, chat feed, communities, settings; dark/light theme |
 | `markdown/` | Planned | Hand-rolled 6-element `AnnotatedString` parser |
 
