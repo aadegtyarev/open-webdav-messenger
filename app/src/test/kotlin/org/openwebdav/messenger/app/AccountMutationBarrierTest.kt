@@ -1,6 +1,8 @@
 package org.openwebdav.messenger.app
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
@@ -63,7 +65,52 @@ class AccountMutationBarrierTest {
         }
 
     @Test
-    fun restore_waits_for_in_flight_rotation() =
+    fun community_rotations_serialize_per_owner_release_cancelled_locks_and_allow_other_owners() =
+        runTest {
+            val barrier = AccountMutationBarrier()
+            val firstStarted = CompletableDeferred<Unit>()
+            val releaseFirst = CompletableDeferred<Unit>()
+            val secondStarted = CompletableDeferred<Unit>()
+            val first =
+                launch {
+                    barrier.withCommunityCredentialRotation("community-a") {
+                        firstStarted.complete(Unit)
+                        releaseFirst.await()
+                    }
+                }
+            firstStarted.await()
+            val sameOwner =
+                launch {
+                    barrier.withCommunityCredentialRotation("community-a") {
+                        secondStarted.complete(Unit)
+                    }
+                }
+            yield()
+            assertFalse(secondStarted.isCompleted)
+
+            assertTrue(
+                barrier.withCommunityCredentialRotation("community-b") {
+                    true
+                },
+            )
+            first.cancelAndJoin()
+            secondStarted.await()
+            sameOwner.join()
+
+            val failed =
+                async {
+                    runCatching {
+                        barrier.withCommunityCredentialRotation("community-a") {
+                            error("controlled failure")
+                        }
+                    }
+                }.await()
+            assertTrue(failed.isFailure)
+            assertTrue(barrier.withCommunityCredentialRotation("community-a") { true })
+        }
+
+    @Test
+    fun restore_waits_for_in_flight_exclusive_mutation() =
         runTest {
             val barrier = AccountMutationBarrier.process
             val rotationStarted = CompletableDeferred<Unit>()
@@ -87,7 +134,7 @@ class AccountMutationBarrierTest {
         }
 
     @Test
-    fun restore_drains_in_flight_poll_and_holds_rotation_until_release() =
+    fun restore_drains_poll_and_holds_exclusive_mutation_until_release() =
         runTest {
             val barrier = AccountMutationBarrier.process
             val pollStarted = CompletableDeferred<Unit>()

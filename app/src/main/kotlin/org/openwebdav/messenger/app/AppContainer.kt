@@ -298,7 +298,7 @@ internal object AppContainer {
         var rawChatId: ByteArray? = null
         val stored = context.stored
         val inserted =
-            AccountMutationBarrier.process.withAccountReplacement {
+            AccountMutationBarrier.process.withStableAccount {
                 chatOpenRequestCoordinator.runIfCurrent(requestToken) {
                     if (!isCurrentGroupContext(context, requestToken)) return@runIfCurrent false
                     val keySources = crypto.keySources()
@@ -992,11 +992,28 @@ internal object AppContainer {
         newPassword: String,
         excludeMemberSignPub: String,
     ): Boolean {
+        val ownerCommunityId =
+            AccountMutationBarrier.process.withStableAccount {
+                runtimeGraph()?.communityId?.takeIf { it == currentCommunityId }
+            } ?: return false
+        return AccountMutationBarrier.process.withCommunityCredentialRotation(ownerCommunityId) {
+            rotateCredentialForOwner(ownerCommunityId, newUrl, newUsername, newPassword, excludeMemberSignPub)
+        }
+    }
+
+    private suspend fun rotateCredentialForOwner(
+        ownerCommunityId: String,
+        newUrl: String,
+        newUsername: String,
+        newPassword: String,
+        excludeMemberSignPub: String,
+    ): Boolean {
         val snapshot =
             AccountMutationBarrier.process.withStableAccount {
                 val graph = runtimeGraph() ?: return@withStableAccount null
-                val ownerCommunityId = graph.communityId
-                if (currentCommunityId != ownerCommunityId) return@withStableAccount null
+                if (graph.communityId != ownerCommunityId || currentCommunityId != ownerCommunityId) {
+                    return@withStableAccount null
+                }
                 val seam = credentialRotationTestSeam
                 val stored =
                     if (seam != null) {
@@ -1080,68 +1097,66 @@ internal object AppContainer {
         }
         if (!allOk) return false
 
-        return AccountMutationBarrier.process.withExclusive {
-            AccountMutationBarrier.process.withAccountReplacement {
-                if (
-                    snapshot.replacementGeneration != AccountMutationBarrier.process.replacementGeneration()
-                ) {
-                    return@withAccountReplacement false
+        return AccountMutationBarrier.process.withStableAccount {
+            if (
+                snapshot.replacementGeneration != AccountMutationBarrier.process.replacementGeneration()
+            ) {
+                return@withStableAccount false
+            }
+            val currentStored =
+                loadRotationStored(snapshot.ownerCommunityId, seam) ?: return@withStableAccount false
+            if (currentStored != snapshot.stored) return@withStableAccount false
+            val currentKey =
+                loadRotationChatKey(snapshot.stored.chatId, seam) ?: return@withStableAccount false
+            val currentKeyBytes = currentKey.export()
+            val capturedKeyBytes = snapshot.communityKey.export()
+            val keyStillCurrent =
+                try {
+                    currentKeyBytes.contentEquals(capturedKeyBytes)
+                } finally {
+                    currentKeyBytes.fill(0)
+                    capturedKeyBytes.fill(0)
                 }
-                val currentStored =
-                    loadRotationStored(snapshot.ownerCommunityId, seam) ?: return@withAccountReplacement false
-                if (currentStored != snapshot.stored) return@withAccountReplacement false
-                val currentKey =
-                    loadRotationChatKey(snapshot.stored.chatId, seam) ?: return@withAccountReplacement false
-                val currentKeyBytes = currentKey.export()
-                val capturedKeyBytes = snapshot.communityKey.export()
-                val keyStillCurrent =
-                    try {
-                        currentKeyBytes.contentEquals(capturedKeyBytes)
-                    } finally {
-                        currentKeyBytes.fill(0)
-                        capturedKeyBytes.fill(0)
-                    }
-                if (!keyStillCurrent) return@withAccountReplacement false
+            if (!keyStillCurrent) return@withStableAccount false
 
-                // A community switch during WebDAV I/O may commit only to the captured owner, never reinstall over B.
-                val ownerStillSelected = currentCommunityId == snapshot.ownerCommunityId
-                val activeGraph = runtimeGraph()
-                if (
-                    ownerStillSelected &&
-                    (
-                        activeGraph?.communityId != snapshot.ownerCommunityId ||
-                            activeGraph.communityRuntimeKey != snapshot.graph.communityRuntimeKey
-                    )
-                ) {
-                    return@withAccountReplacement false
-                }
+            // A community switch during WebDAV I/O may commit only to the captured owner, never reinstall over B.
+            val ownerStillSelected = currentCommunityId == snapshot.ownerCommunityId
+            val activeGraph = runtimeGraph()
+            if (
+                ownerStillSelected &&
+                (
+                    activeGraph?.communityId != snapshot.ownerCommunityId ||
+                        activeGraph.communityRuntimeKey != snapshot.graph.communityRuntimeKey
+                )
+            ) {
+                return@withStableAccount false
+            }
 
-                val rotated = snapshot.stored.copy(config = newConfig)
-                val saved =
-                    if (seam != null) {
-                        seam.saveStored(snapshot.ownerCommunityId, rotated)
-                    } else {
-                        configStore.save(
-                            rotated.config,
-                            rotated.chatId,
-                            rotated.communityName,
-                            communityId = snapshot.ownerCommunityId,
-                        )
-                        true
-                    }
-                if (!saved) return@withAccountReplacement false
-                if (
-                    ownerStillSelected &&
-                    !EngineWiring.reconfigureIfCurrent(
-                        expectedCommunityRuntimeKey = snapshot.graph.communityRuntimeKey,
-                        config = newConfig,
+            val rotated = snapshot.stored.copy(config = newConfig)
+            val saved =
+                if (seam != null) {
+                    seam.saveStored(snapshot.ownerCommunityId, rotated)
+                } else {
+                    configStore.save(
+                        rotated.config,
+                        rotated.chatId,
+                        rotated.communityName,
                         communityId = snapshot.ownerCommunityId,
                     )
-                ) {
-                    return@withAccountReplacement false
+                    true
                 }
-                true
+            if (!saved) return@withStableAccount false
+            if (
+                ownerStillSelected &&
+                !EngineWiring.reconfigureIfCurrent(
+                    expectedCommunityRuntimeKey = snapshot.graph.communityRuntimeKey,
+                    config = newConfig,
+                    communityId = snapshot.ownerCommunityId,
+                )
+            ) {
+                return@withStableAccount false
             }
+            true
         }
     }
 
