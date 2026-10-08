@@ -949,20 +949,22 @@ internal object AppContainer {
         // is the hex of their Ed25519 signing public key.
         val peerId = Hex.encode(peer.copySigningPublicKey())
 
-        // Switch the active send path to the DM chat.
-        if (!switchToChat(graph, chatId, peer.displayName, peerId)) return null
-        val dmGraph = runtimeGraph() ?: return null
-        val own = dmGraph.identity.publicIdentity()
+        val own = graph.identity.publicIdentity()
         val verifiedEntries =
             listOf(
                 DirectoryEntry(UserSettings.displayName, own.copySignPub(), own.copyBoxPub()),
                 peer,
             )
-        EngineWiring.updateGraphIfCurrent(
-            expectedGraph = dmGraph,
-            isContextCurrent = { runtimeGraph() === dmGraph },
-            update = { applyRoster(dmGraph, verifiedEntries) },
-        )
+        val initialReadiness =
+            RecipientReadiness.Ready(
+                members = verifiedEntries.map { Hex.encode(it.copySigningPublicKey()) },
+                participants = verifiedParticipants(verifiedEntries, graph.senderIdentifier, graph.identity.copySignPublic()),
+            )
+
+        val memberNames = verifiedEntries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
+        // Install the DM graph with its complete verified recipient snapshot in the first publication.
+        if (!switchToChat(graph, chatId, peer.displayName, peerId, memberNames, initialReadiness)) return null
+        val dmGraph = runtimeGraph() ?: return null
         val seam = chatOpenTestSeam
         val stored = if (seam != null) seam.loadStored(graph.communityId) else configStore.loadStored(graph.communityId)
         val communityKey = stored?.let(::loadRosterCommunityKey) ?: return chatId
@@ -991,12 +993,13 @@ internal object AppContainer {
         chatId: String,
         chatName: String,
         peerId: String,
+        memberNames: Map<String, String>,
+        recipientReadiness: RecipientReadiness,
     ): Boolean {
         val seam = chatOpenTestSeam
         val chatKey = if (seam != null) seam.loadChatKey(chatId) else crypto.chatKeyStore(requireContext()).load(chatId)
         chatKey ?: return false
         val roster = listOf(expectedGraph.senderIdentifier, peerId)
-        val memberNames = mapOf(peerId to chatName)
         val revision = runtimeSelectionGuard.begin()
         return EngineWiring.switchToChatIfCurrent(
             runtimeSelectionGuard,
@@ -1008,6 +1011,7 @@ internal object AppContainer {
             roster,
             memberNames,
             isCommunitySelected = { currentCommunityId == expectedGraph.communityId },
+            recipientReadiness = recipientReadiness,
         )
     }
 
