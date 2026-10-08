@@ -669,7 +669,12 @@ internal object AppContainer {
     ) {
         graph.memberNames = entries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
         graph.setMemberNamesError(null)
-        graph.updateRecipientReadiness(RecipientReadiness.Ready(entries.map { Hex.encode(it.copySigningPublicKey()) }))
+        graph.updateRecipientReadiness(
+            RecipientReadiness.Ready(
+                members = entries.map { Hex.encode(it.copySigningPublicKey()) },
+                participants = verifiedParticipants(entries, graph.senderIdentifier, graph.identity.copySignPublic()),
+            ),
+        )
     }
 
     private fun isRosterContextCurrent(

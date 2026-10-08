@@ -468,6 +468,9 @@ class EngineWiringTest {
             assertEquals(dmId, dmGraph.chatId)
             assertTrue(dmGraph.recipientSnapshot() is RecipientReadiness.Ready)
             assertEquals("DM peer", dmGraph.memberNames.values.single())
+            val participantSnapshot = dmGraph.recipientSnapshot() as RecipientReadiness.Ready
+            assertTrue(participantSnapshot.participants.any { it.displayName == "DM peer" && !it.isSelf })
+            assertTrue(participantSnapshot.participants.any { it.isSelf })
             assertTrue(directoryRead.await(5, TimeUnit.SECONDS))
             resume.countDown()
             assertTrue(generalOpen.get(5, TimeUnit.SECONDS))

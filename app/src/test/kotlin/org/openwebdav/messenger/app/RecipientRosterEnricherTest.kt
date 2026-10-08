@@ -45,8 +45,11 @@ class RecipientRosterEnricherTest {
             directory.complete(DirectoryReadResult(listOf(entry("peer")), 0))
             task.join()
             val peerId = Hex.encode("peer".toByteArray().copyOf(32))
-            val expected = RecipientReadiness.Ready(listOf(graph.senderIdentifier, peerId))
-            assertEquals(expected, graph.recipientSnapshot())
+            val ready = graph.recipientSnapshot() as RecipientReadiness.Ready
+            assertEquals(listOf(graph.senderIdentifier, peerId), ready.members)
+            assertEquals(listOf("", "peer"), ready.participants.map { it.displayName }.sorted())
+            assertTrue(ready.participants.any { it.displayName == "peer" && !it.isSelf })
+            assertTrue(ready.participants.any { it.isSelf })
             assertEquals("peer", graph.memberNames[peerId])
         }
 
@@ -55,8 +58,9 @@ class RecipientRosterEnricherTest {
         runTest {
             val cached = RecipientReadiness.Ready(listOf(graph.senderIdentifier, "cached-peer"))
             graph.updateRecipientReadiness(cached)
+            val cachedSnapshot = graph.recipientSnapshot()
             enricher(this, preserveReadyOnFailure = true) { error("offline") }.start().join()
-            assertEquals(cached, graph.recipientSnapshot())
+            assertEquals(cachedSnapshot, graph.recipientSnapshot())
         }
 
     @Test

@@ -47,7 +47,11 @@ internal class RuntimeGraph(
     val communityRuntimeKey: String = UUID.randomUUID().toString(),
     initialRecipientReadiness: RecipientReadiness = RecipientReadiness.Ready(roster),
 ) {
-    private val recipientRoster = VerifiedRecipientRoster(initialRecipientReadiness, senderIdentifier)
+    private val recipientRoster =
+        VerifiedRecipientRoster(
+            initialRecipientReadiness.withLocalSelf(identity.copySignPublic()),
+            senderIdentifier,
+        )
     val recipientReadiness: StateFlow<RecipientReadiness> = recipientRoster.state
 
     /** Current verified member identifiers; pending/error snapshots expose only the local sender. */
@@ -56,7 +60,15 @@ internal class RuntimeGraph(
 
     fun recipientSnapshot(): RecipientReadiness = recipientRoster.snapshot()
 
-    fun updateRecipientReadiness(readiness: RecipientReadiness) = recipientRoster.update(readiness)
+    fun updateRecipientReadiness(readiness: RecipientReadiness) {
+        recipientRoster.update(readiness.withLocalSelf(identity.copySignPublic()))
+    }
+
+    private fun RecipientReadiness.withLocalSelf(signingPublicKey: ByteArray): RecipientReadiness =
+        when (this) {
+            is RecipientReadiness.Ready -> copy(participants = withSelfParticipant(participants, signingPublicKey))
+            RecipientReadiness.Loading, is RecipientReadiness.Unavailable -> this
+        }
 
     /** Signing-pubkey-hex → display name (from directory). Updated asynchronously. */
     private val _memberNames = MutableStateFlow<Map<String, String>>(emptyMap())
