@@ -1,6 +1,6 @@
 # v0.24.0 — Verified participant list
 
-- **Status:** Approved
+- **Status:** Complete
 - **Approved:** 2026-10-08
 - **Release:** v0.24.0 (code 58)
 
@@ -33,4 +33,6 @@ No membership management, delete, ban, role changes, protocol changes, new roste
 ## Acceptance and validation
 
 - Tests cover General, group, and DM lists; cached and process-reopen state; Loading, Unavailable/retry, refresh stability, stale results/chat switches; Back/navigation/recreation; accessibility labels and target size; empty/self-only truthfulness; and no network wait when cache is Ready.
-- Run full project gates, including relevant Gradle tests, ktlint, Android lint, and Sol checks. Build/publish the v0.24.0 APK (code 58), then pause for user device validation. Do not implement v0.25.0 removal/revocation before that validation and its separate contract.
+- Final verification passed: Debug unit tests (445, 0 failures/errors, 1 skipped), Release unit tests (409, 0 failures/errors), `ktlintCheck`, `lint`, `compileDebugAndroidTestKotlin`, `assembleDebug`, and `assembleRelease`. Debug and release APKs were assembled; publication is not claimed.
+- Sol review: APPROVED after the final DM first-publication atomicity fix (`c74bc5d`). The production-path observer test verifies the first published DM Ready snapshot has matching self+peer members and participant rows, with no later repair emission.
+- User device validation remains the next release follow-up. Do not begin v0.25.0 removal/revocation before that validation and its separate contract.
