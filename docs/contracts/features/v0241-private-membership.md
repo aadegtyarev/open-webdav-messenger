@@ -12,9 +12,9 @@ community directory, and DMs retain exactly self plus peer.
 
 Membership evidence only changes; invite still grants only chatId+chatKey
 capability, with no community ID/key/credentials or added privilege. New invites
-require an authenticated strict `access=public|private` discriminator, which only
-selects roster protocol. Legacy missing/invalid/tampered access is rejected before
-mutation with localized actionable fresh-invite guidance; never guess. A claim
+require identity-authenticated strict `access=public|private` metadata, selecting
+roster protocol only. Legacy missing/invalid/tampered access/signature is rejected
+before mutation with localized actionable fresh-invite guidance; never guess. A claim
 proves key possession and self-asserted identity; accessible directory matching
 strengthens provenance, not required for joining the chat. Pause for device
 validation before separate removal/revocation work.
