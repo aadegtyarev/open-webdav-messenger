@@ -6,6 +6,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.23.0] — 2026-10-08
+
+### Added
+
+- Multi-community account recovery is available from first launch or Settings;
+  backups include community membership and restore the selected runtime. Messages
+  remain device-local. Restore attempts rollback on write failures but is not
+  crash-atomic across independent stores.
+- Durable outgoing-message retries retain the original message ID and encrypted
+  payload, and sync delivers across joined communities rather than only the open
+  chat.
+- Android 13+ notification permission is requested contextually for notification
+  benefits, and failed messages have an accessible retry control.
+
+### Changed
+
+- Chat history, read/unread state, and sync cursors are isolated by community;
+  community settings and cached host policy are likewise scoped per community.
+- Remote policy write failures are reported without presenting uncommitted values
+  as saved. Runtime selection, navigation, feed scrolling, and read marking now
+  remain scoped and stable across community changes.
+- Fast polling retains periodic WorkManager polling as a fallback when foreground
+  service startup is unavailable or restricted.
+
+### Fixed
+
+- Community changes, credential rotation, and onboarding no longer allow stale
+  runtime work or remote policy requests to overwrite current state. Retrying a
+  message cannot replace its original ID or payload.
+
+### Security
+
+- Recovery validates complete multi-community backups before writing and reports
+  failed rollback rather than treating partial restoration as success.
+
+### Compatibility
+
+- Room migrations v3–v6 preserve existing message and cursor data while adding
+  community-scoped storage. Legacy backups are accepted only for an unambiguous
+  empty single-community target; legacy outbox/history without a known owner is
+  retained unscoped rather than assigned to a community.
+
 ## [0.22.3] — 2026-06-17
 
 ### Fixed
