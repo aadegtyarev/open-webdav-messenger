@@ -72,13 +72,20 @@ This is a conscious security decision — the renderer never interprets any mark
 language.
 
 **Offline readiness (3-offline):** The feed shows whatever messages are in the
-local Room database. No network indicator, no "pull to refresh" — the underlying
-sync cycle handles freshness transparently. One send is reserved per draft
-revision before asynchronous work starts, preventing a double tap from producing
-two messages. A send creates a local echo only after its retryable envelope is
-durably persisted; the persistence callback and draft compare-and-clear run on
-the UI dispatcher with draft edits. The draft clears after persistence succeeds
-and is not erased by a stale completion.
+local Room database. There is no global network indicator or "pull to refresh" —
+the underlying sync cycle handles freshness transparently. Group and DM feeds
+open before remote directory reads; while verified recipients load, the top bar
+exposes accessible indeterminate progress and Send is disabled. An unavailable
+roster keeps the feed/history/navigation usable, disables Send, and shows a
+compact status with a retry route. General may be Ready immediately when its
+existing verified recipient/key state is sufficient. A new send is accepted
+only from a Ready verified-recipient snapshot; it atomically uses that snapshot
+for both the durable retryable envelope recipients and immediate fan-out. One
+send is reserved per draft revision before asynchronous work starts, preventing
+a double tap from producing two messages. A send creates a local echo only after
+its retryable envelope is durably persisted; the persistence callback and draft
+compare-and-clear run on the UI dispatcher with draft edits. The draft clears
+after persistence succeeds and is not erased by a stale completion.
 
 **Send failure and retry (3-send-fail):** A failed or uncertain send remains in
 the feed with truthful local status. A transient error below the draft clears
@@ -110,8 +117,12 @@ runtime rotation preserves the active graph's roster and member names so peer
 recipients and change-index notifications remain intact. Group creation uses
 the selected community's stored connection and runtime graph and opens the
 created group in that community. Group creation and chat opening retain one
-production request token issued at the Create/open tap. A delayed operation may
-mutate selection/runtime or install only while its token is current and its
+production request token issued at the Create/open tap. Group/DM roster
+resolution after opening is asynchronous and applies only while its request
+token, exact runtime graph, community, chat, and selection revision remain
+current. Cancellation propagates; stale enrichment cannot alter the active
+runtime. A delayed operation may mutate selection/runtime or install only while
+its token is current and its
 captured graph and selection revision remain valid; a later chat tap invalidates
 earlier work before mutation and again at install after suspension. When group
 creation intentionally activates a different community, it captures and validates
