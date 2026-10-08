@@ -281,6 +281,45 @@ class EngineWiringTest {
     }
 
     @Test
+    fun stale_delayed_group_open_cannot_prevent_a_later_valid_general_open() {
+        val deps = JvmDeps(stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community"))
+        EngineWiring.initialize(deps)
+        val graph = EngineWiring.current()!!
+        val guard = RuntimeSelectionGuard()
+        val staleRevision = guard.begin()
+        val generalRevision = guard.begin()
+
+        assertFalse(
+            EngineWiring.switchToChatIfCurrent(
+                guard,
+                staleRevision,
+                graph,
+                "group-id",
+                "Болталка",
+                chatKey,
+                listOf(graph.senderIdentifier),
+                emptyMap(),
+                { true },
+            ),
+        )
+        assertTrue(
+            EngineWiring.switchToChatIfCurrent(
+                guard,
+                generalRevision,
+                graph,
+                chatId,
+                "General",
+                chatKey,
+                listOf(graph.senderIdentifier),
+                emptyMap(),
+                { true },
+            ),
+        )
+        assertEquals("General", EngineWiring.current()?.communityName)
+        assertEquals(chatId, EngineWiring.current()?.chatId)
+    }
+
+    @Test
     fun background_runner_polls_each_joined_community_on_its_own_webdav_root() =
         runTest {
             val serverB =

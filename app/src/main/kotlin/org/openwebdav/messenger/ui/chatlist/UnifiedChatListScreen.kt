@@ -26,6 +26,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -41,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.app.AppContainer
@@ -53,10 +56,20 @@ internal fun UnifiedChatListScreen(
     onJoin: () -> Unit,
     onOpenFeed: () -> Unit,
     onSettings: () -> Unit,
+    chatItems: List<UnifiedChat>? = null,
+    openChat: suspend (UnifiedChat) -> Boolean = { chat ->
+        if (chat.kind == "general") {
+            AppContainer.switchToCommunity(chat.communityId)
+        } else {
+            AppContainer.openGroupChat(chat.chatId, chat.name, chat.communityId)
+        }
+    },
+    observeUnreadCount: (String, String) -> Flow<Int> = AppContainer::observeUnreadCount,
 ) {
-    val chats = remember { AppContainer.allChats() }
+    val chats = remember(chatItems) { chatItems ?: AppContainer.allChats() }
     var fabExpanded by remember { mutableStateOf(false) }
     var showCreateChatDialog by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     if (showCreateChatDialog) {
@@ -70,6 +83,7 @@ internal fun UnifiedChatListScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Chats") },
@@ -141,16 +155,15 @@ internal fun UnifiedChatListScreen(
                 for (chat in chats) {
                     ChatRow(
                         chat = chat,
+                        observeUnreadCount = observeUnreadCount,
                         onClick = {
-                            scope.launch(Dispatchers.IO) {
-                                val communityReady = AppContainer.switchToCommunity(chat.communityId)
-                                val chatReady =
-                                    communityReady &&
-                                        (
-                                            chat.kind == "general" ||
-                                                AppContainer.openGroupChat(chat.chatId, chat.name, chat.communityId)
-                                        )
-                                if (chatReady) withContext(Dispatchers.Main) { onOpenFeed() }
+                            scope.launch {
+                                val chatReady = withContext(Dispatchers.IO) { openChat(chat) }
+                                if (chatReady) {
+                                    onOpenFeed()
+                                } else {
+                                    snackbarHostState.showSnackbar("Could not open this chat. It may no longer be available.")
+                                }
                             }
                         },
                     )
@@ -163,6 +176,7 @@ internal fun UnifiedChatListScreen(
 @Composable
 private fun ChatRow(
     chat: UnifiedChat,
+    observeUnreadCount: (String, String) -> Flow<Int>,
     onClick: () -> Unit,
 ) {
     val icon =
@@ -195,7 +209,7 @@ private fun ChatRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        UnreadBadge(chat.communityId, chat.chatId)
+        UnreadBadge(chat.communityId, chat.chatId, observeUnreadCount)
     }
 }
 
@@ -207,8 +221,9 @@ private fun ChatRow(
 internal fun UnreadBadge(
     communityId: String,
     chatId: String,
+    observeUnreadCount: (String, String) -> Flow<Int> = AppContainer::observeUnreadCount,
 ) {
-    val count by AppContainer.observeUnreadCount(communityId, chatId).collectAsStateWithLifecycle(0)
+    val count by observeUnreadCount(communityId, chatId).collectAsStateWithLifecycle(0)
     if (count > 0) {
         Badge { Text(count.toString()) }
     }
