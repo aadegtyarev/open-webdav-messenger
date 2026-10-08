@@ -99,7 +99,9 @@ internal object AppContainer {
      */
     fun warmStart() {
         if (warmStarted.compareAndSet(false, true)) {
-            currentCommunityId = activeCommunityStore.load(communityRegistry.all().firstOrNull()?.id ?: "default")
+            val registeredCommunities = communityRegistry.all()
+            currentCommunityId = activeCommunityStore.load(registeredCommunities.firstOrNull()?.id ?: "default")
+            UserSettings.migrateLegacyCommunitySettings(currentCommunityId, registeredCommunities.size == 1)
             UserSettings.selectCommunity(currentCommunityId)
             EngineWiring.initialize(
                 AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory),

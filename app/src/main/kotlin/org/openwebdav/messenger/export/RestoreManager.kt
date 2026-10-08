@@ -145,9 +145,12 @@ class RestoreManager(
             accountBackup?.let { backup ->
                 if (backup.communities.map { it.id }.distinct().size != backup.communities.size) return null
                 if (backup.communities.any { community ->
-                        !isValidConfig(community.config) || community.anchorChatId !in community.chats.map { it.id } ||
-                            community.chats.any { it.id.isBlank() || it.name.isBlank() } ||
-                            community.chats.map { it.id }.distinct().size != community.chats.size
+                        !isSafeIdentifier(community.id) || !isValidConfig(community.config) ||
+                            !isSafeIdentifier(community.anchorChatId) || community.anchorChatId !in community.chats.map { it.id } ||
+                            community.chats.any {
+                                !isSafeIdentifier(it.id) || it.name.isBlank() || it.kind !in setOf("general", "group", "dm") ||
+                                    it.id !in chatKeys
+                            } || community.chats.map { it.id }.distinct().size != community.chats.size
                     }
                 ) {
                     return null
@@ -163,6 +166,8 @@ class RestoreManager(
             null
         }
     }
+
+    private fun isSafeIdentifier(value: String): Boolean = value.matches(Regex("[A-Za-z0-9_-]{1,128}"))
 
     private fun isValidConfig(config: org.openwebdav.messenger.transport.ConnectionConfig): Boolean {
         val uri = java.net.URI(config.baseUrl)

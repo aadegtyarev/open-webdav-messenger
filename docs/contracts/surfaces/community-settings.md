@@ -10,7 +10,7 @@ Community hosts change retention and minimum polling interval. Members read the 
 
 ## Observable behavior
 
-- Host status, cached retention, and community poll floor are keyed by community ID. Switching communities selects that community's role and metadata; personal display name, appearance, and selected member interval remain user-global.
+- Host status, cached retention, and community poll floor are keyed by community ID. Switching communities selects that community's role and metadata; personal display name, appearance, and selected member interval remain user-global. A legacy global community-setting value is migrated only when exactly one registered community makes its owner unambiguous; otherwise role is not guessed across communities.
 - Remote policy changes are serialized per community. Only a successful WebDAV collection/write result updates the local committed cache or the selected UI value. Rejected or failed writes are surfaced; a superseded queued write does not become the final policy.
 - Personal appearance preferences are independent of community policy. Polling remains subject to WorkManager/Android scheduling floors and platform restrictions.
 

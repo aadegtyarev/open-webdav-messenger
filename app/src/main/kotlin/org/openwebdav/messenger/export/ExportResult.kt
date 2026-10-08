@@ -7,6 +7,9 @@ sealed interface ExportResult {
 
     /** The password was empty or too short (< 8 chars). */
     data object WeakPassword : ExportResult
+
+    /** A required identity, registered chat key, or account snapshot could not be read safely. */
+    data object IncompleteAccount : ExportResult
 }
 
 /** The typed result of a restore operation. */

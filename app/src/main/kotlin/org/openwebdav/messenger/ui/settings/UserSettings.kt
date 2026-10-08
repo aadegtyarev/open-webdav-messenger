@@ -14,6 +14,7 @@ internal object UserSettings {
     private const val KEY_IS_HOST = "is_host"
     private const val KEY_THEME_MODE = "theme_mode"
     private const val KEY_COMMUNITY_RETENTION_WINDOW_DAYS = "community_retention_window_days"
+    private const val KEY_COMMUNITY_SETTINGS_MIGRATED = "community_settings_migrated"
 
     private lateinit var prefs: SharedPreferences
     private var activeCommunityId: String = "default"
@@ -40,6 +41,27 @@ internal object UserSettings {
 
     fun selectCommunity(communityId: String) {
         activeCommunityId = communityId
+    }
+
+    fun migrateLegacyCommunitySettings(
+        communityId: String,
+        soleRegisteredCommunity: Boolean,
+    ) {
+        if (prefs.getBoolean(KEY_COMMUNITY_SETTINGS_MIGRATED, false)) return
+        val editor = prefs.edit()
+        if (soleRegisteredCommunity) {
+            val hostKey = scopedKey(KEY_IS_HOST, communityId)
+            val pollKey = scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId)
+            val retentionKey = scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId)
+            if (!prefs.contains(hostKey) && prefs.contains(KEY_IS_HOST)) editor.putBoolean(hostKey, prefs.getBoolean(KEY_IS_HOST, false))
+            if (!prefs.contains(pollKey) && prefs.contains(KEY_COMMUNITY_MIN_POLL_SECONDS)) {
+                editor.putInt(pollKey, prefs.getInt(KEY_COMMUNITY_MIN_POLL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS))
+            }
+            if (!prefs.contains(retentionKey) && prefs.contains(KEY_COMMUNITY_RETENTION_WINDOW_DAYS)) {
+                editor.putInt(retentionKey, prefs.getInt(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, DEFAULT_RETENTION_WINDOW_DAYS))
+            }
+        }
+        editor.putBoolean(KEY_COMMUNITY_SETTINGS_MIGRATED, true).apply()
     }
 
     fun isHostFor(communityId: String): Boolean = prefs.getBoolean(scopedKey(KEY_IS_HOST, communityId), false)
@@ -75,7 +97,6 @@ internal object UserSettings {
             .putInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId), floor)
             .putInt(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId), retentionDays.coerceIn(7, 90))
             .apply()
-        if (communityId == activeCommunityId && pollIntervalSeconds < floor) pollIntervalSeconds = floor
     }
 
     private fun scopedKey(
@@ -121,10 +142,6 @@ internal object UserSettings {
         set(value) {
             val clamped = value.coerceIn(1, 3600)
             prefs.edit().putInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, activeCommunityId), clamped).apply()
-            // Auto-adjust the member's personal interval up to the new floor.
-            if (pollIntervalSeconds < clamped) {
-                pollIntervalSeconds = clamped
-            }
         }
 
     /**

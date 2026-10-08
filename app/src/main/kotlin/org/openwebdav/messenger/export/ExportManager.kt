@@ -43,7 +43,13 @@ class ExportManager(
         }
 
         // Collect all secrets on the calling thread.
-        val payload = collect()
+        val payload =
+            try {
+                collect()
+            } catch (_: Exception) {
+                passphrase.fill(' ')
+                return ExportResult.IncompleteAccount
+            }
 
         // Encrypt on the IO dispatcher (Argon2id is intentionally slow/memory-hard).
         return withContext(ioDispatcher) {
@@ -103,14 +109,16 @@ class ExportManager(
             chatKeyStore.load(chatId)?.let { chatKeys[chatId] = it }
         }
         val identity =
-            try {
-                when (val result = identityStore.load()) {
-                    is IdentityLoadResult.Loaded -> result.identity
-                    else -> null
-                }
-            } catch (_: Exception) {
-                null
+            when (val result = identityStore.load()) {
+                is IdentityLoadResult.Loaded -> result.identity
+                else -> error("Identity is unavailable")
             }
+        val missingRegisteredKeys =
+            accountBackup?.communities
+                ?.flatMap { community -> community.chats.map { it.id } }
+                ?.any { chatId -> chatId !in chatKeys }
+                ?: false
+        check(!missingRegisteredKeys) { "A registered chat key is unavailable" }
         return ExportPayload.build(
             connectionConfig = connectionConfig,
             communityKey = communityKey,

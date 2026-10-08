@@ -193,6 +193,9 @@ class ExportRestoreActivity : Activity() {
             ExportResult.WeakPassword -> {
                 showExportStatus(getString(R.string.export_weak_password), isError = true)
             }
+            ExportResult.IncompleteAccount -> {
+                showExportStatus("Couldn't read all account keys or community data. No backup was created.", isError = true)
+            }
         }
     }
 

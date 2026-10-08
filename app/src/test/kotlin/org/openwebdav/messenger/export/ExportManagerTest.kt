@@ -203,6 +203,15 @@ class ExportManagerTest {
         }
 
     @Test
+    fun export_rejects_account_without_identity() =
+        runTest {
+            val passphrase = "strong-password".toCharArray()
+            val result = newExportManager().export(passphrase)
+            assertEquals(ExportResult.IncompleteAccount, result)
+            assertTrue(passphrase.all { it == ' ' })
+        }
+
+    @Test
     fun empty_stores_roundtrip() =
         runTest {
             val idStore = ExportTestSupport.inMemoryIdentityStore()

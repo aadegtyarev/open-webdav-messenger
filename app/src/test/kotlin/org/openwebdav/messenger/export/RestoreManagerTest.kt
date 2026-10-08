@@ -154,13 +154,17 @@ class RestoreManagerTest {
                     ),
                 )
             val sourceAccount = ExportTestSupport.InMemoryAccountBackupStore(newBackup)
+            val sourceChatKeys =
+                ExportTestSupport.inMemoryChatKeyStore().also {
+                    it.store("anchor-new", CryptoTestSupport.fixedKey(seed = 32))
+                }
             val sourceIdentity = ExportTestSupport.inMemoryIdentityStore().also { it.store(ExportTestSupport.freshIdentity()) }
             val blob =
                 ExportManager(
                     native,
                     ExportTestSupport.inMemoryConnectionConfigStore(),
                     ExportTestSupport.inMemoryCommunityKeyStore(),
-                    ExportTestSupport.inMemoryChatKeyStore(),
+                    sourceChatKeys,
                     sourceIdentity,
                     accountBackupStore = sourceAccount,
                 ).export("test-password-123".toCharArray()) as ExportResult.Ready
