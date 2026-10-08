@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -70,6 +71,16 @@ class AppRootTest {
         EngineWiring.initialize(JvmDeps(stored = null))
         server.shutdown()
         db.close()
+    }
+
+    @Test
+    fun successful_restore_activity_result_returns_to_chats_and_invalidates_settings() {
+        val update = accountRestoreNavigationResult(Screen.Settings, 4, android.app.Activity.RESULT_OK)
+        assertEquals(Screen.CommunityList, update.screen)
+        assertEquals(5, update.revision)
+        val cancelled = accountRestoreNavigationResult(Screen.Settings, 4, android.app.Activity.RESULT_CANCELED)
+        assertEquals(Screen.Settings, cancelled.screen)
+        assertEquals(4, cancelled.revision)
     }
 
     /** With no persisted config, once ready AppRoot routes to the Start fork (create vs join). */

@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.message.TextMessage
 import org.openwebdav.messenger.protocol.MessageId
@@ -37,12 +38,22 @@ internal class MessageSendService(
     private val graph: RuntimeGraph,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val isCurrent: () -> Boolean = { true },
 ) : ChatMessageSender {
     /** Send [text] in the joined chat and invoke [onRecoverablyPersisted] once its local echo is durable. */
     override suspend fun send(
         text: String,
         onRecoverablyPersisted: suspend () -> Unit,
+    ): SendResult =
+        AccountMutationBarrier.process.withExclusive {
+            sendExclusive(text, onRecoverablyPersisted)
+        }
+
+    private suspend fun sendExclusive(
+        text: String,
+        onRecoverablyPersisted: suspend () -> Unit,
     ): SendResult {
+        check(isCurrent()) { "Account changed before send" }
         var persistedMessageId: String? = null
         try {
             val prepared =
@@ -123,8 +134,11 @@ internal class MessageSendService(
     )
 
     override suspend fun retry(messageId: String): Boolean =
-        withContext(ioDispatcher) {
-            graph.engine.retryOutgoing(messageId, graph.communityId, graph.senderIdentifier)
+        AccountMutationBarrier.process.withExclusive {
+            if (!isCurrent()) return@withExclusive false
+            withContext(ioDispatcher) {
+                graph.engine.retryOutgoing(messageId, graph.communityId, graph.senderIdentifier)
+            }
         }
 
     /**

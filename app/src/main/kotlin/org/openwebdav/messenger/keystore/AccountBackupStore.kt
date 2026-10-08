@@ -16,6 +16,10 @@ internal class AccountBackupStore(private val context: Context) : ExportableAcco
     private val communityKeyStore = CommunityKeyStore(context)
     private val snapshotWriter = AccountBackupSnapshotWriter(configStore, communityRegistry, chatRegistry, activeStore)
 
+    override fun hasMembershipState(): Boolean = hasRegistryState() || configStore.hasAny()
+
+    override fun hasRegistryState(): Boolean = communityRegistry.all().isNotEmpty() || chatRegistry.hasAny()
+
     override fun snapshot(): AccountBackup? {
         val entries = communityRegistry.all()
         val effectiveEntries =
@@ -60,7 +64,13 @@ internal class AccountBackupStore(private val context: Context) : ExportableAcco
             snapshotWriter.write(backup)
         } catch (failure: Exception) {
             try {
-                if (previous != null) snapshotWriter.write(previous) else snapshotWriter.clear(backup)
+                if (previous != null) {
+                    snapshotWriter.write(
+                        previous,
+                    )
+                } else {
+                    snapshotWriter.clear(backup.communities.mapTo(mutableSetOf()) { it.id })
+                }
             } catch (rollbackFailure: Exception) {
                 failure.addSuppressed(rollbackFailure)
             }
@@ -68,8 +78,7 @@ internal class AccountBackupStore(private val context: Context) : ExportableAcco
         }
     }
 
-    override fun clear() {
-        val ids = communityRegistry.all().map { it.id }
-        snapshotWriter.clear(AccountBackup(ids.firstOrNull() ?: ConnectionConfigStore.DEFAULT_COMMUNITY_ID, emptyList()))
-    }
+    override fun clear() = clearCommunityIds(emptySet())
+
+    override fun clearCommunityIds(ids: Set<String>) = snapshotWriter.clear(ids)
 }

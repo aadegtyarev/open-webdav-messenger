@@ -20,7 +20,8 @@ class RestoreManagerTest {
         ck: ExportableCommunityKeyStore = ExportTestSupport.inMemoryCommunityKeyStore(),
         ch: ExportableChatKeyStore = ExportTestSupport.inMemoryChatKeyStore(),
         id: ExportableIdentityStore = ExportTestSupport.inMemoryIdentityStore(),
-    ): RestoreManager = RestoreManager(native, cc, ck, ch, id)
+        account: ExportableAccountBackupStore? = null,
+    ): RestoreManager = RestoreManager(native, cc, ck, ch, id, accountBackupStore = account)
 
     private fun newExportManager(
         cc: ExportableConnectionConfigStore = ExportTestSupport.inMemoryConnectionConfigStore(),
@@ -62,9 +63,10 @@ class RestoreManagerTest {
             val ckRestore = ExportTestSupport.inMemoryCommunityKeyStore()
             val chRestore = ExportTestSupport.inMemoryChatKeyStore()
             val idRestore = ExportTestSupport.inMemoryIdentityStore()
+            val accountRestore = ExportTestSupport.InMemoryAccountBackupStore()
 
             val result =
-                newRestoreManager(ccRestore, ckRestore, chRestore, idRestore)
+                newRestoreManager(ccRestore, ckRestore, chRestore, idRestore, accountRestore)
                     .restore(blob, "test-password-123".toCharArray())
 
             assertEquals(RestoreResult.Restored, result)
@@ -72,6 +74,7 @@ class RestoreManagerTest {
             assertTrue("community key should be restored", ckRestore.load() != null)
             assertTrue("chat key should be restored", chRestore.load("chat-a") != null)
             assertTrue("identity should be restored", idRestore.load() is IdentityLoadResult.Loaded)
+            assertEquals("default", accountRestore.snapshot()?.activeCommunityId)
         }
 
     @Test
@@ -211,6 +214,102 @@ class RestoreManagerTest {
             assertEquals(setOf("community-old"), communityKeys.listCommunityIds())
         }
 
+    @Test
+    fun persistent_registry_rollback_failure_still_restores_other_present_stores() =
+        runTest {
+            val backup =
+                AccountBackup(
+                    "community-new",
+                    listOf(
+                        CommunityBackup(
+                            "community-new",
+                            "New",
+                            "new-chat",
+                            ExportTestSupport.sampleConfig(),
+                            listOf(ChatBackup("new-chat", "General", "general")),
+                        ),
+                    ),
+                )
+            val sourceKeys =
+                ExportTestSupport.inMemoryChatKeyStore().also {
+                    it.store("new-chat", CryptoTestSupport.fixedKey(seed = 61))
+                }
+            val sourceIdentity = ExportTestSupport.inMemoryIdentityStore().also { it.store(ExportTestSupport.freshIdentity()) }
+            val blob =
+                ExportManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    ExportTestSupport.inMemoryCommunityKeyStore(),
+                    sourceKeys,
+                    sourceIdentity,
+                    accountBackupStore = ExportTestSupport.InMemoryAccountBackupStore(backup),
+                ).export("test-password-123".toCharArray()) as ExportResult.Ready
+            val oldBackup =
+                AccountBackup(
+                    "community-old",
+                    listOf(
+                        CommunityBackup(
+                            "community-old",
+                            "Old",
+                            "old-chat",
+                            ExportTestSupport.sampleConfig(),
+                            listOf(ChatBackup("old-chat", "General", "general")),
+                        ),
+                    ),
+                )
+            val registry = ExportTestSupport.InMemoryAccountBackupStore(oldBackup)
+            val persistentRegistryFailure =
+                object : ExportableAccountBackupStore by registry {
+                    override fun replace(backup: AccountBackup) = error("persistent registry failure")
+                }
+            val oldConfig = ExportTestSupport.sampleConfig().copy(username = "existing-user")
+            val configBacking = ExportTestSupport.inMemoryConnectionConfigStore().also { it.store(oldConfig) }
+            var configClears = 0
+            val configStore =
+                object : ExportableConnectionConfigStore by configBacking {
+                    override fun clear() {
+                        configClears++
+                        error("present config must not be cleared")
+                    }
+                }
+            val oldCommunityKey = CryptoTestSupport.fixedKey(seed = 62)
+            val communityKeys = ExportTestSupport.inMemoryCommunityKeyStore().also { it.store("community-old", oldCommunityKey) }
+            val chats = ExportTestSupport.inMemoryChatKeyStore().also { it.store("old-chat", CryptoTestSupport.fixedKey(seed = 63)) }
+            val oldIdentity = ExportTestSupport.freshIdentity()
+            val backingIdentity = ExportTestSupport.inMemoryIdentityStore().also { it.store(oldIdentity) }
+            var identityStores = 0
+            val identity =
+                object : ExportableIdentityStore by backingIdentity {
+                    override fun store(identity: org.openwebdav.messenger.identity.Identity) {
+                        identityStores++
+                        backingIdentity.store(identity)
+                    }
+
+                    override fun clear() = error("present identity must not be cleared")
+                }
+
+            val result =
+                RestoreManager(
+                    native,
+                    configStore,
+                    communityKeys,
+                    chats,
+                    identity,
+                    accountBackupStore = persistentRegistryFailure,
+                ).restore(blob.blob, "test-password-123".toCharArray())
+
+            assertEquals(RestoreResult.StoreFailure(rollbackSucceeded = false), result)
+            assertEquals(oldBackup, registry.snapshot())
+            assertEquals(oldConfig, configBacking.load())
+            assertEquals(0, configClears)
+            assertTrue(CryptoTestSupport.fixedKey(seed = 62).export().contentEquals(communityKeys.load("community-old")?.export()))
+            assertEquals(listOf("old-chat"), chats.listChatIds())
+            assertTrue(
+                oldIdentity.copySignPublic().contentEquals((backingIdentity.load() as IdentityLoadResult.Loaded).identity.copySignPublic()),
+            )
+            assertEquals("restore write plus independent rollback store", 2, identityStores)
+        }
+
     // -- restore does not partially populate on failure -----------------------
 
     @Test
@@ -229,7 +328,7 @@ class RestoreManagerTest {
         }
 
     @Test
-    fun store_failure_rolls_back_all_previous_values() =
+    fun legacy_restore_rejects_nonempty_target_before_writes() =
         runTest {
             val blob = exportBlob()
             val oldConfig = ExportTestSupport.sampleConfig().copy(username = "old-user")
@@ -256,15 +355,28 @@ class RestoreManagerTest {
                     }
                 }
 
+            val account = ExportTestSupport.InMemoryAccountBackupStore()
             val result =
-                newRestoreManager(cc, ck, chats, failingIdentity)
+                newRestoreManager(cc, ck, chats, failingIdentity, account)
                     .restore(blob, "test-password-123".toCharArray())
 
-            assertEquals(RestoreResult.StoreFailure(rollbackSucceeded = true), result)
+            assertEquals(RestoreResult.IncompatibleTarget, result)
             assertEquals(oldConfig, cc.load())
             assertTrue(CryptoTestSupport.fixedKey(seed = 4).export().contentEquals(ck.load()?.export()))
             assertEquals(listOf("old-chat"), chats.listChatIds())
+            assertTrue(failNextWrite)
             assertTrue(previousIdentityStore.load() is IdentityLoadResult.Loaded)
+        }
+
+    @Test
+    fun oversized_blob_rejected_before_base64_decode_or_store_access() =
+        runTest {
+            val result =
+                newRestoreManager().restore(
+                    "A".repeat(ExportManager.MAX_BLOB_BASE64_CHARS + 1),
+                    "strong-password".toCharArray(),
+                )
+            assertEquals(RestoreResult.BadFormat, result)
         }
 
     // -- empty base64 blob ---------------------------------------------------

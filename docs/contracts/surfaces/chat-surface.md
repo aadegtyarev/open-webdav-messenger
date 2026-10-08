@@ -22,8 +22,10 @@ reachable until a community runtime is configured. Restore is a separate path
 and is not blocked by create/join. After create, join, or a successful v2
 restore, the home screen is `UnifiedChatListScreen` — a flat list of chats across
 joined communities. Cold start restores the persisted active community without
-forcing a feed open. Legacy backup content that lacks registry data may not
-reconstruct a usable runtime.
+forcing a feed open. A successful restore launched from Settings returns to Chats
+and invalidates remembered account-scoped role/policy values, including when the
+active community ID is unchanged. Legacy v1 restore is restricted to the empty-
+target single-chat mapping defined by the account-recovery surface.
 
 **Destination restoration and Back:** The current destination is saveable across
 activity recreation. System Back returns from the feed to Chats and from Invite

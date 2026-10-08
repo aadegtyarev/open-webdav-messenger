@@ -40,6 +40,10 @@ internal class CommunityRegistry(context: Context) {
     }
 
     private fun write(list: List<Entry>) {
+        list.forEach {
+            AccountIdentifier.requireValid(it.id)
+            AccountIdentifier.requireValid(it.chatId)
+        }
         val arr = JSONArray()
         for (e in list) {
             arr.put(

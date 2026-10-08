@@ -46,6 +46,7 @@ internal data class ExportPayload(
          * same password — the nonce is random so the ciphertext still differs).
          */
         fun toJson(payload: ExportPayload): String {
+            if (payload.chatKeys.size > MAX_CHAT_KEYS) throw PayloadTooLargeException()
             val sb = StringBuilder(4096)
             sb.append('{')
             sb.append("\"v\":${if (payload.accountBackupBase64 == null) 1 else 2}")
@@ -94,10 +95,13 @@ internal data class ExportPayload(
                 appendJsonString(sb, it)
             }
             sb.append('}')
-            return sb.toString()
+            val json = sb.toString()
+            if (json.toByteArray(Charsets.UTF_8).size > MAX_PLAINTEXT_BYTES) throw PayloadTooLargeException()
+            return json
         }
 
         fun fromJson(json: String): ExportPayload? {
+            if (json.length > MAX_PLAINTEXT_BYTES || json.toByteArray(Charsets.UTF_8).size > MAX_PLAINTEXT_BYTES) return null
             // Minimal hand-rolled JSON parser for the fixed schema — avoids a dependency.
             // The parser is intentionally strict: unknown fields are ignored, missing fields
             // return null (rejection upstream).
@@ -137,6 +141,9 @@ internal data class ExportPayload(
                 null
             }
         }
+
+        internal const val MAX_PLAINTEXT_BYTES = 4 * 1024 * 1024
+        internal const val MAX_CHAT_KEYS = 100_000
 
         // -- internal helpers ---------------------------------------------------
 
@@ -285,6 +292,7 @@ private class JsonParser(private val s: String) {
             pos++
             val value = parseNullableString()
             if (value != null) target[key] = value
+            require(target.size <= ExportPayload.MAX_CHAT_KEYS) { "too many chat keys" }
             skipWs()
             if (s[pos] == '}') break
             require(s[pos] == ',') { "expected ',' or '}' at $pos" }

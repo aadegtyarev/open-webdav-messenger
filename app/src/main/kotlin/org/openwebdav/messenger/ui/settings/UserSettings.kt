@@ -73,6 +73,13 @@ internal object UserSettings {
         prefs.edit().putBoolean(scopedKey(KEY_IS_HOST, communityId), value).apply()
     }
 
+    fun setHostForStrict(
+        communityId: String,
+        value: Boolean,
+    ) {
+        check(prefs.edit().putBoolean(scopedKey(KEY_IS_HOST, communityId), value).commit()) { "Failed to persist community role" }
+    }
+
     fun pollFloorFor(communityId: String): Int =
         prefs.getInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId), DEFAULT_POLL_INTERVAL_SECONDS).coerceIn(1, 3600)
 
@@ -87,6 +94,16 @@ internal object UserSettings {
             .apply()
     }
 
+    fun clearCommunitySettingsStrict(communityId: String) {
+        val cleared =
+            prefs.edit()
+                .remove(scopedKey(KEY_IS_HOST, communityId))
+                .remove(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId))
+                .remove(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId))
+                .commit()
+        check(cleared) { "Failed to clear community settings" }
+    }
+
     fun setCommunityMetadata(
         communityId: String,
         pollFloor: Int,
@@ -97,6 +114,19 @@ internal object UserSettings {
             .putInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId), floor)
             .putInt(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId), retentionDays.coerceIn(7, 90))
             .apply()
+    }
+
+    fun setCommunityMetadataStrict(
+        communityId: String,
+        pollFloor: Int,
+        retentionDays: Int,
+    ) {
+        val saved =
+            prefs.edit()
+                .putInt(scopedKey(KEY_COMMUNITY_MIN_POLL_SECONDS, communityId), pollFloor.coerceIn(1, 3600))
+                .putInt(scopedKey(KEY_COMMUNITY_RETENTION_WINDOW_DAYS, communityId), retentionDays.coerceIn(7, 90))
+                .commit()
+        check(saved) { "Failed to persist community policy" }
     }
 
     private fun scopedKey(

@@ -10,6 +10,9 @@ sealed interface ExportResult {
 
     /** A required identity, registered chat key, or account snapshot could not be read safely. */
     data object IncompleteAccount : ExportResult
+
+    /** The serialized backup exceeds the symmetric import/export size limit. */
+    data object TooLarge : ExportResult
 }
 
 /** The typed result of a restore operation. */
@@ -25,6 +28,9 @@ sealed interface RestoreResult {
 
     /** The inner JSON payload is structurally invalid (wrong version, corrupt format). */
     data object CorruptPayload : RestoreResult
+
+    /** A legacy payload cannot safely replace the non-empty current account. */
+    data object IncompatibleTarget : RestoreResult
 
     /** User cancelled or password empty. */
     data object WeakPassword : RestoreResult

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.chatdirectory.ChatDirectoryFactory
 import org.openwebdav.messenger.chatdirectory.ChatKind
@@ -69,7 +70,7 @@ internal object AppContainer {
     private val directoryFactory by lazy { DirectoryFactory() }
     private val chatDirectoryFactory by lazy { ChatDirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
-    private val metadataWriteCoordinator = LatestCommunityWriteCoordinator()
+    private val communityPolicyCoordinator = CommunityPolicyCoordinator()
     private val runtimeSelectionGuard = RuntimeSelectionGuard()
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -121,13 +122,19 @@ internal object AppContainer {
     }
 
     /** Rebuild the installed graph after a validated account restore has replaced device stores. */
-    fun rebuildAfterRestore() {
+    fun rebuildAfterRestore() = rebuildStoredRuntime(requireGraph = true)
+
+    /** Reinstall the previous runtime after a failed restore rollback; an empty prior account is valid. */
+    fun restorePreviousRuntime() = rebuildStoredRuntime(requireGraph = communityRegistry.all().isNotEmpty())
+
+    private fun rebuildStoredRuntime(requireGraph: Boolean) {
         val fallback = communityRegistry.all().firstOrNull()?.id ?: "default"
         currentCommunityId = activeCommunityStore.load(fallback)
         UserSettings.selectCommunity(currentCommunityId)
         EngineWiring.initialize(
             AndroidDeps(requireContext(), crypto, identityFactory, configStore, chatRegistry, directoryFactory),
         )
+        if (requireGraph) check(runtimeGraph() != null) { "Backup contains no usable community" }
         refreshMemberNames()
     }
 
@@ -144,25 +151,30 @@ internal object AppContainer {
         name: String,
         communityId: String = currentCommunityId,
         access: ChatAccess = ChatAccess.PUBLIC,
-    ): String? =
-        createGroupInSelectedCommunity(
-            communityId = communityId,
-            activeCommunityId = currentCommunityId,
-            activateCommunity = ::switchToCommunity,
-            resolveContext = { selectedId ->
-                selectedCommunityGroupContext(
-                    communityId = selectedId,
-                    activeCommunityId = currentCommunityId,
-                    stored = configStore.loadStored(selectedId),
-                    graph = runtimeGraph(),
-                    selectionRevision = runtimeSelectionGuard.current(),
-                )
-            },
-            create = { context -> createGroupChatForContext(name, access, context) },
-            open = { context, chatId ->
-                openGroupChat(chatId, name, context.communityId, context.selectionRevision)
-            },
-        )
+    ): String? {
+        val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return null
+        return AccountMutationBarrier.process.withExclusive {
+            if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) return@withExclusive null
+            createGroupInSelectedCommunity(
+                communityId = communityId,
+                activeCommunityId = currentCommunityId,
+                activateCommunity = ::switchToCommunity,
+                resolveContext = { selectedId ->
+                    selectedCommunityGroupContext(
+                        communityId = selectedId,
+                        activeCommunityId = currentCommunityId,
+                        stored = configStore.loadStored(selectedId),
+                        graph = runtimeGraph(),
+                        selectionRevision = runtimeSelectionGuard.current(),
+                    )
+                },
+                create = { context -> createGroupChatForContext(name, access, context) },
+                open = { context, chatId ->
+                    openGroupChatExclusive(chatId, name, context.communityId, context.selectionRevision)
+                },
+            )
+        }
+    }
 
     private suspend fun createGroupChatForContext(
         name: String,
@@ -235,8 +247,21 @@ internal object AppContainer {
         communityId: String = currentCommunityId,
         expectedSelectionRevision: Long? = null,
     ): Boolean {
+        val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return false
+        return AccountMutationBarrier.process.withExclusive {
+            if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) return@withExclusive false
+            openGroupChatExclusive(chatId, chatName, communityId, expectedSelectionRevision)
+        }
+    }
+
+    private suspend fun openGroupChatExclusive(
+        chatId: String,
+        chatName: String,
+        communityId: String,
+        expectedSelectionRevision: Long?,
+    ): Boolean {
         if (expectedSelectionRevision != null && !runtimeSelectionGuard.isCurrent(expectedSelectionRevision)) return false
-        if (currentCommunityId != communityId && !switchToCommunity(communityId)) return false
+        if (currentCommunityId != communityId && !switchToCommunityExclusive(communityId)) return false
         val selectionRevision = runtimeSelectionGuard.begin()
         val chatKey = crypto.chatKeyStore(requireContext()).load(chatId) ?: return false
         val graph = runtimeGraph()?.takeIf { it.communityId == communityId } ?: return false
@@ -377,7 +402,15 @@ internal object AppContainer {
     }
 
     /** Switch the active community to [communityId] — rebuilds the engine for that community. */
-    fun switchToCommunity(communityId: String): Boolean {
+    suspend fun switchToCommunity(communityId: String): Boolean {
+        val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey
+        return AccountMutationBarrier.process.withExclusive {
+            if (expectedRuntimeKey != null && runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) return@withExclusive false
+            switchToCommunityExclusive(communityId)
+        }
+    }
+
+    private fun switchToCommunityExclusive(communityId: String): Boolean {
         val stored = configStore.loadStored(communityId) ?: return false
         val chatKeyStore = crypto.chatKeyStore(requireContext())
         val chatKey = chatKeyStore.load(stored.chatId) ?: return false
@@ -403,7 +436,14 @@ internal object AppContainer {
      * two box public keys, provisions the per-pair DH key, registers the chat, and switches to it.
      * Returns the DM chat-id on success, or `null` if the graph is absent / provision fails.
      */
-    fun startDm(peer: DirectoryEntry): String? {
+    suspend fun startDm(peer: DirectoryEntry): String? {
+        val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return null
+        return AccountMutationBarrier.process.withExclusive {
+            if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) null else startDmExclusive(peer)
+        }
+    }
+
+    private fun startDmExclusive(peer: DirectoryEntry): String? {
         val graph = runtimeGraph() ?: return null
         val identity = graph.identity
         val myBoxPub = identity.copyBoxPublic()
@@ -566,43 +606,52 @@ internal object AppContainer {
      * disk, signed by the host identity. Writes are serialized per community; a superseded request
      * cannot become the final remote or cached policy.
      */
-    suspend fun updateCommunityMetadata(
-        retentionDays: Int,
-        pollSeconds: Int,
+    suspend fun updateCommunityRetention(days: Int): CommunityMetadataUpdate = updateCommunityPolicy(days, null)
+
+    suspend fun updateCommunityPollFloor(seconds: Int): CommunityMetadataUpdate = updateCommunityPolicy(null, seconds)
+
+    private suspend fun updateCommunityPolicy(
+        retentionDays: Int?,
+        pollSeconds: Int?,
     ): CommunityMetadataUpdate {
         val graph = runtimeGraph() ?: return CommunityMetadataUpdate.Failed("Community runtime is unavailable")
-        val communityId = graph.communityId
-        val revision = metadataWriteCoordinator.submit(communityId)
-        var outcome: CommunityMetadataUpdate = CommunityMetadataUpdate.Superseded
-        val ran =
-            try {
-                metadataWriteCoordinator.runIfLatest(communityId, revision) {
-                    outcome =
-                        try {
-                            val result =
-                                CommunityMetadata.write(
-                                    TransportFactory.create(graph.config),
-                                    CommunityMetadata(pollSeconds, retentionDays),
-                                    graph.identity,
-                                    identityFactory.identityCrypto(),
-                                )
-                            if (result !is WebDavResult.Success) {
-                                CommunityMetadataUpdate.Rejected(result)
-                            } else if (metadataWriteCoordinator.isLatest(communityId, revision)) {
-                                UserSettings.setCommunityMetadata(communityId, pollSeconds, retentionDays)
-                                CommunityMetadataUpdate.Saved
-                            } else {
-                                CommunityMetadataUpdate.Superseded
-                            }
-                        } catch (failure: Exception) {
-                            CommunityMetadataUpdate.Failed(failure.message ?: "Unknown write failure")
-                        }
-                }
-            } catch (failure: Exception) {
-                outcome = CommunityMetadataUpdate.Failed(failure.message ?: "Unknown write failure")
-                true
+        val id = graph.communityId
+        val committed = CommunityPolicy(UserSettings.retentionDaysFor(id), UserSettings.pollFloorFor(id))
+        val request =
+            if (retentionDays != null) {
+                communityPolicyCoordinator.retention(id, committed, retentionDays)
+            } else {
+                communityPolicyCoordinator.pollFloor(id, committed, checkNotNull(pollSeconds))
             }
-        return if (ran) outcome else CommunityMetadataUpdate.Superseded
+        return AccountMutationBarrier.process.withExclusive {
+            if (!communityPolicyCoordinator.isLatest(request)) return@withExclusive CommunityMetadataUpdate.Superseded
+            if (runtimeGraph() !== graph) {
+                communityPolicyCoordinator.complete(request)
+                return@withExclusive CommunityMetadataUpdate.Superseded
+            }
+            val result =
+                try {
+                    CommunityMetadata.write(
+                        TransportFactory.create(graph.config),
+                        CommunityMetadata(request.policy.pollFloorSeconds, request.policy.retentionDays),
+                        graph.identity,
+                        identityFactory.identityCrypto(),
+                    )
+                } catch (failure: Exception) {
+                    communityPolicyCoordinator.complete(request)
+                    return@withExclusive CommunityMetadataUpdate.Failed(failure.message ?: "Unknown write failure")
+                }
+            if (result !is WebDavResult.Success) {
+                communityPolicyCoordinator.complete(request)
+                CommunityMetadataUpdate.Rejected(result)
+            } else if (communityPolicyCoordinator.isLatest(request)) {
+                UserSettings.setCommunityMetadata(id, request.policy.pollFloorSeconds, request.policy.retentionDays)
+                communityPolicyCoordinator.complete(request)
+                CommunityMetadataUpdate.Saved
+            } else {
+                CommunityMetadataUpdate.Superseded
+            }
+        }
     }
 
     /** Whether the current user is the host of the active community. */
@@ -620,6 +669,22 @@ internal object AppContainer {
      * the host re-runs to retry.
      */
     suspend fun rotateCredential(
+        newUrl: String,
+        newUsername: String,
+        newPassword: String,
+        excludeMemberSignPub: String,
+    ): Boolean {
+        val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return false
+        return AccountMutationBarrier.process.withExclusive {
+            if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) {
+                false
+            } else {
+                rotateCredentialExclusive(newUrl, newUsername, newPassword, excludeMemberSignPub)
+            }
+        }
+    }
+
+    private suspend fun rotateCredentialExclusive(
         newUrl: String,
         newUsername: String,
         newPassword: String,

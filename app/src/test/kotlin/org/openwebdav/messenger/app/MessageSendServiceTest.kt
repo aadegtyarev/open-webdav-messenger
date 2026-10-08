@@ -131,6 +131,19 @@ class MessageSendServiceTest {
         }
 
     @Test
+    fun send_for_replaced_account_is_rejected_before_persistence_or_webdav() =
+        runTest {
+            val store = store()
+            val service = MessageSendService(graph(store), ioDispatcher = Dispatchers.Unconfined, isCurrent = { false })
+
+            val failure = runCatching { service.send("stale account") }.exceptionOrNull()
+
+            assertTrue(failure is IllegalStateException)
+            assertTrue(store.messagesForChat(chatId).isEmpty())
+            assertTrue(disk.fileNames(ChatPaths.logDir(chatId)).isEmpty())
+        }
+
+    @Test
     fun uncertain_put_retry_reuses_original_envelope_and_message_id() =
         runTest {
             val store = store()

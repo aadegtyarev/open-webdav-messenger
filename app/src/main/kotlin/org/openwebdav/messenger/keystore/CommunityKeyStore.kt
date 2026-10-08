@@ -64,13 +64,17 @@ class CommunityKeyStore(private val context: Context) : ExportableCommunityKeySt
 
     override fun listCommunityIds(): Set<String> = storedIds()
 
-    override fun replaceAll(keys: Map<String, ChatKey>) {
-        (storedIds() - keys.keys).forEach(::remove)
-        keys.forEach { (communityId, key) -> store(communityId, key) }
+    override fun replaceAll(keys: Map<String, ChatKey>) = replaceAllStrict(keys)
+
+    override fun replaceAllStrict(keys: Map<String, ChatKey>) {
+        val operations = StrictOperationBatch()
+        (storedIds() - keys.keys).forEach { id -> operations.run { remove(id) } }
+        keys.forEach { (communityId, key) -> operations.run { store(communityId, key) } }
+        operations.finish()
     }
 
     private fun wrapper(communityId: String): KeystoreWrapper {
-        require(communityId == "default" || COMMUNITY_ID.matches(communityId)) { "Invalid community identifier" }
+        AccountIdentifier.requireValid(communityId)
         val fileName = if (communityId == "default") KEY_FILE else "${token(communityId)}.bin"
         val alias = if (communityId == "default") WRAP_KEY_ALIAS else "$WRAP_KEY_ALIAS.$communityId"
         val dir = File(context.filesDir, KEY_DIR).apply { mkdirs() }
@@ -90,7 +94,7 @@ class CommunityKeyStore(private val context: Context) : ExportableCommunityKeySt
 
     private fun decodeToken(token: String): String? =
         runCatching {
-            String(java.util.Base64.getUrlDecoder().decode(token), Charsets.UTF_8).takeIf { COMMUNITY_ID.matches(it) }
+            String(java.util.Base64.getUrlDecoder().decode(token), Charsets.UTF_8).takeIf(AccountIdentifier::isValid)
         }.getOrNull()
 
     private companion object {
@@ -99,6 +103,5 @@ class CommunityKeyStore(private val context: Context) : ExportableCommunityKeySt
 
         private const val KEY_DIR = "community_key"
         private const val KEY_FILE = "community_key.bin"
-        private val COMMUNITY_ID = Regex("[A-Za-z0-9_-]{1,96}")
     }
 }

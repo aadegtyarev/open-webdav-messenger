@@ -120,8 +120,8 @@ class DeflateCodecTest {
 
     @Test
     fun `non-deflate data is rejected`() {
-        // Raw bytes that are not valid DEFLATE at all should be rejected, not crashed.
-        val garbage = ByteArray(128).also { SecureRandom().nextBytes(it) }
+        // Reserved BTYPE=3 is deterministically invalid (rather than probabilistic random input).
+        val garbage = byteArrayOf(0x07)
         assertEquals(DecompressResult.Rejected, codec.decompress(garbage))
     }
 

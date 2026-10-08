@@ -84,13 +84,17 @@ internal class ConnectionConfigStore(
 
     fun has(communityId: String): Boolean = wrapper(communityId).exists()
 
+    fun hasAny(): Boolean = configDir().listFiles()?.any { it.name.startsWith("$CONFIG_FILE-") } == true
+
     /** Delete the stored config. */
     override fun clear() = clear(DEFAULT_COMMUNITY_ID)
 
     fun clear(communityId: String) = wrapper(communityId).delete()
 
-    private fun wrapper(communityId: String): KeystoreWrapper =
-        KeystoreWrapper("${WRAP_KEY_ALIAS}.$communityId", File(configDir(), "$CONFIG_FILE-$communityId"))
+    private fun wrapper(communityId: String): KeystoreWrapper {
+        AccountIdentifier.requireValid(communityId)
+        return KeystoreWrapper("${WRAP_KEY_ALIAS}.$communityId", File(configDir(), "$CONFIG_FILE-$communityId"))
+    }
 
     private fun configDir(): File = File(context.filesDir, CONFIG_DIR).apply { mkdirs() }
 

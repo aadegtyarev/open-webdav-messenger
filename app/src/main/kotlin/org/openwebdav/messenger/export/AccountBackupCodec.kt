@@ -9,33 +9,39 @@ import java.io.DataOutputStream
 /** Strict bounded binary encoding for the multi-community portion inside the encrypted export payload. */
 internal object AccountBackupCodec {
     fun encode(backup: AccountBackup): ByteArray {
-        require(backup.communities.size <= MAX_COMMUNITIES)
+        if (backup.communities.size > MAX_COMMUNITIES) throw PayloadTooLargeException()
         val bytes = ByteArrayOutputStream()
-        DataOutputStream(bytes).use { out ->
-            out.writeInt(VERSION)
-            out.writeUTF(backup.activeCommunityId)
-            out.writeInt(backup.communities.size)
-            backup.communities.forEach { community ->
-                out.writeUTF(community.id)
-                out.writeUTF(community.name)
-                out.writeUTF(community.anchorChatId)
-                out.writeUTF(community.config.baseUrl)
-                out.writeUTF(community.config.username)
-                out.writeUTF(community.config.appPassword)
-                out.writeUTF(community.config.chatRoot)
-                out.writeBoolean(community.communityKeyBase64 != null)
-                community.communityKeyBase64?.let(out::writeUTF)
-                out.writeBoolean(community.isHost)
-                out.writeInt(community.pollFloorSeconds)
-                out.writeInt(community.retentionWindowDays)
-                require(community.chats.size <= MAX_CHATS)
-                out.writeInt(community.chats.size)
-                community.chats.forEach { chat ->
-                    out.writeUTF(chat.id)
-                    out.writeUTF(chat.name)
-                    out.writeUTF(chat.kind)
+        try {
+            DataOutputStream(bytes).use { out ->
+                out.writeInt(VERSION)
+                out.writeUTF(backup.activeCommunityId)
+                out.writeInt(backup.communities.size)
+                backup.communities.forEach { community ->
+                    out.writeUTF(community.id)
+                    out.writeUTF(community.name)
+                    out.writeUTF(community.anchorChatId)
+                    out.writeUTF(community.config.baseUrl)
+                    out.writeUTF(community.config.username)
+                    out.writeUTF(community.config.appPassword)
+                    out.writeUTF(community.config.chatRoot)
+                    out.writeBoolean(community.communityKeyBase64 != null)
+                    community.communityKeyBase64?.let(out::writeUTF)
+                    out.writeBoolean(community.isHost)
+                    out.writeInt(community.pollFloorSeconds)
+                    out.writeInt(community.retentionWindowDays)
+                    if (community.chats.size > MAX_CHATS) throw PayloadTooLargeException()
+                    out.writeInt(community.chats.size)
+                    community.chats.forEach { chat ->
+                        out.writeUTF(chat.id)
+                        out.writeUTF(chat.name)
+                        out.writeUTF(chat.kind)
+                        if (bytes.size() > MAX_BYTES) throw PayloadTooLargeException()
+                    }
+                    if (bytes.size() > MAX_BYTES) throw PayloadTooLargeException()
                 }
             }
+        } catch (_: java.io.UTFDataFormatException) {
+            throw PayloadTooLargeException()
         }
         return bytes.toByteArray()
     }

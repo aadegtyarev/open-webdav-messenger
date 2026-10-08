@@ -27,6 +27,20 @@ class AccountBackupCodecTest {
     }
 
     @Test
+    fun payload_encoder_and_decoder_share_exact_size_limit() {
+        val empty = ExportPayload(null, null, emptyMap(), "")
+        val base = ExportPayload.toJson(empty).length
+        val maxPayload = empty.copy(identitySerialized = "x".repeat(ExportPayload.MAX_PLAINTEXT_BYTES - base))
+        assertEquals(ExportPayload.MAX_PLAINTEXT_BYTES, ExportPayload.toJson(maxPayload).length)
+        org.junit.Assert.assertThrows(PayloadTooLargeException::class.java) {
+            ExportPayload.toJson(maxPayload.copy(identitySerialized = maxPayload.identitySerialized + "x"))
+        }
+        val valid = """{"v":1,"cc":null,"ck":null,"ch":{},"id":null}"""
+        assertNotNull(ExportPayload.fromJson(valid + " ".repeat(ExportPayload.MAX_PLAINTEXT_BYTES - valid.length)))
+        assertNull(ExportPayload.fromJson(valid + " ".repeat(ExportPayload.MAX_PLAINTEXT_BYTES - valid.length + 1)))
+    }
+
+    @Test
     fun version_one_legacy_payload_remains_parseable() {
         val legacy = """{"v":1,"cc":null,"ck":null,"ch":{},"id":null}"""
         val payload = ExportPayload.fromJson(legacy)

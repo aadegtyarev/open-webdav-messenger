@@ -46,6 +46,9 @@ class ExportManager(
         val payload =
             try {
                 collect()
+            } catch (_: PayloadTooLargeException) {
+                passphrase.fill(' ')
+                return ExportResult.TooLarge
             } catch (_: Exception) {
                 passphrase.fill(' ')
                 return ExportResult.IncompleteAccount
@@ -56,7 +59,12 @@ class ExportManager(
             try {
                 val passwordBytes = passphraseToBytes(passphrase)
                 try {
-                    val json = ExportPayload.toJson(payload)
+                    val json =
+                        try {
+                            ExportPayload.toJson(payload)
+                        } catch (_: PayloadTooLargeException) {
+                            return@withContext ExportResult.TooLarge
+                        }
                     val plaintext = json.toByteArray(Charsets.UTF_8)
 
                     // Derive key: Argon2id(password, randomSalt) → 32-byte key.
@@ -102,6 +110,7 @@ class ExportManager(
     private fun collect(): ExportPayload {
         val connectionConfig = connectionConfigStore.load()
         val accountBackup = accountBackupStore?.snapshot()
+        check(accountBackupStore == null || accountBackup != null) { "No joined account is available" }
         val communityKey = if (accountBackup == null) communityKeyStore.load() else null
         val chatIds = chatKeyStore.listChatIds()
         val chatKeys = mutableMapOf<String, ChatKey>()
@@ -164,6 +173,10 @@ class ExportManager(
 
         /** XChaCha20 nonce length (libsodium `crypto_aead_xchacha20poly1305_ietf_NPUBBYTES` = 24). */
         const val NONCE_BYTES = 24
+
+        private const val AEAD_TAG_BYTES = 16
+        const val MAX_BLOB_BYTES = ExportPayload.MAX_PLAINTEXT_BYTES + 16 + SALT_BYTES + NONCE_BYTES + AEAD_TAG_BYTES
+        const val MAX_BLOB_BASE64_CHARS = ((MAX_BLOB_BYTES + 2) / 3) * 4
 
         /** Argon2id INTERACTIVE preset — same as [KeySources] in the crypto substrate. */
         const val ARGON2ID_OPS_INTERACTIVE: Long = 2L

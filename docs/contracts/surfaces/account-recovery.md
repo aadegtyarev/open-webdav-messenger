@@ -11,9 +11,10 @@ Users transferring an account to a replacement device; `ExportManager`, `Restore
 ## Observable behavior
 
 - Current exports use payload version 2 and include every registered community's connection configuration, anchor chat, chat registry, community key when present, all chat keys, identity, and active community selection.
-- Restore is available from the first-launch Start screen and Settings. Successful restore replaces local account state, rebuilds the selected runtime, and returns to the Chats list.
-- Legacy v1 exports remain readable as far as their contents permit. A v1 export lacks community/chat membership metadata; it may restore secrets but cannot always create a usable joined runtime. The UI must not claim account activation when no runtime could be reconstructed.
-- Restore decrypts and validates the complete payload, binary keys, identity, URLs, registries, and active-community reference before writing stores. A store failure yields a typed failure and attempts to restore snapshots. This is rollback protection for app-level store failures, not a claim of crash-atomicity across Android Keystore and files.
+- Restore is available from the first-launch Start screen and Settings. It serializes against polls, sends, credential rotation, onboarding, and other account mutations. Successful restore replaces local account state, rebuilds the selected runtime before success is reported, and returns Settings to the Chats list.
+- Legacy v1 exports lack membership metadata. They are accepted only for an empty target with exactly one configured community key and one chat key, which are explicitly mapped to the default community; incompatible or ambiguous targets are rejected before writes.
+- Restore validates the complete payload, keys, identity, WebDAV root/path, bounded identifiers, registries, and active-community reference before writing. Store failures attempt every independent rollback action and report whether restoration completed. Present config and identity stores are overwritten directly, never cleared first. This remains best-effort rollback, not crash-atomicity across Android Keystore and files.
+- Serialized plaintext is limited to 4 MiB and the account-registry section to 1 MiB; import and export enforce the same bounds. Oversized export returns a typed failure.
 
 ## Security and privacy
 
@@ -21,7 +22,7 @@ Export contents include disk credentials and identity/community/chat secret keys
 
 ## Failure and limits
 
-Malformed or unsupported payloads are rejected before writes. A failed write reports whether rollback succeeded; if rollback itself fails, the user is warned not to continue using that local account. Restoring does not recover Room message history from the old device. Device/OS crashes between independent store writes are not guaranteed to be atomic.
+Malformed, oversized, ambiguous legacy, or unsupported payloads are rejected before writes. Chat-key files and their enumeration index use strict replacement/deletion operations; failures propagate into restore rollback. A failed write reports whether rollback succeeded; rollback attempts continue across independent stores, and if any rollback action fails the user is warned not to continue using that local account. Restoring does not recover Room message history from the old device. Device/OS crashes between independent store writes are not guaranteed to be atomic.
 
 ## Related contracts
 

@@ -2,6 +2,7 @@ package org.openwebdav.messenger.app
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.identity.Identity
@@ -71,9 +72,11 @@ internal class RuntimeGraph(
      * Trigger an immediate poll cycle for the current chat. Suspends until the cycle completes
      * (engine.pollCycle is a suspend function); the engine updates [lastSyncTime] on success.
      */
-    suspend fun requestSync() {
-        engine.pollCycle(senderIdentifier, listOf(ChatSubscription(chatId)), communityId)
-    }
+    suspend fun requestSync() =
+        AccountMutationBarrier.process.withExclusive {
+            if (AppContainer.runtimeGraph()?.communityRuntimeKey != communityRuntimeKey) return@withExclusive
+            engine.pollCycle(senderIdentifier, listOf(ChatSubscription(chatId)), communityId)
+        }
 
     /**
      * Per-process, strictly-increasing per-sender sequence for the §4 order-token. The token orders the

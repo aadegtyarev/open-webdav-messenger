@@ -17,8 +17,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.R
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
 import org.openwebdav.messenger.crypto.NativeCrypto
@@ -131,6 +131,8 @@ class ExportRestoreActivity : Activity() {
                 chatKeyStore,
                 identityStore,
                 accountBackupStore = accountBackupStore,
+                activateRuntime = AppContainer::rebuildAfterRestore,
+                restorePreviousRuntime = AppContainer::restorePreviousRuntime,
             )
     }
 
@@ -175,7 +177,10 @@ class ExportRestoreActivity : Activity() {
             showExportStatus("Encrypting…", isError = false)
 
             scope.launch(Dispatchers.IO) {
-                val result = exportManager.export(pw.toCharArray())
+                val result =
+                    AccountMutationBarrier.process.withExclusive {
+                        exportManager.export(pw.toCharArray())
+                    }
                 launch(Dispatchers.Main) {
                     exportButton.isEnabled = true
                     handleExportResult(result)
@@ -196,6 +201,7 @@ class ExportRestoreActivity : Activity() {
             ExportResult.IncompleteAccount -> {
                 showExportStatus("Couldn't read all account keys or community data. No backup was created.", isError = true)
             }
+            ExportResult.TooLarge -> showExportStatus("This account is too large to export.", isError = true)
         }
     }
 
@@ -253,24 +259,9 @@ class ExportRestoreActivity : Activity() {
     private fun handleRestoreResult(result: RestoreResult) {
         when (result) {
             RestoreResult.Restored -> {
-                restoreButton.isEnabled = false
-                scope.launch(Dispatchers.IO) {
-                    val activationError =
-                        runCatching {
-                            AppContainer.rebuildAfterRestore()
-                            check(AppContainer.runtimeGraph() != null) { "Backup contains no usable community" }
-                        }.exceptionOrNull()
-                    withContext(Dispatchers.Main) {
-                        restoreButton.isEnabled = true
-                        if (activationError == null) {
-                            showRestoreStatus(getString(R.string.restore_success), isError = false)
-                            setResult(RESULT_OK)
-                            finish()
-                        } else {
-                            showRestoreStatus("Backup restored, but account startup failed. Reopen the app to retry.", isError = true)
-                        }
-                    }
-                }
+                showRestoreStatus(getString(R.string.restore_success), isError = false)
+                setResult(RESULT_OK)
+                finish()
             }
             RestoreResult.BadFormat -> {
                 showRestoreStatus(getString(R.string.restore_bad_format), isError = true)
@@ -280,6 +271,9 @@ class ExportRestoreActivity : Activity() {
             }
             RestoreResult.CorruptPayload -> {
                 showRestoreStatus(getString(R.string.restore_corrupt), isError = true)
+            }
+            RestoreResult.IncompatibleTarget -> {
+                showRestoreStatus("Legacy backups can only be restored when no account is currently joined.", isError = true)
             }
             RestoreResult.WeakPassword -> {
                 showRestoreStatus(getString(R.string.restore_weak_password), isError = true)

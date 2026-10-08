@@ -17,6 +17,12 @@ interface ExportableAccountBackupStore {
     fun replace(backup: AccountBackup)
 
     fun clear()
+
+    fun clearCommunityIds(ids: Set<String>) = clear()
+
+    fun hasMembershipState(): Boolean = snapshot() != null
+
+    fun hasRegistryState(): Boolean = snapshot() != null
 }
 
 interface ExportableConnectionConfigStore {
@@ -53,6 +59,8 @@ interface ExportableCommunityKeyStore {
         clear()
         keys.forEach { (communityId, key) -> store(communityId, key) }
     }
+
+    fun replaceAllStrict(keys: Map<String, ChatKey>) = replaceAll(keys)
 }
 
 interface ExportableChatKeyStore {
@@ -63,11 +71,20 @@ interface ExportableChatKeyStore {
         chatKey: ChatKey,
     )
 
+    fun storeStrict(
+        chatId: String,
+        chatKey: ChatKey,
+    ) = store(chatId, chatKey)
+
     fun listChatIds(): List<String>
 
     fun remove(chatId: String)
 
+    fun removeStrict(chatId: String) = remove(chatId)
+
     fun replaceAll(chatKeys: Map<String, ChatKey>)
+
+    fun replaceAllStrict(chatKeys: Map<String, ChatKey>) = replaceAll(chatKeys)
 }
 
 interface ExportableIdentityStore {

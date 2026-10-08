@@ -31,7 +31,7 @@ import org.openwebdav.messenger.transport.TransportFactory
  */
 internal class ChatFeedViewModel(
     private val graph: RuntimeGraph,
-    private val sendService: ChatMessageSender = MessageSendService(graph),
+    private val sendService: ChatMessageSender = MessageSendService(graph, isCurrent = { AppContainer.runtimeGraph() === graph }),
 ) : ViewModel() {
     val communityName: String = graph.communityName
 
