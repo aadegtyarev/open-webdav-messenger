@@ -94,10 +94,12 @@ partitioned by local community plus chat ID, so identical protocol DM IDs in
 different WebDAV roots cannot merge feed state or advance one another's cursor.
 Wire chat IDs and crypto are unchanged. At database open, legacy messages and
 sync cursors are transactionally repaired into the sole distinct joined
-community proven by the durable community registry (or, only when that registry
-is empty, a single stored legacy connection with a nonblank joined-chat marker);
-current selection alone never establishes ownership. With zero or multiple
-joined communities, legacy
+community proven by the durable community registry and enumerated stored
+connections (or, only when that registry is empty, a single stored legacy
+connection with a nonblank joined-chat marker). Every enumerated connection must
+decode and classify consistently; an unreadable or unclassifiable connection
+fails repair closed. Current selection alone never establishes ownership. With
+zero or multiple joined communities, legacy
 history stays hidden and unassigned. A colliding message ID is preserved in the
 legacy namespace while the already-owned row remains unchanged; colliding
 cursors merge to the lexicographically later order token. Legacy rows carrying

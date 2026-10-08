@@ -157,13 +157,12 @@ abstract class MessengerDatabase : RoomDatabase() {
 
         private fun joinedCommunityIds(context: Context): List<String> =
             try {
-                val registered = CommunityRegistry(context).all().map { it.id }
-                if (registered.isNotEmpty()) {
-                    registered
-                } else {
-                    val store = ConnectionConfigStore(context)
-                    store.listCommunityIds().filter { id -> store.loadStored(id)?.chatId?.isNotBlank() == true }
-                }
+                val store = ConnectionConfigStore(context)
+                LegacyHistoryOwnerResolver.resolve(
+                    registryEntries = CommunityRegistry(context).all(),
+                    physicalConfigIds = store.listCommunityIds(),
+                    loadStored = store::loadStored,
+                )?.let(::listOf).orEmpty()
             } catch (_: Exception) {
                 emptyList()
             }
