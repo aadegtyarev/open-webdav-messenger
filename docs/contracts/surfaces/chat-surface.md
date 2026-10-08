@@ -120,18 +120,25 @@ data; stale or superseded refresh work cannot write or apply. This cache does no
 change the Ready-snapshot requirement for new sends or existing outbox retry
 behavior.
 
-**Private membership (3-private-membership):** A private group roster is built
-only from remotely listed, bounded, chat-key-authenticated and identity-signed
-claims scoped to the exact chat ID. An accessible exact directory identity pair
-strengthens display-name provenance; directory absence or inaccessibility does
-not reject a valid chat-only claim. Conflicting identities fail closed. Private
-opens never substitute the full community directory for this roster. Only verified
-claims join the Ready recipient snapshot; attempts to publish, invites, history,
-and local registration never infer invitees. The local self stays present. A
-Keystore-encrypted, bounded cache is fenced by account/chat/key/identity/kind and
-invalidated on replacement or restore. Pending self claims reuse the exact
-ciphertext across retry; UI distinguishes not uploaded from uploaded and says
-other members may not see the user yet. Private-only names are explicitly labelled.
+**Private membership (3-private-membership):** A private group roster uses only
+remotely listed, bounded, chat-key-authenticated and identity-signed claims scoped
+to the exact chat ID. Claim AEAD authenticates canonical domain, wire version, and
+length-prefixed chat ID; the message-envelope protocol is unchanged. A directory
+identity pair strengthens provenance only when decrypted with a separately stored
+community capability from the exact durable public General anchor. A synthetic
+private anchor/chat key is never a community directory key. Directory absence still
+permits chat-only claims; conflicting pairs fail closed. Only verified claims join
+Ready; publication, invites, history, and local registration infer no invitees.
+Unknown access migrates to public only for the exact `kind=general` anchor matching
+both community registry and stored-config anchor; other groups require a verified
+hex/Base32 descriptor. Cache stays encrypted/context-fenced. Same-key publication
+serializes pending→PUT→commit; generation fences before/after network prevent stale
+restore/key-replacement commits. Pending retries rotate fairly; uploaded claims skip.
+UI truthfully labels pending/uploaded status and private-only names.
+
+The exact ciphertext survives retries. Local account stability is held only for
+pending-state reads/writes and final commit, never over WebDAV; stale graph/request
+results cannot update the active roster.
 
 **Verified participants (3-participants):** A separately accessible, labelled People
 icon in the top bar (minimum 48×48dp target) opens a read-only list for the exact
