@@ -31,8 +31,8 @@ import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
  * `ATTACH DATABASE` + `sqlcipher_export`.
  */
 @Database(
-    entities = [MessageEntity::class, SyncCursorEntity::class],
-    version = 6,
+    entities = [MessageEntity::class, SyncCursorEntity::class, HiddenDmEntity::class, SuppressedDmMessageEntity::class],
+    version = 7,
     exportSchema = true,
 )
 abstract class MessengerDatabase : RoomDatabase() {
@@ -113,6 +113,19 @@ abstract class MessengerDatabase : RoomDatabase() {
                 }
             }
 
+        val MIGRATION_6_7 =
+            object : Migration(6, 7) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "CREATE TABLE hidden_dms (communityId TEXT NOT NULL, chatId TEXT NOT NULL, PRIMARY KEY(communityId, chatId))",
+                    )
+                    db.execSQL(
+                        "CREATE TABLE suppressed_dm_messages (communityId TEXT NOT NULL, chatId TEXT NOT NULL, " +
+                            "messageId TEXT NOT NULL, PRIMARY KEY(communityId, chatId, messageId))",
+                    )
+                }
+            }
+
         const val LEGACY_UNSCOPED_COMMUNITY_ID = "__legacy_unscoped__"
 
         @Volatile
@@ -137,7 +150,7 @@ abstract class MessengerDatabase : RoomDatabase() {
                 val factory = SupportFactory(key)
                 return Room.databaseBuilder(context, MessengerDatabase::class.java, DB_NAME)
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .addCallback(legacyHistoryRepairCallback(context))
                     // No allowMainThreadQueries() — DAOs are suspend/Flow (stack-notes Room).
                     // No fallbackToDestructiveMigration() — a schema bump must ship a Migration so local

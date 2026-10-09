@@ -164,6 +164,21 @@ class MessengerDatabaseMigrationTest {
     }
 
     @Test
+    fun version6MigratesToHiddenDmAndExactSuppressionTables() {
+        helper.createDatabase(TEST_DB, 6).close()
+        helper.runMigrationsAndValidate(TEST_DB, 7, true, MessengerDatabase.MIGRATION_6_7).use { migrated ->
+            migrated.query("SELECT COUNT(*) FROM hidden_dms").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(0, row.getInt(0))
+            }
+            migrated.query("SELECT COUNT(*) FROM suppressed_dm_messages").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(0, row.getInt(0))
+            }
+        }
+    }
+
+    @Test
     fun populatedVersion5OutboxReceivesEmptyClaimTokenColumn() {
         helper.createDatabase(TEST_DB, 5).apply {
             execSQL(

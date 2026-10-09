@@ -75,6 +75,45 @@ class MessageStoreTest {
         }
 
     @Test
+    fun dm_delete_suppresses_exact_replay_purges_outbox_and_reopens_only_on_new_incoming() =
+        runTest {
+            store.persist(
+                "old-id",
+                "0001",
+                text("old"),
+                receivedAtMillis = 1L,
+                sendStatus = MessageEntity.STATUS_SENDING,
+                outboxEnvelope = byteArrayOf(1, 2, 3),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "default",
+            )
+            store.advanceCursor("c1", "0001")
+
+            assertEquals(DmLocalDeleteResult.Deleted, store.hideAndPurgeDm("c1"))
+            assertTrue(store.isDmHidden("c1"))
+            assertTrue(store.messagesForChat("c1").isEmpty())
+            assertEquals("", store.cursorFor("c1"))
+            assertTrue(store.pendingOutgoing("default").isEmpty())
+
+            assertFalse(store.persist("old-id", "0001", text("old replay"), receivedAtMillis = 2L))
+            assertTrue(store.isDmHidden("c1"))
+            assertFalse(
+                store.persist(
+                    "own-retry",
+                    "0002",
+                    text("own retry"),
+                    receivedAtMillis = 3L,
+                    sendStatus = MessageEntity.STATUS_SENDING,
+                ),
+            )
+            assertTrue(store.isDmHidden("c1"))
+
+            assertTrue(store.persist("new-peer-id", "0003", text("new peer"), receivedAtMillis = 4L))
+            assertFalse(store.isDmHidden("c1"))
+            assertEquals(listOf("new peer"), store.messagesForChat("c1").map { it.body })
+        }
+
+    @Test
     fun identical_chat_history_read_state_and_cursor_are_community_scoped() =
         runTest {
             val communityA = MessageStore(db.messageDao(), db.syncCursorDao(), "community-a")

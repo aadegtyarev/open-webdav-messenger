@@ -34,7 +34,7 @@ class MessageStore(
         outboxRecipients: List<String> = emptyList(),
         outboxCommunityId: String? = null,
     ): Boolean =
-        messageDao.insertIgnore(
+        messageDao.insertUnlessSuppressed(
             toEntity(
                 messageId,
                 orderToken,
@@ -120,6 +120,10 @@ class MessageStore(
             cursorDao.upsert(SyncCursorEntity(communityId, chatId, orderToken))
         }
     }
+
+    suspend fun hideAndPurgeDm(chatId: String): DmLocalDeleteResult = messageDao.hideAndPurgeDm(communityId, chatId)
+
+    suspend fun isDmHidden(chatId: String): Boolean = messageDao.isDmHidden(communityId, chatId)
 
     /** Observable, ordered history for a chat (offline, off-main-thread, §6). */
     fun observeChat(chatId: String): Flow<List<MessageEntity>> = messageDao.observeChat(communityId, chatId)

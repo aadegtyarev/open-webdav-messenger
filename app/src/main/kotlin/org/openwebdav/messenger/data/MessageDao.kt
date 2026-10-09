@@ -5,6 +5,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -26,6 +27,92 @@ interface MessageDao {
      */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(message: MessageEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertSuppressed(rows: List<SuppressedDmMessageEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putHiddenDm(hidden: HiddenDmEntity)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM hidden_dms WHERE communityId = :communityId AND chatId = :chatId)")
+    suspend fun isDmHidden(
+        communityId: String,
+        chatId: String,
+    ): Boolean
+
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM suppressed_dm_messages WHERE communityId = :communityId " +
+            "AND chatId = :chatId AND messageId = :messageId)",
+    )
+    suspend fun isMessageSuppressed(
+        communityId: String,
+        chatId: String,
+        messageId: String,
+    ): Boolean
+
+    @Query("SELECT messageId FROM messages WHERE communityId = :communityId AND chatId = :chatId")
+    suspend fun messageIdsForChat(
+        communityId: String,
+        chatId: String,
+    ): List<String>
+
+    @Query("SELECT messageId FROM suppressed_dm_messages WHERE communityId = :communityId AND chatId = :chatId")
+    suspend fun suppressedIdsForChat(
+        communityId: String,
+        chatId: String,
+    ): List<String>
+
+    @Query("SELECT COUNT(*) FROM suppressed_dm_messages")
+    suspend fun suppressionCount(): Int
+
+    @Query("DELETE FROM hidden_dms WHERE communityId = :communityId AND chatId = :chatId")
+    suspend fun clearHiddenDm(
+        communityId: String,
+        chatId: String,
+    )
+
+    @Query("DELETE FROM messages WHERE communityId = :communityId AND chatId = :chatId")
+    suspend fun deleteMessagesForChat(
+        communityId: String,
+        chatId: String,
+    )
+
+    @Query("DELETE FROM sync_cursors WHERE communityId = :communityId AND chatId = :chatId")
+    suspend fun deleteCursorForChat(
+        communityId: String,
+        chatId: String,
+    )
+
+    @Transaction
+    suspend fun insertUnlessSuppressed(message: MessageEntity): Long {
+        if (isMessageSuppressed(message.communityId, message.chatId, message.messageId)) return -1L
+        if (isDmHidden(message.communityId, message.chatId)) {
+            if (message.sendStatus == MessageEntity.STATUS_SENDING) return -1L
+            clearHiddenDm(message.communityId, message.chatId)
+        }
+        return insertIgnore(message)
+    }
+
+    @Transaction
+    suspend fun hideAndPurgeDm(
+        communityId: String,
+        chatId: String,
+    ): DmLocalDeleteResult {
+        if (isDmHidden(communityId, chatId)) return DmLocalDeleteResult.AlreadyHidden
+        val messageIds = messageIdsForChat(communityId, chatId)
+        val priorIds = suppressedIdsForChat(communityId, chatId).toHashSet()
+        val additions = messageIds.filterNot(priorIds::contains).distinct()
+        if (messageIds.size > MAX_SUPPRESSED_IDS_PER_CHAT || suppressionCount() + additions.size > MAX_SUPPRESSED_IDS_TOTAL) {
+            return DmLocalDeleteResult.SuppressionLimitReached
+        }
+        if (additions.isNotEmpty()) {
+            insertSuppressed(additions.map { SuppressedDmMessageEntity(communityId, chatId, it) })
+        }
+        putHiddenDm(HiddenDmEntity(communityId, chatId))
+        deleteMessagesForChat(communityId, chatId)
+        deleteCursorForChat(communityId, chatId)
+        return DmLocalDeleteResult.Deleted
+    }
 
     /** Observable, ordered-by-order-token history for a chat (offline-readable, §6). */
     @Query("SELECT * FROM messages WHERE communityId = :communityId AND chatId = :chatId ORDER BY orderToken ASC")
@@ -148,4 +235,9 @@ interface MessageDao {
         communityId: String,
         chatId: String,
     ): Flow<Int>
+
+    companion object {
+        const val MAX_SUPPRESSED_IDS_PER_CHAT = 10_000
+        const val MAX_SUPPRESSED_IDS_TOTAL = 100_000
+    }
 }
