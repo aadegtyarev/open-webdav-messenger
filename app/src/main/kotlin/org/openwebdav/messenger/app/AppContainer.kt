@@ -31,6 +31,7 @@ import org.openwebdav.messenger.directory.RemoteChatProvisioner
 import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.governance.CommunityGovernanceWriter
+import org.openwebdav.messenger.governance.CommunityGroupOriginPublisher
 import org.openwebdav.messenger.governance.GovernanceObjectKind
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
@@ -404,20 +405,18 @@ internal object AppContainer {
         context: SelectedCommunityGroupContext,
         requestToken: ChatOpenRequestCoordinator.Token,
     ): String? {
-        var createdChatId: String? = null
+        var stagedChatId: String? = null
+        var stagedChatKey: ChatKey? = null
         var rawChatId: ByteArray? = null
+        var communityKey: ChatKey? = null
         val stored = context.stored
-        val inserted =
+        val staged =
             AccountMutationBarrier.process.withStableAccount {
                 chatOpenRequestCoordinator.runIfCurrent(requestToken) {
                     if (!isCurrentGroupContext(context, requestToken)) return@runIfCurrent false
                     val keySources = crypto.keySources()
-                    val chatKey =
-                        if (access == ChatAccess.PUBLIC) {
-                            crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return@runIfCurrent false
-                        } else {
-                            keySources.newRandomKey()
-                        }
+                    val rootKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: return@runIfCurrent false
+                    val chatKey = if (access == ChatAccess.PUBLIC) rootKey else keySources.newRandomKey()
                     val nonce = keySources.newRandomKey().copyBytes().take(8).toByteArray()
                     val hash =
                         crypto.nativeCrypto().genericHash(
@@ -426,21 +425,53 @@ internal object AppContainer {
                                 name.toByteArray(Charsets.UTF_8),
                             16,
                         )
-                    val chatId = Hex.encode(hash)
-                    crypto.chatKeyStore(requireContext()).store(chatId, chatKey)
-                    chatRegistry.add(context.communityId, ChatRegistry.Entry(chatId, name, "group", access.name.lowercase()))
-                    createdChatId = chatId
+                    stagedChatId = Hex.encode(hash)
+                    stagedChatKey = chatKey
                     rawChatId = hash
+                    communityKey = rootKey
+                    true
+                }
+            }
+        if (!staged) return null
+        val chatId = stagedChatId ?: return null
+        val key = stagedChatKey ?: return null
+        val originKey = communityKey ?: return null
+        if (!publishGroupOrigin(context, chatId, access, originKey)) return null
+        val inserted =
+            AccountMutationBarrier.process.withStableAccount {
+                chatOpenRequestCoordinator.runIfCurrent(requestToken) {
+                    if (!isCurrentGroupContext(context, requestToken)) return@runIfCurrent false
+                    crypto.chatKeyStore(requireContext()).store(chatId, key)
+                    chatRegistry.add(context.communityId, ChatRegistry.Entry(chatId, name, "group", access.name.lowercase()))
                     true
                 }
             }
         if (!inserted) return null
-        val chatId = createdChatId ?: return null
         if (access == ChatAccess.PUBLIC) {
             if (!isCurrentGroupContext(context, requestToken)) return null
             if (!publishPublicGroup(stored, context.graph, rawChatId ?: return null, name)) return null
         }
         return chatId
+    }
+
+    private suspend fun publishGroupOrigin(
+        context: SelectedCommunityGroupContext,
+        chatId: String,
+        access: ChatAccess,
+        communityKey: ChatKey,
+    ): Boolean {
+        val writer =
+            CommunityGovernanceWriter(
+                TransportFactory.create(context.stored.config),
+                CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto())),
+            )
+        return CommunityGroupOriginPublisher(writer, identityFactory.identityCrypto()).publish(
+            context.communityId,
+            chatId,
+            access,
+            context.graph.identity,
+            communityKey,
+        )
     }
 
     private suspend fun publishPublicGroup(
