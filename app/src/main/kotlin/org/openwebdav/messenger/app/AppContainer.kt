@@ -1387,8 +1387,11 @@ internal object AppContainer {
         val communityKey = loadRosterCommunityKey(stored) ?: return TombstoneReconciler.Result.Unavailable
         val scope = if (kind == "dm") TombstoneScope.DM else TombstoneScope.GROUP
         val objectKey =
-            keyOverride ?: crypto.chatKeyStore(requireContext()).load(chatId)
-                ?: return TombstoneReconciler.Result.Unavailable
+            keyOverride ?: if (scope == TombstoneScope.DM) {
+                crypto.chatKeyStore(requireContext()).load(chatId)
+            } else {
+                communityKey
+            } ?: return TombstoneReconciler.Result.Unavailable
         val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
         val reader = CommunityGovernanceReader(TransportFactory.create(stored.config), envelopes)
         val scanner = CommunityTombstoneChatScanner(reader, envelopes, identityFactory.identityCrypto())
