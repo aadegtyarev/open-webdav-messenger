@@ -68,6 +68,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.R
+import org.openwebdav.messenger.app.ChatDeleteCapability
 import org.openwebdav.messenger.app.ChatDeletionStatus
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.data.DmLocalDeleteResult
@@ -90,6 +91,7 @@ internal fun ChatFeedScreen(
     onBack: () -> Unit = {},
     canDeleteLocalDm: Boolean = false,
     canDeleteForAll: Boolean = false,
+    deleteCapabilityOverride: ChatDeleteCapability? = null,
     chatTitle: String = "",
     onLocalDmDeleted: () -> Unit = {},
     onChatDeleted: (ChatDeletionStatus) -> Unit = {},
@@ -107,12 +109,16 @@ internal fun ChatFeedScreen(
     val memberNamesError by viewModel.memberNamesError.collectAsStateWithLifecycle()
     val recipientReadiness by viewModel.recipientReadiness.collectAsStateWithLifecycle()
     val privateClaimStatus by viewModel.privateClaimStatus.collectAsStateWithLifecycle()
+    val projectedDeleteCapability by viewModel.deleteCapability.collectAsStateWithLifecycle()
+    val deleteCapability = deleteCapabilityOverride ?: projectedDeleteCapability
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val rosterLoadingLabel = stringResource(R.string.roster_loading_accessibility)
     val rosterLoadingExplanation = stringResource(R.string.roster_loading_explanation)
+    val deleteAuthorityLoadingLabel = stringResource(R.string.chat_delete_authority_loading)
+    val deleteAuthorityRetryLabel = stringResource(R.string.chat_delete_authority_retry)
     var showDeleteDmConfirmation by remember { mutableStateOf(false) }
     var showDeleteChatConfirmation by remember { mutableStateOf(false) }
     var typedDeleteTitle by remember { mutableStateOf("") }
@@ -356,7 +362,24 @@ internal fun ChatFeedScreen(
                     ) {
                         Icon(Icons.Filled.People, contentDescription = stringResource(R.string.participants_action))
                     }
-                    if (canDeleteForAll) {
+                    if (deleteCapability is ChatDeleteCapability.Loading) {
+                        CircularProgressIndicator(
+                            modifier =
+                                Modifier.size(24.dp).semantics {
+                                    contentDescription = deleteAuthorityLoadingLabel
+                                    progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+                                },
+                            strokeWidth = 2.dp,
+                        )
+                    } else if (deleteCapability is ChatDeleteCapability.Unavailable) {
+                        IconButton(
+                            onClick = viewModel::refreshDeleteCapability,
+                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                        ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = deleteAuthorityRetryLabel)
+                        }
+                    }
+                    if (canDeleteForAll || deleteCapability is ChatDeleteCapability.Available) {
                         IconButton(
                             onClick = { showDeleteChatConfirmation = true },
                             modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),

@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.chatdirectory.ChatDirectoryCrypto
@@ -33,6 +35,7 @@ import org.openwebdav.messenger.directory.DirectoryFactory
 import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.directory.RemoteChatProvisioner
 import org.openwebdav.messenger.governance.ChatRemoteCleanup
+import org.openwebdav.messenger.governance.CommunityCreationPolicyAdministration
 import org.openwebdav.messenger.governance.CommunityCreationPolicyService
 import org.openwebdav.messenger.governance.CommunityDmOriginScanner
 import org.openwebdav.messenger.governance.CommunityDmOriginService
@@ -118,6 +121,7 @@ internal object AppContainer {
     private val chatDirectoryFactory by lazy { ChatDirectoryFactory() }
     private val warmStarted = AtomicBoolean(false)
     private val communityPolicyCoordinator = CommunityPolicyCoordinator()
+    private val creationPolicyWriteMutex = Mutex()
     private val rosterCommitCoordinator = RosterCommitCoordinator()
     private val runtimeSelectionGuard = RuntimeSelectionGuard(rosterCommitCoordinator)
     private val chatOpenRequestCoordinator = ChatOpenRequestCoordinator(rosterCommitCoordinator)
@@ -242,14 +246,175 @@ internal object AppContainer {
     /** The current community ID (for multi-chat enumeration). */
     val activeCommunityId: String get() = currentCommunityId
 
+    internal suspend fun publishExistingCommunityGenesis(): GenesisMigrationResult {
+        val graph = runtimeGraph() ?: return GenesisMigrationResult.Unavailable
+        val community = communityRegistry.all().singleOrNull { it.id == graph.communityId } ?: return GenesisMigrationResult.Unavailable
+        val stored = configStore.loadStored(graph.communityId) ?: return GenesisMigrationResult.Unavailable
+        if (!UserSettings.isHostFor(graph.communityId) || stored.chatId != community.chatId ||
+            currentCommunityId != graph.communityId || runtimeGraph() !== graph
+        ) {
+            return GenesisMigrationResult.NotHost
+        }
+        val trustStore = CommunityTrustStore(requireContext())
+        if (trustStore.get(graph.communityId) != null) return GenesisMigrationResult.AlreadyPublished
+        val communityKey = crypto.chatKeyStore(requireContext()).load(community.chatId) ?: return GenesisMigrationResult.Unavailable
+        val transport = TransportFactory.create(graph.config)
+        if (!CommunityMetadata.isSignedBy(transport, graph.identity.copySignPublic(), identityFactory.identityCrypto())) {
+            return GenesisMigrationResult.NotHost
+        }
+        val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+        val reader = CommunityGovernanceReader(transport, envelopes)
+        val hashes = reader.listHashes(GovernanceObjectKind.GENESIS)
+        if (hashes !is WebDavResult.Success) return GenesisMigrationResult.Unavailable
+        val writer = CommunityGovernanceWriter(transport, envelopes)
+        if (hashes.value.isNotEmpty()) {
+            if (hashes.value.size != 1) return GenesisMigrationResult.Conflict
+            for (hash in hashes.value) {
+                val stored = reader.fetch(GovernanceObjectKind.GENESIS, graph.communityId, hash, communityKey)
+                if (stored !is WebDavResult.Success) return GenesisMigrationResult.Conflict
+                val genesis =
+                    CommunityGenesisCodec.verify(stored.value, graph.communityId, identityFactory.identityCrypto())
+                        ?: return GenesisMigrationResult.Conflict
+                if (!genesis.hostSigningPublicKey.contentEquals(graph.identity.copySignPublic()) ||
+                    !genesis.hostBoxPublicKey.contentEquals(graph.identity.copyBoxPublic())
+                ) {
+                    return GenesisMigrationResult.Conflict
+                }
+                return when (
+                    trustStore.pinGenesis(
+                        graph.communityId,
+                        stored.value,
+                        identityFactory.identityCrypto(),
+                        TrustPinSource.OWNER_CREATED,
+                    )
+                ) {
+                    TrustPinResult.PINNED, TrustPinResult.ALREADY_PINNED -> GenesisMigrationResult.AlreadyPublished
+                    else -> GenesisMigrationResult.Conflict
+                }
+            }
+        }
+        val nonce = ByteArray(32).also(SecureRandom()::nextBytes)
+        val secret = graph.identity.copySignSecret()
+        val genesis =
+            try {
+                CommunityGenesisCodec.sign(
+                    graph.communityId,
+                    graph.identity.copySignPublic(),
+                    graph.identity.copyBoxPublic(),
+                    nonce,
+                    secret,
+                    identityFactory.identityCrypto(),
+                )
+            } finally {
+                nonce.fill(0)
+                secret.fill(0)
+            }
+        return try {
+            val reference = writer.seal(GovernanceObjectKind.GENESIS, graph.communityId, communityKey, genesis)
+            if (writer.publish(reference) !is WebDavResult.Success || runtimeGraph() !== graph) {
+                GenesisMigrationResult.Unavailable
+            } else {
+                when (trustStore.pinGenesis(graph.communityId, genesis, identityFactory.identityCrypto(), TrustPinSource.OWNER_CREATED)) {
+                    TrustPinResult.PINNED, TrustPinResult.ALREADY_PINNED -> GenesisMigrationResult.Published
+                    else -> GenesisMigrationResult.Conflict
+                }
+            }
+        } finally {
+            genesis.fill(0)
+        }
+    }
+
     internal fun communityHostFingerprint(): String? =
         CommunityTrustStore(requireContext()).get(currentCommunityId)?.hostSigningPublicKey?.let(CommunityTrustFingerprint::of)
 
     internal fun communityHostFingerprintVerified(): Boolean =
         CommunityTrustStore(requireContext()).get(currentCommunityId)?.fingerprintVerified == true
 
+    internal fun isCurrentCommunityVerifiedHost(): Boolean {
+        val graph = runtimeGraph() ?: return false
+        val trust = CommunityTrustStore(requireContext()).get(graph.communityId) ?: return false
+        return trust.fingerprintVerified && trust.hostSigningPublicKey.contentEquals(graph.identity.copySignPublic())
+    }
+
     internal fun verifyCommunityHostFingerprint(expected: String): Boolean =
         CommunityTrustStore(requireContext()).verifyFingerprint(currentCommunityId, expected.trim())
+
+    internal suspend fun readCreationPolicySettings(): CreationPolicySettingsState {
+        val graph = runtimeGraph() ?: return CreationPolicySettingsState.Unavailable
+        val trustStore = CommunityTrustStore(requireContext())
+        val trust = trustStore.get(graph.communityId) ?: return CreationPolicySettingsState.DefaultAllowed
+        if (!trust.fingerprintVerified) return CreationPolicySettingsState.Unavailable
+        val key =
+            loadRosterCommunityKey(configStore.loadStored(graph.communityId) ?: return CreationPolicySettingsState.Unavailable)
+                ?: return CreationPolicySettingsState.Unavailable
+        val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+        val reader = CommunityGovernanceReader(TransportFactory.create(graph.config), envelopes)
+        val result =
+            CommunityCreationPolicyService(
+                reader,
+                graph.communityId,
+                key,
+                trust.hostSigningPublicKey,
+                trust.highestPolicyRevision > 0,
+                identityFactory.identityCrypto(),
+                { revision, hash -> trustStore.acceptPolicyRevision(graph.communityId, revision, hash) },
+            ).read()
+        if (runtimeGraph() !== graph) return CreationPolicySettingsState.Unavailable
+        return when (result) {
+            CommunityCreationPolicyService.Result.DefaultAllowed -> CreationPolicySettingsState.DefaultAllowed
+            CommunityCreationPolicyService.Result.Blocked -> CreationPolicySettingsState.Blocked
+            is CommunityCreationPolicyService.Result.Policy ->
+                CreationPolicySettingsState.Policy(result.value.allowPublic, result.value.allowPrivate, result.value.revision)
+        }
+    }
+
+    internal suspend fun updateCreationPolicy(
+        allowPublic: Boolean,
+        allowPrivate: Boolean,
+    ): CreationPolicyUpdateResult =
+        creationPolicyWriteMutex.withLock {
+            val graph = runtimeGraph() ?: return@withLock CreationPolicyUpdateResult.Unavailable
+            val generation = AccountMutationBarrier.process.replacementGeneration()
+            if (currentCommunityId != graph.communityId || !UserSettings.isHostFor(graph.communityId)) {
+                return@withLock CreationPolicyUpdateResult.NotAuthorized
+            }
+            val trustStore = CommunityTrustStore(requireContext())
+            val trust = trustStore.get(graph.communityId) ?: return@withLock CreationPolicyUpdateResult.NotAuthorized
+            if (!trust.fingerprintVerified || !trust.hostSigningPublicKey.contentEquals(graph.identity.copySignPublic())) {
+                return@withLock CreationPolicyUpdateResult.NotAuthorized
+            }
+            val stored = configStore.loadStored(graph.communityId) ?: return@withLock CreationPolicyUpdateResult.Unavailable
+            val key = loadRosterCommunityKey(stored) ?: return@withLock CreationPolicyUpdateResult.Unavailable
+            val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+            val transport = TransportFactory.create(stored.config)
+            val secret = graph.identity.copySignSecret()
+            val result =
+                try {
+                    CommunityCreationPolicyAdministration(
+                        CommunityGovernanceReader(transport, envelopes),
+                        CommunityGovernanceWriter(transport, envelopes),
+                        graph.communityId,
+                        key,
+                        trust.hostSigningPublicKey,
+                        secret,
+                        trust.highestPolicyRevision,
+                        trust.highestPolicyHash,
+                        identityFactory.identityCrypto(),
+                        { revision, hash -> trustStore.acceptPolicyRevision(graph.communityId, revision, hash) },
+                    ).update(allowPublic, allowPrivate)
+                } finally {
+                    secret.fill(0)
+                }
+            if (generation != AccountMutationBarrier.process.replacementGeneration() || runtimeGraph() !== graph) {
+                return@withLock CreationPolicyUpdateResult.Unavailable
+            }
+            when (result) {
+                is CommunityCreationPolicyAdministration.Result.Published -> CreationPolicyUpdateResult.Saved
+                CommunityCreationPolicyAdministration.Result.Unavailable -> CreationPolicyUpdateResult.Unavailable
+                CommunityCreationPolicyAdministration.Result.Conflict -> CreationPolicyUpdateResult.Conflict
+                CommunityCreationPolicyAdministration.Result.TooManyOrigins -> CreationPolicyUpdateResult.TooManyOrigins
+            }
+        }
 
     internal fun configureChatOpenTestSeam(
         communityId: String,
@@ -1131,6 +1296,63 @@ internal object AppContainer {
 
     fun observeDeletedChatKeys(): Flow<Set<Pair<String, String>>> = ChatDeletionStateStore.observeDeletedChatKeys(appContext)
 
+    internal suspend fun projectDeleteForAllCapability(graph: RuntimeGraph): ChatDeleteCapability {
+        if (runtimeGraph() !== graph) return ChatDeleteCapability.Unavailable
+        val entry = chatFor(graph.communityId, graph.chatId) ?: return ChatDeleteCapability.NotAuthorized
+        val stored = configStore.loadStored(graph.communityId) ?: return ChatDeleteCapability.Unavailable
+        val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+        val reader = CommunityGovernanceReader(TransportFactory.create(stored.config), envelopes)
+        val idCrypto = identityFactory.identityCrypto()
+        val capability =
+            when (entry.kind) {
+                "group" -> {
+                    val communityKey = loadRosterCommunityKey(stored) ?: return ChatDeleteCapability.Unavailable
+                    val trust = CommunityTrustStore(requireContext()).get(graph.communityId)
+                    val verifiedHost =
+                        trust?.fingerprintVerified == true &&
+                            trust.hostSigningPublicKey.contentEquals(graph.identity.copySignPublic())
+                    when (
+                        val origin =
+                            CommunityGroupOriginScanner(
+                                reader,
+                                idCrypto,
+                            ).inspect(graph.communityId, graph.chatId, communityKey)
+                    ) {
+                        CommunityGroupOriginScanner.Result.Unavailable -> ChatDeleteCapability.Unavailable
+                        is CommunityGroupOriginScanner.Result.Found ->
+                            if (verifiedHost || origin.origin.creatorSigningPublicKey.contentEquals(graph.identity.copySignPublic())) {
+                                ChatDeleteCapability.Available
+                            } else {
+                                ChatDeleteCapability.NotAuthorized
+                            }
+                        CommunityGroupOriginScanner.Result.Empty, CommunityGroupOriginScanner.Result.Conflict ->
+                            if (verifiedHost) ChatDeleteCapability.Available else ChatDeleteCapability.NotAuthorized
+                    }
+                }
+                "dm" -> {
+                    when (
+                        val origin =
+                            CommunityDmOriginScanner(
+                                reader,
+                                envelopes,
+                                idCrypto,
+                            ).inspectOrigin(graph.communityId, graph.chatId, graph.chatKey)
+                    ) {
+                        CommunityDmOriginScanner.Result.Unavailable -> ChatDeleteCapability.Unavailable
+                        is CommunityDmOriginScanner.Result.Found ->
+                            if (origin.origin.initiatorSigningPublicKey.contentEquals(graph.identity.copySignPublic())) {
+                                ChatDeleteCapability.Available
+                            } else {
+                                ChatDeleteCapability.NotAuthorized
+                            }
+                        CommunityDmOriginScanner.Result.Empty, CommunityDmOriginScanner.Result.Conflict -> ChatDeleteCapability.Unavailable
+                    }
+                }
+                else -> ChatDeleteCapability.NotAuthorized
+            }
+        return if (runtimeGraph() === graph) capability else ChatDeleteCapability.Unavailable
+    }
+
     suspend fun deleteForAll(graph: RuntimeGraph): ChatDeletionStatus =
         when (chatFor(graph.communityId, graph.chatId)?.kind) {
             "group" -> deleteGroupForAll(graph)
@@ -1761,12 +1983,19 @@ internal object AppContainer {
                             kindOverride = "group",
                             keyOverride = communityKey,
                         )
-                    if (reconciliation !in setOf(TombstoneReconciler.Result.NoTombstone, TombstoneReconciler.Result.Unauthorized)) continue
+                    if (reconciliation !in setOf(TombstoneReconciler.Result.NoTombstone, TombstoneReconciler.Result.Unauthorized)) {
+                        continue
+                    }
                     if (isChatDeletionCommitted(community.id, chatIdHex)) continue
+                    val existing = chatRegistry.all(community.id)
+                    if (existing.none { it.id == chatIdHex } &&
+                        !isPublicGroupDiscoveryAllowed(community.id, chatIdHex, stored.config, communityKey)
+                    ) {
+                        continue
+                    }
                     // Public groups use the community key; restore a missing key for existing rows too.
                     val keyStore = crypto.chatKeyStore(requireContext())
                     if (keyStore.load(chatIdHex) == null) keyStore.store(chatIdHex, communityKey)
-                    val existing = chatRegistry.all(community.id)
                     if (existing.none { it.id == chatIdHex }) {
                         chatRegistry.add(
                             community.id,
@@ -1776,6 +2005,44 @@ internal object AppContainer {
                 }
             } catch (_: Exception) {
                 // best-effort — retry next cycle
+            }
+        }
+    }
+
+    private suspend fun isPublicGroupDiscoveryAllowed(
+        communityId: String,
+        chatId: String,
+        config: ConnectionConfig,
+        communityKey: ChatKey,
+    ): Boolean {
+        val trustStore = CommunityTrustStore(requireContext())
+        val trust = trustStore.get(communityId) ?: return true
+        val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+        val reader = CommunityGovernanceReader(TransportFactory.create(config), envelopes)
+        val policy =
+            CommunityCreationPolicyService(
+                reader,
+                communityId,
+                communityKey,
+                trust.hostSigningPublicKey,
+                trust.highestPolicyRevision > 0,
+                identityFactory.identityCrypto(),
+                { revision, hash -> trustStore.acceptPolicyRevision(communityId, revision, hash) },
+            ).read()
+        return when (policy) {
+            CommunityCreationPolicyService.Result.DefaultAllowed -> true
+            CommunityCreationPolicyService.Result.Blocked -> false
+            is CommunityCreationPolicyService.Result.Policy -> {
+                if (policy.value.allowPublic) {
+                    true
+                } else {
+                    val origin =
+                        CommunityGroupOriginScanner(reader, identityFactory.identityCrypto())
+                            .inspect(communityId, chatId, communityKey)
+                    origin is CommunityGroupOriginScanner.Result.Found &&
+                        origin.origin.access == ChatAccess.PUBLIC &&
+                        origin.originHash in policy.value.grandfatheredOriginHashes
+                }
             }
         }
     }

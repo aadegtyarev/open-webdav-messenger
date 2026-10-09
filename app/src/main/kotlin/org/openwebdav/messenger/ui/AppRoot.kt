@@ -194,7 +194,7 @@ internal fun AppNav(initialScreen: Screen? = null) {
             ChatFeedScreen(
                 onShowInvite = { screen = Screen.Invite },
                 canDeleteLocalDm = activeChat?.kind == "dm",
-                canDeleteForAll = activeChat?.kind in setOf("group", "dm"),
+                canDeleteForAll = false,
                 chatTitle = activeChat?.name.orEmpty(),
                 onLocalDmDeleted = { screen = Screen.CommunityList },
                 onChatDeleted = { screen = Screen.CommunityList },

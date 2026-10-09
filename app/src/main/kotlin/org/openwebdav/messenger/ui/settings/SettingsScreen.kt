@@ -40,6 +40,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -51,6 +52,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -68,6 +70,9 @@ import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.CommunityMetadataUpdate
+import org.openwebdav.messenger.app.CreationPolicySettingsState
+import org.openwebdav.messenger.app.CreationPolicyUpdateResult
+import org.openwebdav.messenger.app.GenesisMigrationResult
 import org.openwebdav.messenger.app.NotificationPermissionPolicy
 import org.openwebdav.messenger.app.UpdateChecker
 import kotlin.math.abs
@@ -154,7 +159,9 @@ internal fun SettingsScreen(
 
             PollFloorSection(isHost, communityPollFloor, onPollFloorChanged, snackbarHostState)
 
-            CommunityHostIdentitySection(snackbarHostState)
+            CommunityHostIdentitySection(snackbarHostState, isHost)
+
+            CreationPolicySection(isHost && AppContainer.isCurrentCommunityVerifiedHost(), snackbarHostState)
 
             PersonalPollSection(snackbarHostState)
 
@@ -175,17 +182,57 @@ internal fun SettingsScreen(
 }
 
 @Composable
-private fun CommunityHostIdentitySection(snackbarHostState: SnackbarHostState) {
-    val fingerprint = AppContainer.communityHostFingerprint() ?: return
+private fun CommunityHostIdentitySection(
+    snackbarHostState: SnackbarHostState,
+    isHost: Boolean,
+) {
+    val communityId = AppContainer.activeCommunityId
     val scope = rememberCoroutineScope()
-    var expected by remember(fingerprint) { mutableStateOf("") }
-    var verified by remember(fingerprint) { mutableStateOf(AppContainer.communityHostFingerprintVerified()) }
+    var fingerprint by remember(communityId) { mutableStateOf(AppContainer.communityHostFingerprint()) }
+    var expected by remember(communityId) { mutableStateOf("") }
+    var verified by remember(communityId) { mutableStateOf(AppContainer.communityHostFingerprintVerified()) }
+    var publishing by remember(communityId) { mutableStateOf(false) }
     val successMessage = stringResource(R.string.community_host_verify_success)
     val failureMessage = stringResource(R.string.community_host_verify_failure)
+    val publishSuccess = stringResource(R.string.community_genesis_publish_success)
+    val publishFailure = stringResource(R.string.community_genesis_publish_failure)
 
     Text(stringResource(R.string.community_host_identity_title), style = MaterialTheme.typography.titleMedium)
-    SelectionContainer {
-        Text(stringResource(R.string.community_host_fingerprint, fingerprint))
+    if (fingerprint == null && isHost) {
+        Text(stringResource(R.string.community_genesis_migration_guidance), style = MaterialTheme.typography.bodySmall)
+        Button(
+            onClick = {
+                if (publishing) return@Button
+                publishing = true
+                scope.launch {
+                    val result = AppContainer.publishExistingCommunityGenesis()
+                    publishing = false
+                    if (result in setOf(GenesisMigrationResult.Published, GenesisMigrationResult.AlreadyPublished)) {
+                        fingerprint = AppContainer.communityHostFingerprint()
+                        verified = AppContainer.communityHostFingerprintVerified()
+                    }
+                    snackbarHostState.showSnackbar(
+                        if (result in setOf(GenesisMigrationResult.Published, GenesisMigrationResult.AlreadyPublished)) {
+                            publishSuccess
+                        } else {
+                            publishFailure
+                        },
+                    )
+                }
+            },
+            enabled = !publishing,
+        ) {
+            if (publishing) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+            } else {
+                Text(stringResource(R.string.community_genesis_publish))
+            }
+        }
+    }
+    fingerprint?.let { value ->
+        SelectionContainer {
+            Text(stringResource(R.string.community_host_fingerprint, value))
+        }
     }
     if (verified) {
         Text(stringResource(R.string.community_host_verified))
@@ -208,6 +255,86 @@ private fun CommunityHostIdentitySection(snackbarHostState: SnackbarHostState) {
             enabled = expected.isNotBlank(),
         ) {
             Text(stringResource(R.string.community_host_verify))
+        }
+    }
+}
+
+@Composable
+private fun CreationPolicySection(
+    canAdminister: Boolean,
+    snackbarHostState: SnackbarHostState,
+) {
+    val communityId = AppContainer.activeCommunityId
+    val scope = rememberCoroutineScope()
+    var state by remember(communityId) { mutableStateOf<CreationPolicySettingsState>(CreationPolicySettingsState.Loading) }
+    var updating by remember(communityId) { mutableStateOf(false) }
+    val loading = stringResource(R.string.creation_policy_loading)
+    val unavailable = stringResource(R.string.creation_policy_unavailable)
+    val blocked = stringResource(R.string.creation_policy_blocked)
+    val failed = stringResource(R.string.creation_policy_update_failed)
+    val saved = stringResource(R.string.creation_policy_saved)
+
+    suspend fun refresh() {
+        state = CreationPolicySettingsState.Loading
+        state = withContext(Dispatchers.IO) { AppContainer.readCreationPolicySettings() }
+    }
+
+    suspend fun updatePolicy(
+        allowPublic: Boolean,
+        allowPrivate: Boolean,
+    ) {
+        if (updating) return
+        updating = true
+        val result = withContext(Dispatchers.IO) { AppContainer.updateCreationPolicy(allowPublic, allowPrivate) }
+        updating = false
+        if (result == CreationPolicyUpdateResult.Saved) {
+            refresh()
+            snackbarHostState.showSnackbar(saved)
+        } else {
+            state =
+                when (result) {
+                    CreationPolicyUpdateResult.Unavailable -> CreationPolicySettingsState.Unavailable
+                    CreationPolicyUpdateResult.TooManyOrigins -> CreationPolicySettingsState.Unavailable
+                    CreationPolicyUpdateResult.Conflict -> CreationPolicySettingsState.Blocked
+                    CreationPolicyUpdateResult.NotAuthorized -> CreationPolicySettingsState.Blocked
+                    CreationPolicyUpdateResult.Saved -> state
+                }
+            snackbarHostState.showSnackbar(failed)
+        }
+    }
+
+    LaunchedEffect(communityId) { refresh() }
+    Text(stringResource(R.string.creation_policy_title), style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(R.string.creation_policy_host_exemption), style = MaterialTheme.typography.bodySmall)
+    when (val current = state) {
+        CreationPolicySettingsState.Loading -> {
+            Text(loading)
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        CreationPolicySettingsState.Unavailable, CreationPolicySettingsState.Blocked -> {
+            Text(if (current == CreationPolicySettingsState.Blocked) blocked else unavailable)
+            OutlinedButton(onClick = { scope.launch { refresh() } }) { Text(stringResource(R.string.participants_retry)) }
+        }
+        CreationPolicySettingsState.DefaultAllowed, is CreationPolicySettingsState.Policy -> {
+            if (canAdminister) {
+                val allowPublic = if (current is CreationPolicySettingsState.Policy) current.allowPublic else true
+                val allowPrivate = if (current is CreationPolicySettingsState.Policy) current.allowPrivate else true
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.creation_policy_public), modifier = Modifier.weight(1f))
+                    Switch(checked = allowPublic, onCheckedChange = { checked ->
+                        scope.launch { updatePolicy(checked, allowPrivate) }
+                    }, enabled = !updating)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.creation_policy_private), modifier = Modifier.weight(1f))
+                    Switch(checked = allowPrivate, onCheckedChange = { checked ->
+                        scope.launch { updatePolicy(allowPublic, checked) }
+                    }, enabled = !updating)
+                }
+                if (updating) CircularProgressIndicator(modifier = Modifier.size(20.dp))
+            } else {
+                Text(stringResource(R.string.creation_policy_read_only))
+            }
         }
     }
 }

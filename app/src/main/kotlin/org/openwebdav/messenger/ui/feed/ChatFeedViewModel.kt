@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.ChatDeleteCapability
 import org.openwebdav.messenger.app.ChatDeletionStatus
 import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.MessageSendService
@@ -41,6 +42,21 @@ internal class ChatFeedViewModel(
     val communityName: String = graph.communityName
     val recipientReadiness = graph.recipientReadiness
     val privateClaimStatus: StateFlow<PrivateClaimPublicationStatus> = graph.privateClaimStatus
+    private val _deleteCapability = MutableStateFlow<ChatDeleteCapability>(ChatDeleteCapability.Loading)
+    val deleteCapability: StateFlow<ChatDeleteCapability> = _deleteCapability
+
+    init {
+        refreshDeleteCapability()
+    }
+
+    fun refreshDeleteCapability() {
+        _deleteCapability.value = ChatDeleteCapability.Loading
+        viewModelScope.launch {
+            _deleteCapability.value =
+                runCatching { AppContainer.projectDeleteForAllCapability(graph) }
+                    .getOrDefault(ChatDeleteCapability.Unavailable)
+        }
+    }
 
     /** Error from the last member-name load — observed from the shared RuntimeGraph. */
     val memberNamesError: StateFlow<String?> = graph.memberNamesError

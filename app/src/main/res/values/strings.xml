@@ -31,6 +31,8 @@
     <string name="chat_delete_all_title">Delete this chat for everyone?</string>
     <string name="chat_delete_all_confirmation">Type “%1$s” to publish a permanent deletion tombstone. Remote content cleanup may remain pending.</string>
     <string name="chat_delete_all_action">Delete for everyone</string>
+    <string name="chat_delete_authority_loading">Checking delete authority</string>
+    <string name="chat_delete_authority_retry">Delete authority unavailable. Tap to retry.</string>
     <string name="chat_delete_failure">Deletion was not authorized or could not be safely started.</string>
     <string name="cancel">Cancel</string>
     <string name="community_host_identity_title">Community host identity</string>
@@ -41,6 +43,20 @@
     <string name="community_host_verify">Verify fingerprint</string>
     <string name="community_host_verify_success">Host fingerprint verified.</string>
     <string name="community_host_verify_failure">Fingerprint did not match. Host trust was not changed.</string>
+    <string name="community_genesis_migration_guidance">As the locally configured host, publish a signed host identity so members can verify this community through a trusted channel.</string>
+    <string name="community_genesis_publish">Publish host identity</string>
+    <string name="community_genesis_publish_success">Host identity published and pinned locally.</string>
+    <string name="community_genesis_publish_failure">Could not safely publish host identity. Check the community connection and host identity.</string>
+    <string name="creation_policy_title">Group creation policy</string>
+    <string name="creation_policy_public">Allow public group chats</string>
+    <string name="creation_policy_private">Allow private group chats</string>
+    <string name="creation_policy_host_exemption">These settings apply to hosts as well as members. Old clients and shared WebDAV credentials can bypass cooperative policy.</string>
+    <string name="creation_policy_read_only">Only the verified community host can change this policy.</string>
+    <string name="creation_policy_loading">Loading verified group creation policy.</string>
+    <string name="creation_policy_unavailable">Policy or the complete origin list is unavailable. The previous policy remains active.</string>
+    <string name="creation_policy_blocked">Policy conflict or rollback detected. Creation settings are blocked.</string>
+    <string name="creation_policy_saved">Group creation policy saved.</string>
+    <string name="creation_policy_update_failed">Could not update policy safely. Previous settings remain in effect.</string>
 
     <!-- Export / Restore -->
     <string name="export_restore_title">Backup &amp; Restore</string>

@@ -22,6 +22,22 @@ A WebDAV rejection or I/O failure leaves the prior committed remote policy visib
 
 Community metadata remains signed by the host identity and stored in the existing WebDAV metadata file. This contract does not redesign signature, invite, membership, or WebDAV wire formats. Disk operators can observe collection/file metadata as documented in the threat model.
 
+## Governance settings (v0.25.0)
+
+- Existing communities can publish host-signed genesis only through an explicit
+  migration action. Members verify the short host fingerprint or import a fresh
+  governance invite; self-signed metadata and the local host toggle are not
+  authority.
+- A verified host can independently allow/deny public and private group
+  creation. Disabling a type first completes a bounded verified origin scan and
+  stores an immutable grandfather snapshot. Revision/high-water conflicts or
+  unavailable publication leave prior state unchanged and offer retry.
+- Policy controls are hidden or read-only when host authority is unverified.
+  The host-exemption behavior is disclosed: policy also applies to host-created
+  groups. Existing groups remain open when creation is disabled.
+- See [WebDAV protocol §13](../../protocol/webdav-layout.md#13-community-governance-origins-and-tombstones)
+  for trust and compatibility limits.
+
 ## Related contracts
 
 - [Chat surface](chat-surface.md)

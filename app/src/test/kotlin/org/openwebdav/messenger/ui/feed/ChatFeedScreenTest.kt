@@ -31,6 +31,7 @@ import org.junit.runner.RunWith
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppTestSupport
 import org.openwebdav.messenger.app.CachedVerifiedRoster
+import org.openwebdav.messenger.app.ChatDeleteCapability
 import org.openwebdav.messenger.app.EngineWiring
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RosterCacheProvenance
@@ -186,6 +187,29 @@ class ChatFeedScreenTest {
             assertEquals("", store.cursorFor(chatId))
             assertFalse(store.persist("old-message", "0001", TextMessage(chatId, identity.publicIdentity(), null, "replay", 2L), 2L))
         }
+    }
+
+    @Test
+    fun remote_delete_actions_follow_projected_authority_and_local_dm_stays_available() {
+        val viewModel = ChatFeedViewModel(graph())
+        val capability = mutableStateOf<ChatDeleteCapability?>(ChatDeleteCapability.NotAuthorized)
+        composeRule.setContent {
+            ChatFeedScreen(
+                onShowInvite = {},
+                canDeleteLocalDm = true,
+                deleteCapabilityOverride = capability.value,
+                viewModel = viewModel,
+            )
+        }
+        composeRule.onNodeWithContentDescription("Delete for everyone").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Delete locally").assertIsDisplayed()
+
+        composeRule.runOnIdle { capability.value = ChatDeleteCapability.Loading }
+        composeRule.onNodeWithContentDescription("Checking delete authority").assertIsDisplayed()
+        composeRule.runOnIdle { capability.value = ChatDeleteCapability.Unavailable }
+        composeRule.onNodeWithContentDescription("Delete authority unavailable. Tap to retry.").assertIsDisplayed()
+        composeRule.runOnIdle { capability.value = ChatDeleteCapability.Available }
+        composeRule.onNodeWithContentDescription("Delete for everyone").assertIsDisplayed()
     }
 
     /** An empty chat shows the empty-state prompt and the disabled-until-typed Send action. */

@@ -231,6 +231,22 @@ Inbound credential application uses the same owner lock. Runtime reinstallation
 occurs only while the captured owner remains selected and its runtime key is
 current. The active group/DM remains intact.
 
+## Governance and deletion (v0.25.0)
+
+- Group delete-for-all is offered only when the verified authority projection
+  confirms pinned-host or immutable-creator authority. DM delete-for-both is
+  offered only to the verified origin initiator; every DM participant retains
+  local deletion independently. Unavailable authority stays visibly loading or
+  retryable and never grants an action.
+- Local graveyard state is committed before remote publication. A tombstone
+  permanently closes its chat origin; reconciliation purges stale local state
+  before surfacing it. Cleanup is selective, best-effort, and durably retried;
+  incomplete cleanup never restores a deleted chat.
+- Offline open remains read-only when tombstone scanning is unavailable for
+  compatibility; polling and sending remain gated until reconciliation.
+- See [WebDAV protocol §13](../../protocol/webdav-layout.md#13-community-governance-origins-and-tombstones)
+  for wire formats and trust limits.
+
 **Accessible retry control:** Failed-message retry is a labelled button with a
 minimum 48×48dp target. It invokes the existing retry operation for the original
 message; it does not change envelope or message-ID semantics.
