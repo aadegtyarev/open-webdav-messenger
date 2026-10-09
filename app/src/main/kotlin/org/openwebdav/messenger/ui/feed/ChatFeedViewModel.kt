@@ -41,6 +41,9 @@ internal class ChatFeedViewModel(
     private val reconcileTombstone: suspend () -> TombstoneReconciler.Result = {
         AppContainer.reconcileRemoteTombstone(graph.communityId, graph.chatId, expectedGraph = graph)
     },
+    private val isGeneralAnchor: () -> Boolean = {
+        AppContainer.isExactUndeletableGeneralAnchor(graph.communityId, graph.chatId)
+    },
 ) : ViewModel() {
     val communityName: String = graph.communityName
     val recipientReadiness = graph.recipientReadiness
@@ -179,13 +182,16 @@ internal class ChatFeedViewModel(
         viewModelScope.launch {
             val delivered =
                 try {
-                    if (reconcileTombstone() != TombstoneReconciler.Result.NoTombstone ||
-                        graph.isDeletionFenced() || graph.store.isChatDeleted(graph.chatId)
-                    ) {
+                    if (reconcileTombstone() != TombstoneReconciler.Result.NoTombstone) {
                         false
                     } else {
-                        AppContainer.retryPendingChatDeletions()
-                        sendService.retry(messageId)
+                        val generalAnchor = isGeneralAnchor()
+                        if (graph.isDeletionFenced() || (!generalAnchor && graph.store.isChatDeleted(graph.chatId))) {
+                            false
+                        } else {
+                            if (!generalAnchor) AppContainer.retryPendingChatDeletions()
+                            sendService.retry(messageId)
+                        }
                     }
                 } catch (_: Exception) {
                     false

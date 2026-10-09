@@ -15,6 +15,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -80,7 +82,10 @@ class ChatFeedViewModelSendFailureTest {
             }
         }
 
-    private fun testGraph(): RuntimeGraph {
+    private fun testGraph(
+        targetChatId: String = chatId,
+        communityId: String = "default",
+    ): RuntimeGraph {
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
         val engine =
             SyncEngine(
@@ -94,11 +99,12 @@ class ChatFeedViewModelSendFailureTest {
             store = store,
             envelope = envelope,
             config = SyncTestSupport.config(server),
-            chatId = chatId,
+            chatId = targetChatId,
             communityName = "Community",
             chatKey = chatKey,
             identity = identity,
             senderIdentifier = Hex.encode(identity.copySignPublic()),
+            communityId = communityId,
         )
     }
 
@@ -146,7 +152,14 @@ class ChatFeedViewModelSendFailureTest {
                     resultGate = networkGate,
                     resultComplete = false,
                 )
-            val vm = track(ChatFeedViewModel(testGraph(), sender))
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
+                )
             vm.onDraft("original")
             vm.send()
             runCurrent()
@@ -167,7 +180,14 @@ class ChatFeedViewModelSendFailureTest {
         runTest(mainDispatcher) {
             val gate = CompletableDeferred<Unit>()
             val sender = ControlledSender(StandardTestDispatcher(testScheduler), gate)
-            val vm = track(ChatFeedViewModel(testGraph(), sender))
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
+                )
 
             vm.onDraft("original")
             vm.send()
@@ -194,7 +214,14 @@ class ChatFeedViewModelSendFailureTest {
     fun persistence_failure_releases_revision_reservation_without_clearing_draft() =
         runTest(mainDispatcher) {
             val sender = ControlledSender(StandardTestDispatcher(testScheduler), failFirst = true)
-            val vm = track(ChatFeedViewModel(testGraph(), sender))
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
+                )
             vm.onDraft("retry after persistence failure")
 
             vm.send()
@@ -207,6 +234,55 @@ class ChatFeedViewModelSendFailureTest {
             assertEquals(2, sender.attempts)
             assertEquals(1, sender.persisted)
             assertEquals("", vm.draft.first())
+        }
+
+    @Test
+    fun exact_general_retry_accepts_no_tombstone_reconciliation() =
+        runTest(mainDispatcher) {
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler))
+            val graph = testGraph(targetChatId = "general-anchor", communityId = "community-a")
+            assertFalse(graph.isDeletionFenced())
+            assertFalse(graph.store.isChatDeleted(graph.chatId))
+            var reconciled = false
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        graph,
+                        sender,
+                        reconcileTombstone = {
+                            reconciled = true
+                            TombstoneReconciler.Result.NoTombstone
+                        },
+                        isGeneralAnchor = { true },
+                    ),
+                )
+
+            vm.retryFailed("message-id")
+            advanceUntilIdle()
+
+            assertTrue(reconciled)
+            assertEquals(1, sender.retryAttempts)
+        }
+
+    @Test
+    fun unauthorized_group_or_dm_reconciliation_blocks_explicit_retry() =
+        runTest(mainDispatcher) {
+            for (chatId in listOf("group-chat", "dm-chat")) {
+                val sender = ControlledSender(StandardTestDispatcher(testScheduler))
+                val vm =
+                    track(
+                        ChatFeedViewModel(
+                            testGraph(targetChatId = chatId),
+                            sender,
+                            reconcileTombstone = { TombstoneReconciler.Result.Unauthorized },
+                        ),
+                    )
+
+                vm.retryFailed("message-id")
+                advanceUntilIdle()
+
+                assertEquals(0, sender.retryAttempts)
+            }
         }
 
     @Test

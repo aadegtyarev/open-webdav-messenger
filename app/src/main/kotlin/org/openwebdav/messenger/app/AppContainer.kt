@@ -1475,11 +1475,7 @@ internal object AppContainer {
             )
         signed.fill(0)
         val service = CommunityTombstoneService(reader, writer, envelopes, identityFactory.identityCrypto())
-        val status = executePreparedDeletion(graph, stored, communityKey, graph.chatKey, envelopes, service, deletion, current)
-        if (status in setOf(ChatDeletionStatus.TOMBSTONE_PUBLISHED, ChatDeletionStatus.CLEANUP_PENDING, ChatDeletionStatus.COMPLETE)) {
-            runCatching { crypto.chatKeyStore(requireContext()).removeStrict(graph.chatId) }
-        }
-        return status
+        return executePreparedDeletion(graph, stored, communityKey, graph.chatKey, envelopes, service, deletion, generation, current)
     }
 
     private suspend fun executePreparedDeletion(
@@ -1490,6 +1486,7 @@ internal object AppContainer {
         envelopes: CommunityGovernanceEnvelopeCodec,
         service: CommunityTombstoneService,
         deletion: ChatDeletionEntity,
+        generation: Long,
         current: () -> Boolean,
     ): ChatDeletionStatus {
         val objectKind =
@@ -1525,6 +1522,9 @@ internal object AppContainer {
                                         graph.identity,
                                         AccountMutationBarrier.process.replacementGeneration(),
                                         removeKey = row.scope == ChatDeletionEntity.SCOPE_GROUP,
+                                        expectedConfig = stored.config,
+                                        expectedRuntimeGraph = graph,
+                                        requireTargetRuntime = true,
                                     )
                                 ) {
                                     committed
@@ -1553,7 +1553,23 @@ internal object AppContainer {
                         bytes.fill(0)
                     }
                 },
-                cleanup = { row ->
+                cleanup = cleanup@{ row ->
+                    if (row.scope == ChatDeletionEntity.SCOPE_DM) {
+                        val keyRemoval = ChatDeletionKeyRemoval { AccountMutationBarrier.process.replacementGeneration() }
+                        val removed =
+                            AccountMutationBarrier.process.withStableAccount {
+                                keyRemoval.removeLocked(
+                                    generation,
+                                    {
+                                        current() && configStore.loadStored(graph.communityId)?.config == stored.config &&
+                                            runtimeGraph() === graph
+                                    },
+                                ) {
+                                    removeChatKeyIfUnreferencedLocked(graph.communityId, row.chatId, requireContext())
+                                }
+                            }
+                        if (!removed) return@cleanup false
+                    }
                     val cleanup =
                         ChatRemoteCleanup(
                             TransportFactory.create(stored.config),
@@ -1654,6 +1670,9 @@ internal object AppContainer {
                                         graph.identity,
                                         generation,
                                         removeKey = true,
+                                        expectedConfig = stored.config,
+                                        expectedRuntimeGraph = graph,
+                                        requireTargetRuntime = true,
                                     )
                                 ) {
                                     committed
@@ -1699,6 +1718,7 @@ internal object AppContainer {
         return coordinator.execute(deletion)
     }
 
+    /** Caller holds the stable-account barrier across every local purge and reference scan. */
     private fun purgeDeletedChatStateLocked(
         communityId: String,
         chatId: String,
@@ -1706,15 +1726,26 @@ internal object AppContainer {
         identity: Identity,
         generation: Long,
         removeKey: Boolean,
+        expectedConfig: ConnectionConfig? = null,
+        expectedRuntimeGraph: RuntimeGraph? = runtimeGraph(),
+        requireTargetRuntime: Boolean = false,
     ): Boolean {
         val context = appContext ?: return false
         val stored = configStore.loadStored(communityId) ?: return false
-        val expectedConfig = stored.config
+        val stableConfig = expectedConfig ?: stored.config
+        if (stored.config != stableConfig) return false
+        if (requireTargetRuntime && expectedRuntimeGraph != null &&
+            (expectedRuntimeGraph.communityId != communityId || expectedRuntimeGraph.chatId != chatId)
+        ) {
+            return false
+        }
+        val keyRemoval = ChatDeletionKeyRemoval { AccountMutationBarrier.process.replacementGeneration() }
         val purger =
             ChatDeletionPurger(
                 isCurrent = {
                     generation == AccountMutationBarrier.process.replacementGeneration() &&
-                        configStore.loadStored(communityId)?.config == expectedConfig
+                        configStore.loadStored(communityId)?.config == stableConfig &&
+                        runtimeGraph() === expectedRuntimeGraph
                 },
                 fenceGraph = { id, target ->
                     runtimeGraph()?.takeIf { it.communityId == id && it.chatId == target }?.fenceDeletedChat()
@@ -1723,13 +1754,43 @@ internal object AppContainer {
                 invalidatePrivateMembership = { id, target -> privateMembershipCache.invalidate(id, target) },
                 invalidatePendingClaim = { id, target -> pendingPrivateClaimStore.invalidate(id, target, identity) },
                 invalidateRetryCursor = { id, target -> privateClaimRetryCursorStore.removeChat(id, identity, target) },
-                removeChatKey = { target -> crypto.chatKeyStore(context).removeStrict(target) },
+                removeChatKey = { target ->
+                    check(
+                        keyRemoval.removeLocked(
+                            generation,
+                            { configStore.loadStored(communityId)?.config == stableConfig && runtimeGraph() === expectedRuntimeGraph },
+                        ) { removeChatKeyIfUnreferencedLocked(communityId, target, context) },
+                    ) { "chat key references unavailable or deletion context changed" }
+                },
                 removeRegistryEntry = { id, target ->
                     val rows = chatRegistry.all(id)
                     if (rows.any { it.id == target }) chatRegistry.replace(id, rows.filterNot { it.id == target })
                 },
             )
         return purger.purge(communityId, chatId, stored.chatId, kind, removeKey)
+    }
+
+    /** Caller holds the stable-account barrier; the guard reads every live community before deletion. */
+    private fun removeChatKeyIfUnreferencedLocked(
+        communityId: String,
+        chatId: String,
+        context: Context,
+    ): Boolean {
+        val guard =
+            ChatKeyReferenceGuard(
+                loadCommunities = communityRegistry::all,
+                loadCommunityIds = configStore::listCommunityIds,
+                loadStoredAnchor = { configStore.loadStored(it)?.chatId },
+                loadChats = chatRegistry::all,
+            )
+        return when (
+            guard.removeIfUnreferenced(communityId, chatId) {
+                crypto.chatKeyStore(context).removeStrict(chatId)
+            }
+        ) {
+            ChatKeyReferenceGuard.Decision.Unreferenced, ChatKeyReferenceGuard.Decision.Referenced -> true
+            ChatKeyReferenceGuard.Decision.Unavailable -> false
+        }
     }
 
     suspend fun reconcileRemoteTombstone(
@@ -1740,11 +1801,22 @@ internal object AppContainer {
         keyOverride: ChatKey? = null,
         expectedGraph: RuntimeGraph? = null,
     ): TombstoneReconciler.Result {
-        val entry = chatFor(communityId, chatId)
-        val kind = kindOverride ?: entry?.kind ?: return TombstoneReconciler.Result.NoTombstone
-        if (kind == "general") return TombstoneReconciler.Result.Unauthorized
         val generation = AccountMutationBarrier.process.replacementGeneration()
+        val entry = chatFor(communityId, chatId)
+        val kind = entry?.kind ?: kindOverride
         val stored = configStore.loadStored(communityId) ?: return TombstoneReconciler.Result.Unavailable
+        if (isExactGeneralDeletionTarget(communityId, chatId, stored.chatId)) {
+            return if (generation == AccountMutationBarrier.process.replacementGeneration() &&
+                configStore.loadStored(communityId)?.config == stored.config &&
+                (expectedGraph == null || runtimeGraph() === expectedGraph)
+            ) {
+                TombstoneReconciler.Result.NoTombstone
+            } else {
+                TombstoneReconciler.Result.Stale
+            }
+        }
+        if (kind == "general") return TombstoneReconciler.Result.Unauthorized
+        if (kind == null) return TombstoneReconciler.Result.Unavailable
         val communityKey = loadRosterCommunityKey(stored) ?: return TombstoneReconciler.Result.Unavailable
         val scope = if (kind == "dm") TombstoneScope.DM else TombstoneScope.GROUP
         val objectKey =
@@ -1855,6 +1927,8 @@ internal object AppContainer {
                                             identity,
                                             generation,
                                             removeKey = true,
+                                            expectedConfig = stored.config,
+                                            expectedRuntimeGraph = runtimeGraph(),
                                         )
                                     }
                                 }
@@ -1986,6 +2060,7 @@ internal object AppContainer {
                                     removeKey =
                                         row.scope == ChatDeletionEntity.SCOPE_GROUP ||
                                             row.phase != ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
+                                    expectedConfig = stored.config,
                                 )
                         }
                     if (!purged) return@ChatDeletionRetryQueue "local deletion purge pending"
@@ -2041,12 +2116,20 @@ internal object AppContainer {
                         row = row.copy(phase = ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED)
                     }
                     if (row.phase == ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED) {
-                        if (row.scope == ChatDeletionEntity.SCOPE_DM) {
-                            val removed = runCatching { crypto.chatKeyStore(context).removeStrict(row.chatId) }.isSuccess
-                            if (!removed || generation != AccountMutationBarrier.process.replacementGeneration()) {
-                                return@ChatDeletionRetryQueue "DM key cleanup pending"
+                        val postPublicationPurge =
+                            AccountMutationBarrier.process.withStableAccount {
+                                generation == AccountMutationBarrier.process.replacementGeneration() &&
+                                    purgeDeletedChatStateLocked(
+                                        row.communityId,
+                                        row.chatId,
+                                        if (row.scope == ChatDeletionEntity.SCOPE_DM) "dm" else "group",
+                                        retryIdentity,
+                                        generation,
+                                        removeKey = true,
+                                        expectedConfig = stored.config,
+                                    )
                             }
-                        }
+                        if (!postPublicationPurge) return@ChatDeletionRetryQueue "key cleanup pending"
                         if (!advance(row.phase, ChatDeletionEntity.PHASE_CLEANUP_PENDING)) {
                             return@ChatDeletionRetryQueue "cleanup phase changed"
                         }
@@ -3073,6 +3156,23 @@ internal object AppContainer {
             crypto.chatKeyStore(requireContext()).load(community.chatId),
         )
     }
+
+    internal fun isExactUndeletableGeneralAnchor(
+        communityId: String,
+        chatId: String,
+    ): Boolean {
+        val stored = configStore.loadStored(communityId) ?: return false
+        return isExactGeneralDeletionTarget(communityId, chatId, stored.chatId)
+    }
+
+    private fun isExactGeneralDeletionTarget(
+        communityId: String,
+        chatId: String,
+        storedAnchorId: String,
+    ): Boolean =
+        runCatching {
+            chatId == storedAnchorId && communityRegistry.all().singleOrNull { it.id == communityId }?.chatId == chatId
+        }.getOrDefault(false)
 
     private fun isExactGeneralAnchor(
         communityId: String,
