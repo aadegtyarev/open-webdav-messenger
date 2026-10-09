@@ -586,7 +586,13 @@ internal object AppContainer {
                 kindOverride = chatFor(communityId, chatId)?.kind ?: "group",
                 expectedGraph = activeGraph,
             )
-        if (reconciliation !in setOf(TombstoneReconciler.Result.NoTombstone, TombstoneReconciler.Result.Unauthorized)) return false
+        val openableTombstoneResults =
+            setOf(
+                TombstoneReconciler.Result.NoTombstone,
+                TombstoneReconciler.Result.Unauthorized,
+                TombstoneReconciler.Result.Unavailable,
+            )
+        if (reconciliation !in openableTombstoneResults) return false
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return false
         val plan =
             AccountMutationBarrier.process.withStableAccount {
@@ -1509,7 +1515,17 @@ internal object AppContainer {
     ): List<String> {
         val safe = mutableListOf<String>()
         for (chatId in chatIds.distinct()) {
-            val kind = chatFor(communityId, chatId)?.kind ?: continue
+            val registeredKind = chatFor(communityId, chatId)?.kind
+            val kind =
+                registeredKind ?: if (graph?.communityId == communityId && graph.chatId == chatId) {
+                    if (communityRegistry.all().any { it.id == communityId && it.chatId == chatId }) {
+                        safe.add(chatId)
+                        continue
+                    }
+                    "group"
+                } else {
+                    continue
+                }
             val result =
                 reconcileRemoteTombstone(
                     communityId,
@@ -1545,7 +1561,7 @@ internal object AppContainer {
 
     suspend fun retryPendingChatDeletions() {
         val context = appContext ?: return
-        val database = MessengerDatabase.get(context)
+        val database = runCatching { MessengerDatabase.get(context) }.getOrNull() ?: return
         val dao = database.messageDao()
         val generation = AccountMutationBarrier.process.replacementGeneration()
         val queue =
@@ -1664,7 +1680,7 @@ internal object AppContainer {
                     }
                 },
             )
-        queue.run()
+        runCatching { queue.run() }
     }
 
     private suspend fun authorizeDeletionForRetry(

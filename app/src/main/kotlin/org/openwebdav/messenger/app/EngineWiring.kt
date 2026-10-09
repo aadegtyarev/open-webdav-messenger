@@ -327,7 +327,7 @@ internal object EngineWiring {
                 val graph = deps.buildGraph(stored.config, stored.chatId, stored.communityName, key, activeGraph.identity, joinedId)
                 deps.retryPrivateMembershipClaims(joinedId, activeGraph.identity)
                 val polledChatIds =
-                    AppContainer.reconcileSubscriptionsBeforePoll(
+                    deps.reconcileSubscriptionsBeforePoll(
                         joinedId,
                         deps.communityChatIds(joinedId) + stored.chatId,
                         null,
@@ -457,7 +457,7 @@ internal object EngineWiring {
                             }
 
                             val polledChatIds =
-                                AppContainer.reconcileSubscriptionsBeforePoll(
+                                deps.reconcileSubscriptionsBeforePoll(
                                     ownerCommunityId,
                                     deps.communityChatIds(ownerCommunityId) + g.chatId,
                                     g,
@@ -524,6 +524,12 @@ internal object EngineWiring {
 
         /** All chat-ids in the active community (for multi-chat poll subscriptions). */
         fun communityChatIds(communityId: String): List<String>
+
+        suspend fun reconcileSubscriptionsBeforePoll(
+            communityId: String,
+            chatIds: List<String>,
+            graph: RuntimeGraph?,
+        ): List<String> = chatIds
 
         suspend fun discoverPublicChats() {
             AppContainer.discoverPublicChats()
@@ -612,6 +618,12 @@ internal class AndroidDeps(
     ): Boolean = configStore.saveRotatedConfig(newConfig, communityId)
 
     override fun communityChatIds(communityId: String): List<String> = chatRegistry.all(communityId).map { it.id }
+
+    override suspend fun reconcileSubscriptionsBeforePoll(
+        communityId: String,
+        chatIds: List<String>,
+        graph: RuntimeGraph?,
+    ): List<String> = AppContainer.reconcileSubscriptionsBeforePoll(communityId, chatIds, graph)
 
     override fun buildGraph(
         config: ConnectionConfig,
