@@ -326,8 +326,13 @@ internal object EngineWiring {
                 val key = deps.loadChatKey(stored.chatId) ?: continue
                 val graph = deps.buildGraph(stored.config, stored.chatId, stored.communityName, key, activeGraph.identity, joinedId)
                 deps.retryPrivateMembershipClaims(joinedId, activeGraph.identity)
-                val subscriptions =
-                    (deps.communityChatIds(joinedId) + stored.chatId).distinct().map(::ChatSubscription)
+                val polledChatIds =
+                    AppContainer.reconcileSubscriptionsBeforePoll(
+                        joinedId,
+                        deps.communityChatIds(joinedId) + stored.chatId,
+                        null,
+                    )
+                val subscriptions = polledChatIds.map(::ChatSubscription)
                 val outcome = graph.engine.pollCycle(activeGraph.senderIdentifier, subscriptions, joinedId)
                 combined =
                     combined.copy(
@@ -451,8 +456,13 @@ internal object EngineWiring {
                                 // best-effort — retry next cycle
                             }
 
-                            val subscriptions =
-                                (deps.communityChatIds(ownerCommunityId) + g.chatId).distinct().map(::ChatSubscription)
+                            val polledChatIds =
+                                AppContainer.reconcileSubscriptionsBeforePoll(
+                                    ownerCommunityId,
+                                    deps.communityChatIds(ownerCommunityId) + g.chatId,
+                                    g,
+                                )
+                            val subscriptions = polledChatIds.map(::ChatSubscription)
                             deps.retryPrivateMembershipClaims(ownerCommunityId, g.identity)
                             val outcome = g.engine.pollCycle(g.senderIdentifier, subscriptions, ownerCommunityId)
                             val otherCommunities = pollOtherCommunities(ownerCommunityId, g)

@@ -45,6 +45,7 @@ import org.openwebdav.messenger.governance.CommunityGroupOriginPublisher
 import org.openwebdav.messenger.governance.CommunityGroupOriginScanner
 import org.openwebdav.messenger.governance.CommunityTombstone
 import org.openwebdav.messenger.governance.CommunityTombstoneAuthorization
+import org.openwebdav.messenger.governance.CommunityTombstoneChatScanner
 import org.openwebdav.messenger.governance.CommunityTombstoneCodec
 import org.openwebdav.messenger.governance.CommunityTombstoneService
 import org.openwebdav.messenger.governance.GovernanceObjectKind
@@ -577,6 +578,15 @@ internal object AppContainer {
         requestToken: ChatOpenRequestCoordinator.Token = beginChatOpenRequest(),
     ): Boolean {
         if (!chatOpenRequestCoordinator.isCurrent(requestToken)) return false
+        val activeGraph = runtimeGraph()?.takeIf { it.communityId == communityId }
+        val reconciliation =
+            reconcileRemoteTombstone(
+                communityId,
+                chatId,
+                kindOverride = chatFor(communityId, chatId)?.kind ?: "group",
+                expectedGraph = activeGraph,
+            )
+        if (reconciliation !in setOf(TombstoneReconciler.Result.NoTombstone, TombstoneReconciler.Result.Unauthorized)) return false
         val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return false
         val plan =
             AccountMutationBarrier.process.withStableAccount {
@@ -1355,6 +1365,169 @@ internal object AppContainer {
         return coordinator.execute(deletion)
     }
 
+    suspend fun reconcileRemoteTombstone(
+        communityId: String,
+        chatId: String,
+        underSyncLock: Boolean = false,
+        kindOverride: String? = null,
+        keyOverride: ChatKey? = null,
+        expectedGraph: RuntimeGraph? = null,
+    ): TombstoneReconciler.Result {
+        val entry = chatFor(communityId, chatId)
+        val kind = kindOverride ?: entry?.kind ?: return TombstoneReconciler.Result.NoTombstone
+        if (kind == "general") return TombstoneReconciler.Result.Unauthorized
+        val generation = AccountMutationBarrier.process.replacementGeneration()
+        val stored = configStore.loadStored(communityId) ?: return TombstoneReconciler.Result.Unavailable
+        val communityKey = loadRosterCommunityKey(stored) ?: return TombstoneReconciler.Result.Unavailable
+        val scope = if (kind == "dm") TombstoneScope.DM else TombstoneScope.GROUP
+        val objectKey =
+            keyOverride ?: crypto.chatKeyStore(requireContext()).load(chatId)
+                ?: return TombstoneReconciler.Result.Unavailable
+        val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+        val reader = CommunityGovernanceReader(TransportFactory.create(stored.config), envelopes)
+        val scanner = CommunityTombstoneChatScanner(reader, envelopes, identityFactory.identityCrypto())
+        val service =
+            TombstoneReconciler(
+                isCurrent = {
+                    generation == AccountMutationBarrier.process.replacementGeneration() &&
+                        configStore.loadStored(communityId)?.config == stored.config &&
+                        (expectedGraph == null || runtimeGraph() === expectedGraph)
+                },
+                scan = { scanner.scan(communityId, chatId, scope, objectKey) },
+                authorize = { candidate ->
+                    when (scope) {
+                        TombstoneScope.GROUP -> {
+                            val originScanner = CommunityGroupOriginScanner(reader, identityFactory.identityCrypto())
+                            val origin = originScanner.inspect(communityId, chatId, communityKey)
+                            val trust = CommunityTrustStore(requireContext()).get(communityId)
+                            when (origin) {
+                                CommunityGroupOriginScanner.Result.Unavailable -> false
+                                is CommunityGroupOriginScanner.Result.Found ->
+                                    candidate.record.originMode == TombstoneOriginMode.ORIGIN_HASH &&
+                                        candidate.record.originHash == origin.originHash &&
+                                        CommunityTombstoneAuthorization.group(
+                                            candidate.record,
+                                            origin.origin,
+                                            origin.originHash,
+                                            trust,
+                                        ) != null
+                                CommunityGroupOriginScanner.Result.Empty ->
+                                    candidate.record.originMode == TombstoneOriginMode.LEGACY_CHAT_ID &&
+                                        CommunityTombstoneAuthorization.group(candidate.record, null, null, trust) != null
+                                CommunityGroupOriginScanner.Result.Conflict -> false
+                            }
+                        }
+                        TombstoneScope.DM -> {
+                            val origin =
+                                CommunityDmOriginScanner(reader, envelopes, identityFactory.identityCrypto())
+                                    .inspectOrigin(communityId, chatId, objectKey)
+                            origin is CommunityDmOriginScanner.Result.Found && origin.recordHash == candidate.record.originHash &&
+                                CommunityTombstoneAuthorization.dm(candidate.record, origin.origin, origin.recordHash) != null
+                        }
+                    }
+                },
+                apply = apply@{ candidate ->
+                    val context = appContext ?: return@apply false
+                    val database = MessengerDatabase.get(context)
+                    val store = MessageStore(database.messageDao(), database.syncCursorDao(), communityId)
+                    val row =
+                        ChatDeletionEntity(
+                            communityId = communityId,
+                            chatId = chatId,
+                            scope = if (scope == TombstoneScope.GROUP) ChatDeletionEntity.SCOPE_GROUP else ChatDeletionEntity.SCOPE_DM,
+                            originMode = candidate.record.originMode.name,
+                            originHash = candidate.record.originHash,
+                            tombstoneHash = candidate.recordHash,
+                            tombstoneStoredBytes = candidate.storedBytes.copyOf(),
+                            phase = ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
+                            updatedAtMillis = System.currentTimeMillis(),
+                        )
+                    val applyLocal =
+                        suspend {
+                            AccountMutationBarrier.process.withStableAccount {
+                                if (generation != AccountMutationBarrier.process.replacementGeneration()) {
+                                    false
+                                } else {
+                                    val existing = store.chatDeletion(chatId)
+                                    val committed =
+                                        if (existing == null) {
+                                            store.commitChatDeletion(row)
+                                        } else {
+                                            if (existing.tombstoneHash == row.tombstoneHash) {
+                                                org.openwebdav.messenger.data.ChatDeletionCommitResult.AlreadyCommitted
+                                            } else {
+                                                org.openwebdav.messenger.data.ChatDeletionCommitResult.Conflict
+                                            }
+                                        }
+                                    if (committed is org.openwebdav.messenger.data.ChatDeletionCommitResult.Conflict) {
+                                        false
+                                    } else {
+                                        store.transitionDeletionPhase(
+                                            chatId,
+                                            candidate.recordHash,
+                                            ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
+                                            ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED,
+                                            System.currentTimeMillis(),
+                                        )
+                                        store.transitionDeletionPhase(
+                                            chatId,
+                                            candidate.recordHash,
+                                            ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED,
+                                            ChatDeletionEntity.PHASE_CLEANUP_PENDING,
+                                            System.currentTimeMillis(),
+                                        )
+                                        if (runtimeGraph()?.let { it.communityId == communityId && it.chatId == chatId } == true) {
+                                            runtimeGraph()?.fenceDeletedChat()
+                                        }
+                                        runCatching {
+                                            chatRegistry.replace(communityId, chatRegistry.all(communityId).filterNot { it.id == chatId })
+                                        }
+                                        if (scope == TombstoneScope.DM) {
+                                            runCatching { crypto.chatKeyStore(requireContext()).removeStrict(chatId) }
+                                        }
+                                        true
+                                    }
+                                }
+                            }
+                        }
+                    val committed =
+                        if (underSyncLock) {
+                            applyLocal()
+                        } else {
+                            AccountMutationBarrier.process.withExclusive { applyLocal() }
+                        }
+                    committed
+                },
+            )
+        return service.reconcile()
+    }
+
+    suspend fun reconcileSubscriptionsBeforePoll(
+        communityId: String,
+        chatIds: List<String>,
+        graph: RuntimeGraph?,
+    ): List<String> {
+        val safe = mutableListOf<String>()
+        for (chatId in chatIds.distinct()) {
+            val kind = chatFor(communityId, chatId)?.kind ?: continue
+            val result =
+                reconcileRemoteTombstone(
+                    communityId,
+                    chatId,
+                    underSyncLock = true,
+                    kindOverride = kind,
+                    expectedGraph = graph,
+                )
+            if (
+                result == TombstoneReconciler.Result.NoTombstone ||
+                result == TombstoneReconciler.Result.Unauthorized
+            ) {
+                safe.add(chatId)
+            }
+        }
+        return safe
+    }
+
     private suspend fun isChatDeletionCommitted(
         communityId: String,
         chatId: String,
@@ -1377,6 +1550,9 @@ internal object AppContainer {
      */
     suspend fun discoverPublicChats() {
         for (community in communityRegistry.all()) {
+            for (registered in chatRegistry.all(community.id).filter { it.kind != "general" }) {
+                reconcileRemoteTombstone(community.id, registered.id, underSyncLock = true)
+            }
             val stored = configStore.loadStored(community.id) ?: continue
             val communityKey = crypto.chatKeyStore(requireContext()).load(stored.chatId) ?: continue
             try {
@@ -1391,6 +1567,15 @@ internal object AppContainer {
                 for (entry in result.entries) {
                     if (entry.access != ChatAccess.PUBLIC) continue
                     val chatIdHex = Hex.encode(entry.chatId)
+                    val reconciliation =
+                        reconcileRemoteTombstone(
+                            community.id,
+                            chatIdHex,
+                            underSyncLock = true,
+                            kindOverride = "group",
+                            keyOverride = communityKey,
+                        )
+                    if (reconciliation !in setOf(TombstoneReconciler.Result.NoTombstone, TombstoneReconciler.Result.Unauthorized)) continue
                     if (isChatDeletionCommitted(community.id, chatIdHex)) continue
                     // Public groups use the community key; restore a missing key for existing rows too.
                     val keyStore = crypto.chatKeyStore(requireContext())

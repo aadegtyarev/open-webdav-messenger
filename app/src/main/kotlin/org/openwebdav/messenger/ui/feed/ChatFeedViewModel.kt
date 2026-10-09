@@ -16,6 +16,7 @@ import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
+import org.openwebdav.messenger.app.TombstoneReconciler
 import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
@@ -94,6 +95,16 @@ internal class ChatFeedViewModel(
         viewModelScope.launch {
             var clearedRevision: Long? = null
             try {
+                val reconciliation =
+                    AppContainer.reconcileRemoteTombstone(
+                        graph.communityId,
+                        graph.chatId,
+                        expectedGraph = graph,
+                    )
+                if (reconciliation !in setOf(TombstoneReconciler.Result.NoTombstone, TombstoneReconciler.Result.Unauthorized)) {
+                    _sendError.value = SEND_FAILED_MESSAGE
+                    return@launch
+                }
                 val result =
                     sendService.send(text) {
                         if (draftRevision == sendDraftRevision && _draft.value == originalDraft) {
