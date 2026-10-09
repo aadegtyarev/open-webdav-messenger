@@ -36,19 +36,18 @@ internal object CommunityCreationPolicyCodec {
         return runCatching {
             DataInputStream(ByteArrayInputStream(bytes)).use { input ->
                 val body = bytes.copyOfRange(0, bytes.size - SIGNATURE_BYTES)
-                require(input.readNBytes(MAGIC.size).contentEquals(MAGIC))
+                require(GovernanceRecordSupport.readExactly(input, MAGIC.size).contentEquals(MAGIC))
                 require(input.readUnsignedByte() == VERSION)
                 val idSize = input.readUnsignedShort().also { require(it in 1..GovernanceRecordSupport.MAX_COMMUNITY_ID_BYTES) }
-                val id = GovernanceRecordSupport.strictUtf8(input.readNBytes(idSize))
+                val id = GovernanceRecordSupport.strictUtf8(GovernanceRecordSupport.readExactly(input, idSize))
                 require(id == expectedCommunityId && GovernanceRecordSupport.isValidCommunityId(id))
                 val revision = input.readLong().also { require(it > 0) }
                 val allowPublic = input.readBoolean()
                 val allowPrivate = input.readBoolean()
                 val count = input.readUnsignedShort().also { require(it <= MAX_ORIGINS) }
-                val hashes =
-                    List(count) { input.readNBytes(HASH_BYTES).also { require(it.size == HASH_BYTES) }.toString(Charsets.US_ASCII) }
+                val hashes = List(count) { readHash(input) }
                 require(hashes.all(HASH::matches) && hashes == hashes.distinct().sorted())
-                val signature = input.readNBytes(SIGNATURE_BYTES).also { require(it.size == SIGNATURE_BYTES) }
+                val signature = GovernanceRecordSupport.readExactly(input, SIGNATURE_BYTES).also { require(it.size == SIGNATURE_BYTES) }
                 require(input.available() == 0 && crypto.verify(signature, domainInput(body), pinnedHostSigningKey))
                 CommunityCreationPolicy(id, revision, allowPublic, allowPrivate, hashes, signature)
             }
@@ -57,6 +56,10 @@ internal object CommunityCreationPolicyCodec {
 
     fun contentAddress(bytes: ByteArray): String =
         Base32.encodeBase32Lower(MessageDigest.getInstance("SHA-256").digest(bytes)).take(HASH_CHARS)
+
+    private fun readHash(input: DataInputStream): String =
+        GovernanceRecordSupport.readExactly(input, HASH_BYTES).also { require(it.size == HASH_BYTES) }
+            .toString(Charsets.US_ASCII)
 
     private fun body(
         id: String,

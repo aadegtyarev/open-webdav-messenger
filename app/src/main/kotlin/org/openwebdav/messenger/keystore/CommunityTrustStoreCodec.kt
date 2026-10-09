@@ -2,6 +2,7 @@ package org.openwebdav.messenger.keystore
 
 import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.governance.CommunityTrustRecord
+import org.openwebdav.messenger.governance.GovernanceRecordSupport
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -49,7 +50,7 @@ internal object CommunityTrustStoreCodec {
         runCatching {
             require(bytes.size <= MAX_BYTES)
             DataInputStream(ByteArrayInputStream(bytes)).use { input ->
-                require(input.readNBytes(MAGIC.size).contentEquals(MAGIC))
+                require(GovernanceRecordSupport.readExactly(input, MAGIC.size).contentEquals(MAGIC))
                 require(input.readInt() == VERSION)
                 val count = input.readInt().also { require(it in 0..MAX_RECORDS) }
                 val records =
@@ -57,10 +58,10 @@ internal object CommunityTrustStoreCodec {
                         val id = input.readUTF().also { require(isValidId(it)) }
                         val genesisHash = input.readUTF().also { require(HASH.matches(it)) }
                         val genesisSize = input.readUnsignedShort().also { require(it in 1..MAX_GENESIS_BYTES) }
-                        val genesis = input.readNBytes(genesisSize).also { require(it.size == genesisSize) }
+                        val genesis = GovernanceRecordSupport.readExactly(input, genesisSize).also { require(it.size == genesisSize) }
                         require(CommunityGenesisCodec.contentAddress(genesis) == genesisHash)
-                        val signKey = input.readNBytes(KEY_BYTES).also { require(it.size == KEY_BYTES) }
-                        val boxKey = input.readNBytes(KEY_BYTES).also { require(it.size == KEY_BYTES) }
+                        val signKey = GovernanceRecordSupport.readExactly(input, KEY_BYTES).also { require(it.size == KEY_BYTES) }
+                        val boxKey = GovernanceRecordSupport.readExactly(input, KEY_BYTES).also { require(it.size == KEY_BYTES) }
                         val verified = input.readBoolean()
                         val revision = input.readLong().also { require(it >= 0) }
                         val policyHash = if (input.readBoolean()) input.readUTF().also { require(HASH.matches(it)) } else null

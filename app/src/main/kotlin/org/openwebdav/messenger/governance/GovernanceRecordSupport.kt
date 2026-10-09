@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.governance
 
+import java.io.DataInputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 
@@ -7,6 +8,14 @@ internal object GovernanceRecordSupport {
     const val MAX_COMMUNITY_ID_BYTES = 96
 
     fun isValidCommunityId(value: String): Boolean = value.matches(ID_PATTERN)
+
+    fun readExactly(
+        input: DataInputStream,
+        size: Int,
+    ): ByteArray {
+        require(size >= 0)
+        return ByteArray(size).also(input::readFully)
+    }
 
     fun strictUtf8(bytes: ByteArray): String =
         Charsets.UTF_8.newDecoder()

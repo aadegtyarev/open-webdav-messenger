@@ -32,7 +32,7 @@ internal object CommunityGroupOriginCodec {
         }
         return runCatching {
             DataInputStream(bytes.inputStream()).use { input ->
-                require(input.readNBytes(MAGIC.size).contentEquals(MAGIC) && input.readUnsignedByte() == VERSION)
+                require(GovernanceRecordSupport.readExactly(input, MAGIC.size).contentEquals(MAGIC) && input.readUnsignedByte() == VERSION)
                 val id = readText(input).also { require(it == communityId) }
                 val idChat = readText(input).also { require(it == chatId) }
                 val access =
@@ -41,10 +41,10 @@ internal object CommunityGroupOriginCodec {
                         1 -> ChatAccess.PRIVATE
                         else -> error("invalid group access")
                     }
-                val signingKey = input.readNBytes(KEY_BYTES).also { require(it.size == KEY_BYTES) }
-                val boxKey = input.readNBytes(KEY_BYTES).also { require(it.size == KEY_BYTES) }
-                val nonce = input.readNBytes(NONCE_BYTES).also { require(it.size == NONCE_BYTES) }
-                val signature = input.readNBytes(SIGNATURE_BYTES).also { require(it.size == SIGNATURE_BYTES) }
+                val signingKey = GovernanceRecordSupport.readExactly(input, KEY_BYTES).also { require(it.size == KEY_BYTES) }
+                val boxKey = GovernanceRecordSupport.readExactly(input, KEY_BYTES).also { require(it.size == KEY_BYTES) }
+                val nonce = GovernanceRecordSupport.readExactly(input, NONCE_BYTES).also { require(it.size == NONCE_BYTES) }
+                val signature = GovernanceRecordSupport.readExactly(input, SIGNATURE_BYTES).also { require(it.size == SIGNATURE_BYTES) }
                 require(input.available() == 0)
                 val body = bytes.copyOfRange(0, bytes.size - SIGNATURE_BYTES)
                 require(crypto.verify(signature, DOMAIN + byteArrayOf(0) + body, signingKey))
@@ -81,7 +81,7 @@ internal object CommunityGroupOriginCodec {
 
     private fun readText(input: DataInputStream): String {
         val size = input.readUnsignedShort().also { require(it in 1..MAX_TEXT_BYTES) }
-        return GovernanceRecordSupport.strictUtf8(input.readNBytes(size).also { require(it.size == size) })
+        return GovernanceRecordSupport.strictUtf8(GovernanceRecordSupport.readExactly(input, size).also { require(it.size == size) })
     }
 
     private val MAGIC = "OWGO".toByteArray(Charsets.US_ASCII)

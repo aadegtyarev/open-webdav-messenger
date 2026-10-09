@@ -39,17 +39,21 @@ internal object CommunityGenesisCodec {
             DataInputStream(ByteArrayInputStream(bytes)).use { input ->
                 val bodyLength = bytes.size - SIGNATURE_BYTES
                 val body = bytes.copyOfRange(0, bodyLength)
-                require(input.readNBytes(MAGIC.size).contentEquals(MAGIC))
+                require(GovernanceRecordSupport.readExactly(input, MAGIC.size).contentEquals(MAGIC))
                 require(input.readUnsignedByte() == VERSION)
                 val idLength = input.readUnsignedShort()
                 require(idLength in 1..GovernanceRecordSupport.MAX_COMMUNITY_ID_BYTES)
-                val idBytes = input.readNBytes(idLength).also { require(it.size == idLength) }
+                val idBytes = GovernanceRecordSupport.readExactly(input, idLength).also { require(it.size == idLength) }
                 val communityId = GovernanceRecordSupport.strictUtf8(idBytes)
                 require(communityId == expectedCommunityId && GovernanceRecordSupport.isValidCommunityId(communityId))
-                val hostSigningKey = input.readNBytes(PUBLIC_KEY_BYTES).also { require(it.size == PUBLIC_KEY_BYTES) }
-                val hostBoxKey = input.readNBytes(PUBLIC_KEY_BYTES).also { require(it.size == PUBLIC_KEY_BYTES) }
-                val nonce = input.readNBytes(NONCE_BYTES).also { require(it.size == NONCE_BYTES) }
-                val signature = input.readNBytes(SIGNATURE_BYTES).also { require(it.size == SIGNATURE_BYTES) }
+                val hostSigningKey =
+                    GovernanceRecordSupport.readExactly(
+                        input,
+                        PUBLIC_KEY_BYTES,
+                    ).also { require(it.size == PUBLIC_KEY_BYTES) }
+                val hostBoxKey = GovernanceRecordSupport.readExactly(input, PUBLIC_KEY_BYTES).also { require(it.size == PUBLIC_KEY_BYTES) }
+                val nonce = GovernanceRecordSupport.readExactly(input, NONCE_BYTES).also { require(it.size == NONCE_BYTES) }
+                val signature = GovernanceRecordSupport.readExactly(input, SIGNATURE_BYTES).also { require(it.size == SIGNATURE_BYTES) }
                 require(input.available() == 0)
                 require(crypto.verify(signature, domainSeparated(body), hostSigningKey))
                 CommunityGenesis(communityId, hostSigningKey, hostBoxKey, nonce, signature)
