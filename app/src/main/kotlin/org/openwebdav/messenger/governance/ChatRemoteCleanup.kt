@@ -52,7 +52,12 @@ internal class ChatRemoteCleanup(
             else -> null
         }
 
-    private suspend fun delete(path: String): Boolean = transport.delete(path) is WebDavResult.Success
+    private suspend fun delete(path: String): Boolean =
+        when (val result = transport.delete(path)) {
+            is WebDavResult.Success -> true
+            is WebDavResult.TransportError -> result.code == 404
+            else -> false
+        }
 
     private companion object {
         const val MAX_LIST_ENTRIES = 256

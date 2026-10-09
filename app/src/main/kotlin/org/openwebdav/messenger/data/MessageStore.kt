@@ -110,6 +110,28 @@ class MessageStore(
 
     suspend fun chatDeletion(chatId: String): ChatDeletionEntity? = messageDao.chatDeletion(communityId, chatId)
 
+    suspend fun dueChatDeletions(
+        nowMillis: Long,
+        limit: Int,
+    ): List<ChatDeletionEntity> = messageDao.dueChatDeletions(nowMillis, limit)
+
+    suspend fun updateDeletionRetry(
+        deletion: ChatDeletionEntity,
+        attempts: Int,
+        nextAttemptAtMillis: Long,
+        lastError: String?,
+        updatedAtMillis: Long,
+    ): Boolean =
+        messageDao.updateDeletionRetry(
+            deletion.communityId,
+            deletion.chatId,
+            deletion.tombstoneHash,
+            attempts,
+            nextAttemptAtMillis,
+            lastError,
+            updatedAtMillis,
+        ) == 1
+
     suspend fun commitChatDeletion(deletion: ChatDeletionEntity): ChatDeletionCommitResult =
         if (deletion.communityId == communityId) messageDao.commitChatDeletion(deletion) else ChatDeletionCommitResult.Conflict
 

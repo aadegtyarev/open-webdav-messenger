@@ -151,7 +151,10 @@ internal class ChatFeedViewModel(
 
     /** Retry the current chat's verified roster lookup without leaving local history. */
     fun retryRecipientRoster() {
-        AppContainer.retryRecipientRoster(graph)
+        viewModelScope.launch {
+            AppContainer.retryPendingChatDeletions()
+            AppContainer.retryRecipientRoster(graph)
+        }
     }
 
     /** Retry the durable original operation; never mint a replacement message ID or envelope. */
@@ -161,6 +164,7 @@ internal class ChatFeedViewModel(
         viewModelScope.launch {
             val delivered =
                 try {
+                    AppContainer.retryPendingChatDeletions()
                     sendService.retry(messageId)
                 } catch (_: Exception) {
                     false

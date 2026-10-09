@@ -1543,12 +1543,179 @@ internal object AppContainer {
         val communityName: String,
     )
 
+    suspend fun retryPendingChatDeletions() {
+        val context = appContext ?: return
+        val database = MessengerDatabase.get(context)
+        val dao = database.messageDao()
+        val generation = AccountMutationBarrier.process.replacementGeneration()
+        val queue =
+            ChatDeletionRetryQueue(
+                loadDue = dao::dueChatDeletions,
+                process = { initial ->
+                    if (generation != AccountMutationBarrier.process.replacementGeneration()) {
+                        return@ChatDeletionRetryQueue "account changed"
+                    }
+                    val stored = configStore.loadStored(initial.communityId) ?: return@ChatDeletionRetryQueue "community unavailable"
+                    val communityKey = loadRosterCommunityKey(stored) ?: return@ChatDeletionRetryQueue "community key unavailable"
+                    val publishKey =
+                        if (initial.scope == ChatDeletionEntity.SCOPE_DM) {
+                            crypto.chatKeyStore(context).load(initial.chatId) ?: return@ChatDeletionRetryQueue "DM key unavailable"
+                        } else {
+                            communityKey
+                        }
+                    val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+                    val transport = TransportFactory.create(stored.config)
+                    val reader = CommunityGovernanceReader(transport, envelopes)
+                    val writer = CommunityGovernanceWriter(transport, envelopes)
+                    val objectKind =
+                        if (initial.scope == ChatDeletionEntity.SCOPE_DM) {
+                            GovernanceObjectKind.DM_TOMBSTONE
+                        } else {
+                            GovernanceObjectKind.GROUP_TOMBSTONE
+                        }
+                    val store = MessageStore(database.messageDao(), database.syncCursorDao(), initial.communityId)
+                    var row = store.chatDeletion(initial.chatId) ?: return@ChatDeletionRetryQueue "graveyard row missing"
+
+                    suspend fun advance(
+                        expected: String,
+                        next: String,
+                    ): Boolean =
+                        AccountMutationBarrier.process.withStableAccount {
+                            generation == AccountMutationBarrier.process.replacementGeneration() &&
+                                store.transitionDeletionPhase(
+                                    row.chatId,
+                                    row.tombstoneHash,
+                                    expected,
+                                    next,
+                                    System.currentTimeMillis(),
+                                )
+                        }
+                    if (row.phase == ChatDeletionEntity.PHASE_LOCAL_COMMITTED) {
+                        val plaintext =
+                            envelopes.open(objectKind, row.communityId, publishKey, row.tombstoneStoredBytes)
+                                ?: return@ChatDeletionRetryQueue "tombstone cannot be decrypted"
+                        val service =
+                            CommunityTombstoneService(reader, writer, envelopes, identityFactory.identityCrypto())
+                        val published =
+                            try {
+                                val record =
+                                    CommunityTombstoneCodec.verifyAny(plaintext, identityFactory.identityCrypto())
+                                        ?: return@ChatDeletionRetryQueue "tombstone signature invalid"
+                                if (!authorizeDeletionForRetry(record, row, reader, envelopes, communityKey, plaintext)) {
+                                    return@ChatDeletionRetryQueue "tombstone authority unavailable"
+                                }
+                                service.publishStored(record, plaintext, row.tombstoneStoredBytes, publishKey)
+                            } finally {
+                                plaintext.fill(0)
+                            }
+                        if (
+                            published !is CommunityTombstoneService.Result.Published &&
+                            published != CommunityTombstoneService.Result.AlreadyPresent
+                        ) {
+                            return@ChatDeletionRetryQueue "tombstone publication pending"
+                        }
+                        if (generation != AccountMutationBarrier.process.replacementGeneration()) {
+                            return@ChatDeletionRetryQueue "account changed"
+                        }
+                        if (!advance(row.phase, ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED)) {
+                            return@ChatDeletionRetryQueue "publication phase changed"
+                        }
+                        row = row.copy(phase = ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED)
+                    }
+                    if (row.phase == ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED) {
+                        if (!advance(row.phase, ChatDeletionEntity.PHASE_CLEANUP_PENDING)) {
+                            return@ChatDeletionRetryQueue "cleanup phase changed"
+                        }
+                        row = row.copy(phase = ChatDeletionEntity.PHASE_CLEANUP_PENDING)
+                    }
+                    if (row.phase != ChatDeletionEntity.PHASE_CLEANUP_PENDING) {
+                        return@ChatDeletionRetryQueue "unsupported deletion phase"
+                    }
+                    if (generation != AccountMutationBarrier.process.replacementGeneration()) {
+                        return@ChatDeletionRetryQueue "account changed"
+                    }
+                    val cleanup =
+                        ChatRemoteCleanup(
+                            transport,
+                            ChatDirectoryCrypto.create(crypto.messageCrypto(), identityFactory.identityCrypto()),
+                        ).clean(row.chatId, communityKey)
+                    if (!cleanup.complete) return@ChatDeletionRetryQueue cleanup.pendingReasons.joinToString("; ")
+                    if (generation != AccountMutationBarrier.process.replacementGeneration()) {
+                        return@ChatDeletionRetryQueue "account changed"
+                    }
+                    if (!advance(row.phase, ChatDeletionEntity.PHASE_COMPLETE)) {
+                        return@ChatDeletionRetryQueue "completion phase changed"
+                    }
+                    null
+                },
+                saveFailure = { row, attempts, nextAttempt, error, updatedAt ->
+                    AccountMutationBarrier.process.withStableAccount {
+                        if (generation == AccountMutationBarrier.process.replacementGeneration()) {
+                            dao.updateDeletionRetry(
+                                row.communityId,
+                                row.chatId,
+                                row.tombstoneHash,
+                                attempts,
+                                nextAttempt,
+                                error,
+                                updatedAt,
+                            )
+                        }
+                    }
+                },
+            )
+        queue.run()
+    }
+
+    private suspend fun authorizeDeletionForRetry(
+        record: CommunityTombstone,
+        row: ChatDeletionEntity,
+        reader: CommunityGovernanceReader,
+        envelopes: CommunityGovernanceEnvelopeCodec,
+        communityKey: ChatKey,
+        signedBytes: ByteArray,
+    ): Boolean {
+        if (record.communityId != row.communityId || record.chatId != row.chatId ||
+            (record.scope == TombstoneScope.GROUP) != (row.scope == ChatDeletionEntity.SCOPE_GROUP) ||
+            CommunityTombstoneCodec.contentAddress(signedBytes) != row.tombstoneHash
+        ) {
+            return false
+        }
+        return when (record.scope) {
+            TombstoneScope.GROUP -> {
+                val origin =
+                    CommunityGroupOriginScanner(
+                        reader,
+                        identityFactory.identityCrypto(),
+                    ).inspect(record.communityId, record.chatId, communityKey)
+                val trust = CommunityTrustStore(requireContext()).get(record.communityId)
+                when (origin) {
+                    is CommunityGroupOriginScanner.Result.Found ->
+                        CommunityTombstoneAuthorization.group(record, origin.origin, origin.originHash, trust) != null
+                    CommunityGroupOriginScanner.Result.Empty ->
+                        record.originMode == TombstoneOriginMode.LEGACY_CHAT_ID &&
+                            CommunityTombstoneAuthorization.group(record, null, null, trust) != null
+                    else -> false
+                }
+            }
+            TombstoneScope.DM -> {
+                val key = crypto.chatKeyStore(requireContext()).load(record.chatId) ?: return false
+                val origin =
+                    CommunityDmOriginScanner(reader, envelopes, identityFactory.identityCrypto())
+                        .inspectOrigin(record.communityId, record.chatId, key)
+                origin is CommunityDmOriginScanner.Result.Found &&
+                    CommunityTombstoneAuthorization.dm(record, origin.origin, origin.recordHash) != null
+            }
+        }
+    }
+
     /**
      * Read the on-disk chat-directory for all communities and auto-add any newly discovered public
      * group chats to the local [ChatRegistry]. Best-effort — directory read failures are silent;
      * the next poll cycle retries.
      */
     suspend fun discoverPublicChats() {
+        retryPendingChatDeletions()
         for (community in communityRegistry.all()) {
             for (registered in chatRegistry.all(community.id).filter { it.kind != "general" }) {
                 reconcileRemoteTombstone(community.id, registered.id, underSyncLock = true)

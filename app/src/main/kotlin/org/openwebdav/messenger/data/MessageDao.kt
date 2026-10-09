@@ -43,6 +43,36 @@ interface MessageDao {
     @Query("SELECT * FROM chat_deletions WHERE communityId = :communityId")
     suspend fun chatDeletionsForCommunity(communityId: String): List<ChatDeletionEntity>
 
+    @Query(
+        """
+        SELECT * FROM chat_deletions
+        WHERE phase != 'COMPLETE' AND (nextAttemptAtMillis IS NULL OR nextAttemptAtMillis <= :nowMillis)
+        ORDER BY COALESCE(nextAttemptAtMillis, 0), updatedAtMillis, communityId, chatId
+        LIMIT :limit
+        """,
+    )
+    suspend fun dueChatDeletions(
+        nowMillis: Long,
+        limit: Int,
+    ): List<ChatDeletionEntity>
+
+    @Query(
+        """
+        UPDATE chat_deletions SET cleanupAttempts = :attempts, nextAttemptAtMillis = :nextAttemptAtMillis,
+            lastError = :lastError, updatedAtMillis = :updatedAtMillis
+        WHERE communityId = :communityId AND chatId = :chatId AND tombstoneHash = :tombstoneHash
+        """,
+    )
+    suspend fun updateDeletionRetry(
+        communityId: String,
+        chatId: String,
+        tombstoneHash: String,
+        attempts: Int,
+        nextAttemptAtMillis: Long,
+        lastError: String?,
+        updatedAtMillis: Long,
+    ): Int
+
     @Query("SELECT EXISTS(SELECT 1 FROM chat_deletions WHERE communityId = :communityId AND chatId = :chatId)")
     suspend fun isChatDeleted(
         communityId: String,
