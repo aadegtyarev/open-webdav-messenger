@@ -156,6 +156,9 @@ internal object AppContainer {
     private var inviteAccessTestOverride: ChatAccess? = null
 
     @Volatile
+    private var inviteGenesisTestOverride: ByteArray? = null
+
+    @Volatile
     private var onboardingRosterRefreshContext: GeneralRosterRefreshContext? = null
 
     private data class GeneralRosterRefreshContext(
@@ -1846,7 +1849,8 @@ internal object AppContainer {
     suspend fun buildInvite(graph: RuntimeGraph): String {
         val access = resolveInviteAccess(graph) ?: error("Chat access is unresolved; refresh before inviting")
         val genesisRecord =
-            CommunityTrustStore(requireContext()).get(graph.communityId)?.genesisRecord
+            inviteGenesisTestOverride?.copyOf()
+                ?: CommunityTrustStore(requireContext()).get(graph.communityId)?.genesisRecord
                 ?: error("Community host genesis is unavailable; request a fresh governance invite")
         val raw = graph.chatKey.export()
         val secret = graph.identity.copySignSecret()
@@ -1876,6 +1880,10 @@ internal object AppContainer {
 
     internal fun setInviteAccessTestOverride(access: ChatAccess?) {
         inviteAccessTestOverride = access
+    }
+
+    internal fun setInviteGenesisTestOverride(genesisRecord: ByteArray?) {
+        inviteGenesisTestOverride = genesisRecord?.copyOf()
     }
 
     private suspend fun resolveInviteAccess(graph: RuntimeGraph): ChatAccess? {
