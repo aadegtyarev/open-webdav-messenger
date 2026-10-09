@@ -44,6 +44,7 @@ import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.CommunityKeyStore
 import org.openwebdav.messenger.keystore.CommunityRegistry
+import org.openwebdav.messenger.keystore.CommunityTrustFingerprint
 import org.openwebdav.messenger.keystore.CommunityTrustStore
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
@@ -219,6 +220,15 @@ internal object AppContainer {
 
     /** The current community ID (for multi-chat enumeration). */
     val activeCommunityId: String get() = currentCommunityId
+
+    internal fun communityHostFingerprint(): String? =
+        CommunityTrustStore(requireContext()).get(currentCommunityId)?.hostSigningPublicKey?.let(CommunityTrustFingerprint::of)
+
+    internal fun communityHostFingerprintVerified(): Boolean =
+        CommunityTrustStore(requireContext()).get(currentCommunityId)?.fingerprintVerified == true
+
+    internal fun verifyCommunityHostFingerprint(expected: String): Boolean =
+        CommunityTrustStore(requireContext()).verifyFingerprint(currentCommunityId, expected.trim())
 
     internal fun configureChatOpenTestSeam(
         communityId: String,

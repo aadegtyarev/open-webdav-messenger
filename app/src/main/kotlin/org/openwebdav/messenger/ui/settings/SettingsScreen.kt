@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -52,6 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -63,6 +65,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.CommunityMetadataUpdate
 import org.openwebdav.messenger.app.NotificationPermissionPolicy
@@ -151,6 +154,8 @@ internal fun SettingsScreen(
 
             PollFloorSection(isHost, communityPollFloor, onPollFloorChanged, snackbarHostState)
 
+            CommunityHostIdentitySection(snackbarHostState)
+
             PersonalPollSection(snackbarHostState)
 
             NotificationPermissionSection()
@@ -165,6 +170,44 @@ internal fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
             UpdateSection()
+        }
+    }
+}
+
+@Composable
+private fun CommunityHostIdentitySection(snackbarHostState: SnackbarHostState) {
+    val fingerprint = AppContainer.communityHostFingerprint() ?: return
+    val scope = rememberCoroutineScope()
+    var expected by remember(fingerprint) { mutableStateOf("") }
+    var verified by remember(fingerprint) { mutableStateOf(AppContainer.communityHostFingerprintVerified()) }
+    val successMessage = stringResource(R.string.community_host_verify_success)
+    val failureMessage = stringResource(R.string.community_host_verify_failure)
+
+    Text(stringResource(R.string.community_host_identity_title), style = MaterialTheme.typography.titleMedium)
+    SelectionContainer {
+        Text(stringResource(R.string.community_host_fingerprint, fingerprint))
+    }
+    if (verified) {
+        Text(stringResource(R.string.community_host_verified))
+    } else {
+        Text(stringResource(R.string.community_host_unverified), style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(
+            value = expected,
+            onValueChange = { expected = it },
+            label = { Text(stringResource(R.string.community_host_fingerprint_hint)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                val matched = AppContainer.verifyCommunityHostFingerprint(expected)
+                if (matched) verified = true
+                scope.launch { snackbarHostState.showSnackbar(if (matched) successMessage else failureMessage) }
+            },
+            enabled = expected.isNotBlank(),
+        ) {
+            Text(stringResource(R.string.community_host_verify))
         }
     }
 }

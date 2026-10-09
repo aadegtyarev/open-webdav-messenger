@@ -29,6 +29,14 @@
     <string name="dm_delete_limit">This chat has too much history for safe local deletion. No data was changed.</string>
     <string name="dm_delete_failure">Could not safely delete this chat from this device. No success was reported.</string>
     <string name="cancel">Cancel</string>
+    <string name="community_host_identity_title">Community host identity</string>
+    <string name="community_host_fingerprint">Host fingerprint: %1$s</string>
+    <string name="community_host_verified">Host fingerprint verified</string>
+    <string name="community_host_unverified">Compare this fingerprint with the host through a trusted channel before verifying.</string>
+    <string name="community_host_fingerprint_hint">Enter the host fingerprint</string>
+    <string name="community_host_verify">Verify fingerprint</string>
+    <string name="community_host_verify_success">Host fingerprint verified.</string>
+    <string name="community_host_verify_failure">Fingerprint did not match. Host trust was not changed.</string>
 
     <!-- Export / Restore -->
     <string name="export_restore_title">Backup &amp; Restore</string>
