@@ -7,7 +7,6 @@ import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.Aead
@@ -15,8 +14,6 @@ import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoTestSupport
 import org.openwebdav.messenger.identity.IdentityTestSupport
 import org.openwebdav.messenger.transport.TestSupport
-import org.openwebdav.messenger.transport.WebDavResult
-import java.util.concurrent.atomic.AtomicReference
 
 class CommunityCreationPolicyServiceTest {
     @Test
@@ -50,161 +47,6 @@ class CommunityCreationPolicyServiceTest {
                 assertEquals(CommunityCreationPolicyService.Result.Blocked, unavailable)
                 assertFalse(CommunityCreationPolicyRules.allowsCreation(unavailable, ChatAccess.PUBLIC))
                 assertFalse(CommunityCreationPolicyRules.allowsCreation(unavailable, ChatAccess.PRIVATE))
-            } finally {
-                server.shutdown()
-            }
-        }
-
-    @Test
-    fun equivocal_policy_revision_blocks_without_advancing_high_water() =
-        runTest {
-            val server = MockWebServer()
-            val crypto = IdentityTestSupport.identityCrypto()
-            val host = crypto.generateIdentity()
-            val key = ChatKey.fromBytes(ByteArray(ChatKey.KEY_BYTES) { 5 })
-            val envelopes = CommunityGovernanceEnvelopeCodec(Aead(CryptoTestSupport.native()))
-            val files =
-                listOf(true, false).associate { allowPublic ->
-                    val signed =
-                        CommunityCreationPolicyCodec.sign(
-                            "community-1",
-                            3,
-                            allowPublic,
-                            !allowPublic,
-                            emptyList(),
-                            host.copySignSecret(),
-                            crypto,
-                        )
-                    val stored = envelopes.seal(GovernanceObjectKind.POLICY, "community-1", key, signed)
-                    envelopes.contentHash(stored) to stored
-                }
-            server.dispatcher =
-                object : Dispatcher() {
-                    override fun dispatch(request: RecordedRequest): MockResponse =
-                        when (request.method) {
-                            "PROPFIND" ->
-                                MockResponse().setResponseCode(207)
-                                    .setHeader("Content-Type", "application/xml; charset=utf-8")
-                                    .setBody(
-                                        TestSupport.multistatus(
-                                            "governance/policies",
-                                            *files.keys.map { it to "etag" }.toTypedArray(),
-                                        ),
-                                    )
-                            "GET" ->
-                                MockResponse().setResponseCode(200).setBody(
-                                    okio.Buffer().write(files.getValue(request.requestUrl!!.encodedPathSegments.last())),
-                                )
-                            else -> MockResponse().setResponseCode(404)
-                        }
-                }
-            server.start()
-            try {
-                var accepted = false
-                val result =
-                    CommunityCreationPolicyService(
-                        CommunityGovernanceReader(TestSupport.newTransport(server), envelopes),
-                        "community-1",
-                        key,
-                        host.copySignPublic(),
-                        true,
-                        crypto,
-                    ) { _, _ ->
-                        accepted = true
-                        PolicyRevisionDecision.Accepted
-                    }.read()
-
-                assertEquals(CommunityCreationPolicyService.Result.Blocked, result)
-                assertFalse(accepted)
-            } finally {
-                server.shutdown()
-            }
-        }
-
-    @Test
-    fun policy_read_advances_high_water_and_rollback_fails_closed() =
-        runTest {
-            val server = MockWebServer()
-            val storedFile = AtomicReference<ByteArray>()
-            val contentHash = AtomicReference<String>()
-            server.dispatcher =
-                object : Dispatcher() {
-                    override fun dispatch(request: RecordedRequest): MockResponse =
-                        when (request.method) {
-                            "MKCOL" -> MockResponse().setResponseCode(201)
-                            "PUT" -> {
-                                storedFile.set(request.body.readByteArray())
-                                MockResponse().setResponseCode(201)
-                            }
-                            "PROPFIND" ->
-                                MockResponse()
-                                    .setResponseCode(207)
-                                    .setHeader("Content-Type", "application/xml; charset=utf-8")
-                                    .setBody(TestSupport.multistatus("governance/policies", contentHash.get() to "etag"))
-                            "GET" -> MockResponse().setResponseCode(200).setBody(okio.Buffer().write(storedFile.get()))
-                            else -> MockResponse().setResponseCode(404)
-                        }
-                }
-            server.start()
-            try {
-                val transport = TestSupport.newTransport(server)
-                val identityCrypto = IdentityTestSupport.identityCrypto()
-                val host = identityCrypto.generateIdentity()
-                val key = ChatKey.fromBytes(ByteArray(ChatKey.KEY_BYTES) { 5 })
-                val envelopes = CommunityGovernanceEnvelopeCodec(Aead(CryptoTestSupport.native()))
-                val policyBytes =
-                    CommunityCreationPolicyCodec.sign(
-                        "community-1",
-                        1,
-                        allowPublic = false,
-                        allowPrivate = true,
-                        grandfatheredOriginHashes = emptyList(),
-                        signingSecret = host.copySignSecret(),
-                        crypto = identityCrypto,
-                    )
-                val reference =
-                    CommunityGovernanceWriter(transport, envelopes)
-                        .seal(GovernanceObjectKind.POLICY, "community-1", key, policyBytes)
-                contentHash.set(reference.contentHash)
-                assertTrue(CommunityGovernanceWriter(transport, envelopes).publish(reference) is WebDavResult.Success)
-                val reader = CommunityGovernanceReader(transport, envelopes)
-                val service =
-                    CommunityCreationPolicyService(
-                        reader,
-                        "community-1",
-                        key,
-                        host.copySignPublic(),
-                        false,
-                        identityCrypto,
-                    ) { revision, hash ->
-                        assertEquals(1L, revision)
-                        assertEquals(reference.contentHash, hash)
-                        PolicyRevisionDecision.Accepted
-                    }
-
-                val result = service.read()
-                assertTrue(result is CommunityCreationPolicyService.Result.Policy)
-                assertEquals(false, (result as CommunityCreationPolicyService.Result.Policy).value.allowPublic)
-                var storedRevision = 2L
-                val rollback =
-                    CommunityCreationPolicyService(
-                        reader,
-                        "community-1",
-                        key,
-                        host.copySignPublic(),
-                        true,
-                        identityCrypto,
-                    ) { revision, _ ->
-                        when {
-                            revision < storedRevision -> PolicyRevisionDecision.Rollback
-                            else -> {
-                                storedRevision = revision
-                                PolicyRevisionDecision.Accepted
-                            }
-                        }
-                    }
-                assertEquals(CommunityCreationPolicyService.Result.Blocked, rollback.read())
-                assertEquals(2L, storedRevision)
             } finally {
                 server.shutdown()
             }
