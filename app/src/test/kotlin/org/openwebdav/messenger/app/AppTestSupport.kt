@@ -287,6 +287,13 @@ internal class RecordingOnboardingDeps(
         }
     }
 
+    override suspend fun publishHostGenesis(
+        config: ConnectionConfig,
+        communityId: String,
+        genesisRecord: ByteArray,
+        communityKey: ChatKey,
+    ): Boolean = true
+
     override fun newChatId(): String = chatIdToMint
 
     override fun reconfigure(

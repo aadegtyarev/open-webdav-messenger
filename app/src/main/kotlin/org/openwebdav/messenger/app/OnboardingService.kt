@@ -71,11 +71,13 @@ internal class OnboardingService(
                 }
                 val identity = deps.ensureIdentity()
                 val chatId = deps.newChatId()
+                val chatKey = deps.keySources().newRandomKey()
                 val genesis = deps.createHostGenesis(chatId, identity) ?: return@withContext CreateResult.GenesisTrustFailure
-                if (!deps.pinCreatedCommunityGenesis(chatId, genesis)) {
+                if (!deps.pinCreatedCommunityGenesis(chatId, genesis) ||
+                    !deps.publishHostGenesis(config, chatId, genesis, chatKey)
+                ) {
                     return@withContext CreateResult.GenesisTrustFailure
                 }
-                val chatKey = deps.keySources().newRandomKey()
                 persistAndReconfigure(
                     config,
                     chatId,
@@ -200,6 +202,13 @@ internal class OnboardingService(
             communityId: String,
             genesisRecord: ByteArray,
         ): Boolean = pinCommunityGenesis(communityId, genesisRecord, verified = true)
+
+        suspend fun publishHostGenesis(
+            config: ConnectionConfig,
+            communityId: String,
+            genesisRecord: ByteArray,
+            communityKey: ChatKey,
+        ): Boolean = false
 
         fun newChatId(): String
 

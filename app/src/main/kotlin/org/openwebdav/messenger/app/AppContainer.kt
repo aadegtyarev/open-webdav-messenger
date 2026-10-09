@@ -17,6 +17,7 @@ import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.chatdirectory.ChatDirectoryFactory
 import org.openwebdav.messenger.chatdirectory.ChatKind
+import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
@@ -28,6 +29,9 @@ import org.openwebdav.messenger.directory.DirectoryFactory
 import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.directory.RemoteChatProvisioner
 import org.openwebdav.messenger.governance.CommunityGenesisCodec
+import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
+import org.openwebdav.messenger.governance.CommunityGovernanceWriter
+import org.openwebdav.messenger.governance.GovernanceObjectKind
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.invite.InviteCodec
@@ -1995,6 +1999,18 @@ internal object AppContainer {
                     identityFactory.identityCrypto(),
                     TrustPinSource.OWNER_CREATED,
                 ) in setOf(TrustPinResult.PINNED, TrustPinResult.ALREADY_PINNED)
+
+            override suspend fun publishHostGenesis(
+                config: ConnectionConfig,
+                communityId: String,
+                genesisRecord: ByteArray,
+                communityKey: ChatKey,
+            ): Boolean {
+                val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+                val writer = CommunityGovernanceWriter(TransportFactory.create(config), envelopes)
+                val reference = writer.seal(GovernanceObjectKind.GENESIS, communityId, communityKey, genesisRecord)
+                return writer.publish(reference) is WebDavResult.Success
+            }
 
             override fun newChatId(): String = randomChatId()
 

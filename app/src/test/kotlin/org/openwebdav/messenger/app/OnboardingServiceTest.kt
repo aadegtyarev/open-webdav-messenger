@@ -38,7 +38,9 @@ class OnboardingServiceTest {
         var reconfiguredKey: ChatKey? = null
         var generationAtReconfigure: Long? = null
         var pinnedGenesis: ByteArray? = null
+        var publishedGenesis: ByteArray? = null
         var pinGenesisSucceeds = true
+        var publishGenesisSucceeds = true
 
         override fun keySources(): KeySources = AppTestSupport.keySources()
 
@@ -93,6 +95,16 @@ class OnboardingServiceTest {
             return pinGenesisSucceeds
         }
 
+        override suspend fun publishHostGenesis(
+            config: ConnectionConfig,
+            communityId: String,
+            genesisRecord: ByteArray,
+            communityKey: ChatKey,
+        ): Boolean {
+            publishedGenesis = genesisRecord.copyOf()
+            return publishGenesisSucceeds
+        }
+
         override fun newChatId(): String = chatIdToMint
 
         override fun reconfigure(
@@ -145,7 +157,9 @@ class OnboardingServiceTest {
             assertEquals(deps.chatIdToMint, deps.savedChatId)
             assertTrue(deps.chatKeyStore.has(deps.chatIdToMint))
             assertNotNull(deps.pinnedGenesis)
+            assertNotNull(deps.publishedGenesis)
             assertTrue(CommunityGenesisCodec.verify(deps.pinnedGenesis!!, deps.chatIdToMint, AppTestSupport.identityCrypto()) != null)
+            assertTrue(deps.pinnedGenesis!!.contentEquals(deps.publishedGenesis!!))
             // The engine was reconfigured for that chat with the same key.
             assertEquals(deps.chatIdToMint, deps.reconfiguredChatId)
             assertNotNull(deps.reconfiguredKey)
@@ -169,6 +183,26 @@ class OnboardingServiceTest {
             assertNull(deps.savedConfig)
             assertNull(deps.reconfiguredChatId)
             assertFalse(deps.chatKeyStore.has(deps.chatIdToMint))
+        }
+
+    @Test
+    fun owner_create_aborts_before_account_mutation_when_genesis_publish_fails() =
+        runTest {
+            val deps = RecordingDeps(AppTestSupport.newIdentity()).also { it.publishGenesisSucceeds = false }
+            val result =
+                service(deps).createCommunity(
+                    "https://disk.example.test",
+                    "owner",
+                    "fake-app-password-not-real",
+                    "",
+                    "My Community",
+                )
+
+            assertEquals(OnboardingService.CreateResult.GenesisTrustFailure, result)
+            assertNotNull(deps.pinnedGenesis)
+            assertNotNull(deps.publishedGenesis)
+            assertNull(deps.savedConfig)
+            assertNull(deps.reconfiguredChatId)
         }
 
     /** owner_connect_cleartext_url_is_refused — an http:// URL is refused, NOTHING is persisted (SC13). */
