@@ -3,6 +3,7 @@ package org.openwebdav.messenger.keystore
 import android.content.Context
 import org.openwebdav.messenger.export.AccountBackup
 import org.openwebdav.messenger.export.ChatBackup
+import org.openwebdav.messenger.export.ChatDeletionBackup
 import org.openwebdav.messenger.export.CommunityBackup
 import org.openwebdav.messenger.export.ExportableAccountBackupStore
 import org.openwebdav.messenger.identity.IdentityCrypto
@@ -68,6 +69,20 @@ internal class AccountBackupStore(
                     trust?.fingerprintVerified ?: false,
                     trust?.highestPolicyRevision ?: 0,
                     trust?.highestPolicyHash,
+                    deletion.chatDeletions.map { row ->
+                        ChatDeletionBackup(
+                            row.chatId,
+                            row.scope,
+                            row.originHash,
+                            row.tombstoneHash,
+                            java.util.Base64.getEncoder().encodeToString(row.tombstoneStoredBytes),
+                            row.phase,
+                            row.cleanupAttempts,
+                            row.nextAttemptAtMillis,
+                            row.lastError,
+                            row.updatedAtMillis,
+                        )
+                    },
                 )
             }
         if (communities.isEmpty()) return null

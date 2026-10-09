@@ -132,13 +132,13 @@ internal fun AppNav(initialScreen: Screen? = null) {
         }
 
         Screen.CommunityList -> {
-            val hiddenDmKeys by AppContainer.observeHiddenDmKeys().collectAsStateWithLifecycle(emptySet())
+            val deletedChatKeys by AppContainer.observeDeletedChatKeys().collectAsStateWithLifecycle(emptySet())
             UnifiedChatListScreen(
                 onOpenFeed = { screen = Screen.Feed },
                 onCreateCommunity = { screen = Screen.CreateCommunity },
                 onJoin = { screen = Screen.Join },
                 onSettings = { screen = Screen.Settings },
-                hiddenDmKeys = hiddenDmKeys,
+                deletedChatKeys = deletedChatKeys,
             )
         }
 

@@ -60,7 +60,7 @@ internal fun UnifiedChatListScreen(
     onOpenFeed: () -> Unit,
     onSettings: () -> Unit,
     chatItems: List<UnifiedChat>? = null,
-    hiddenDmKeys: Set<Pair<String, String>> = emptySet(),
+    deletedChatKeys: Set<Pair<String, String>> = emptySet(),
     openChat: suspend (UnifiedChat, ChatOpenRequestCoordinator.Token) -> Boolean = { chat, token ->
         if (chat.kind == "general") {
             AppContainer.switchToCommunity(chat.communityId, token)
@@ -71,9 +71,9 @@ internal fun UnifiedChatListScreen(
     observeUnreadCount: (String, String) -> Flow<Int> = AppContainer::observeUnreadCount,
 ) {
     val chats =
-        remember(chatItems, hiddenDmKeys) {
+        remember(chatItems, deletedChatKeys) {
             (chatItems ?: AppContainer.allChats()).filterNot { chat ->
-                chat.kind == "dm" && (chat.communityId to chat.chatId) in hiddenDmKeys
+                (chat.communityId to chat.chatId) in deletedChatKeys
             }
         }
     var fabExpanded by remember { mutableStateOf(false) }

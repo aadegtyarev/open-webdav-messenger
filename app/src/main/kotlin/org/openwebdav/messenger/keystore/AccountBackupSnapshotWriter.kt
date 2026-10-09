@@ -41,7 +41,12 @@ internal class AccountBackupSnapshotWriter(
         backup.communities.forEach { community ->
             configStore.save(community.config, community.anchorChatId, community.name, community.id)
             chatRegistry.replace(community.id, community.chats.map { ChatRegistry.Entry(it.id, it.name, it.kind, it.access) })
-            deletionState.replace(community.id, community.hiddenDmChatIds, community.suppressedDmMessageIds)
+            deletionState.replace(
+                community.id,
+                community.hiddenDmChatIds,
+                community.suppressedDmMessageIds,
+                community.chatDeletions,
+            )
             val genesis = community.genesisRecordBase64
             if (genesis == null) {
                 trustStore.remove(community.id)

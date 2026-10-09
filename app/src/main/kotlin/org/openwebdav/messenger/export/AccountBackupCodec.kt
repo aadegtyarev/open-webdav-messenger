@@ -79,9 +79,9 @@ internal object AccountBackupCodec {
                             }
                         val deletion =
                             if (version >= DELETION_STATE_VERSION) {
-                                AccountBackupDeletionCodec.read(input)
+                                AccountBackupDeletionCodec.read(input, version >= CHAT_DELETION_STATE_VERSION)
                             } else {
-                                LocalDeletionBackup(emptyList(), emptyMap())
+                                LocalDeletionBackup(emptyList(), emptyMap(), emptyList())
                             }
                         val trust =
                             if (version >= TRUST_STATE_VERSION) {
@@ -105,6 +105,7 @@ internal object AccountBackupCodec {
                             hostFingerprintVerified = trust.fingerprintVerified,
                             highestPolicyRevision = trust.highestPolicyRevision,
                             highestPolicyHash = trust.highestPolicyHash,
+                            chatDeletions = deletion.chatDeletions,
                         )
                     }
                 require(input.available() == 0 && communities.any { it.id == activeId })
@@ -112,11 +113,12 @@ internal object AccountBackupCodec {
             }
         }.getOrNull()
 
-    private const val VERSION = 5
+    private const val VERSION = 6
     private const val LEGACY_VERSION = 1
     private const val ACCESS_VERSION = 2
     private const val DELETION_STATE_VERSION = 4
     private const val TRUST_STATE_VERSION = 5
+    private const val CHAT_DELETION_STATE_VERSION = 6
     private val ACCESS_VALUES = setOf("public", "private", "unknown")
 
     private fun legacyAccess(): String = "unknown"

@@ -64,7 +64,7 @@ class UnifiedChatListScreenTest {
                 onOpenFeed = {},
                 onSettings = {},
                 chatItems = chats,
-                hiddenDmKeys = setOf("community-a" to "dm-id"),
+                deletedChatKeys = setOf("community-a" to "dm-id"),
                 observeUnreadCount = { _, _ -> flowOf(0) },
             )
         }

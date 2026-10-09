@@ -179,6 +179,28 @@ class MessengerDatabaseMigrationTest {
     }
 
     @Test
+    fun version7AddsDurableDeleteWinsGraveyardWithoutDroppingHistory() {
+        helper.createDatabase(TEST_DB, 7).apply {
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, kind, body, " +
+                    "receivedAtMillis, sendStatus) VALUES ('community-a', 'preserved', 'chat-a', '0001', " +
+                    "'sender', 1, 'history', 1, 'SENT')",
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 8, true, MessengerDatabase.MIGRATION_7_8).use { migrated ->
+            migrated.query("SELECT body FROM messages WHERE messageId = 'preserved'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals("history", row.getString(0))
+            }
+            migrated.query("SELECT COUNT(*) FROM chat_deletions").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(0, row.getInt(0))
+            }
+        }
+    }
+
+    @Test
     fun populatedVersion5OutboxReceivesEmptyClaimTokenColumn() {
         helper.createDatabase(TEST_DB, 5).apply {
             execSQL(

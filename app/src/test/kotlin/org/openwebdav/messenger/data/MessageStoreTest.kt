@@ -123,6 +123,63 @@ class MessageStoreTest {
         }
 
     @Test
+    fun durable_delete_commits_graveyard_with_atomic_purge_and_fences_late_messages() =
+        runTest {
+            store.persist("old-message", "0001", text("before delete"), receivedAtMillis = 1L)
+            store.advanceCursor("c1", "0001")
+            val graveyard =
+                ChatDeletionEntity(
+                    communityId = "default",
+                    chatId = "c1",
+                    scope = ChatDeletionEntity.SCOPE_GROUP,
+                    originHash = "a".repeat(32),
+                    tombstoneHash = "b".repeat(32),
+                    tombstoneStoredBytes = byteArrayOf(4, 5, 6),
+                    phase = ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
+                    updatedAtMillis = 2L,
+                )
+
+            assertEquals(ChatDeletionCommitResult.Committed, store.commitChatDeletion(graveyard))
+            assertEquals(ChatDeletionCommitResult.AlreadyCommitted, store.commitChatDeletion(graveyard))
+            assertTrue(store.isChatDeleted("c1"))
+            assertTrue(store.messagesForChat("c1").isEmpty())
+            assertEquals("", store.cursorFor("c1"))
+            assertFalse(store.persist("late-message", "0002", text("stale poll"), receivedAtMillis = 3L))
+            assertTrue(store.pendingOutgoing("default").isEmpty())
+            assertTrue(
+                store.transitionDeletionPhase(
+                    "c1",
+                    graveyard.tombstoneHash,
+                    ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
+                    ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED,
+                    4L,
+                ),
+            )
+        }
+
+    @Test
+    fun restoring_backup_without_graveyard_never_clears_local_delete_wins_state() =
+        runTest {
+            val deletion =
+                ChatDeletionEntity(
+                    "default",
+                    "c1",
+                    ChatDeletionEntity.SCOPE_GROUP,
+                    "a".repeat(32),
+                    "b".repeat(32),
+                    byteArrayOf(1, 2),
+                    ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
+                    updatedAtMillis = 1L,
+                )
+            store.commitChatDeletion(deletion)
+
+            db.messageDao().replaceDmDeletionState("default", emptyList(), emptyList(), emptyList())
+
+            assertTrue(store.isChatDeleted("c1"))
+            assertEquals(deletion.tombstoneHash, store.chatDeletion("c1")?.tombstoneHash)
+        }
+
+    @Test
     fun identical_chat_history_read_state_and_cursor_are_community_scoped() =
         runTest {
             val communityA = MessageStore(db.messageDao(), db.syncCursorDao(), "community-a")

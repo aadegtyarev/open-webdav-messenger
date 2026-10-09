@@ -6,6 +6,7 @@ import java.io.DataOutput
 internal data class LocalDeletionBackup(
     val hiddenDmChatIds: List<String>,
     val suppressedDmMessageIds: Map<String, List<String>>,
+    val chatDeletions: List<ChatDeletionBackup>,
 )
 
 internal object AccountBackupDeletionCodec {
@@ -30,9 +31,13 @@ internal object AccountBackupDeletionCodec {
             output.writeUTF(chatId)
             output.writeUTF(messageId)
         }
+        AccountBackupGraveyardCodec.write(output, community.chatDeletions)
     }
 
-    fun read(input: DataInput): LocalDeletionBackup {
+    fun read(
+        input: DataInput,
+        includeChatDeletions: Boolean,
+    ): LocalDeletionBackup {
         val hiddenCount = input.readInt().also { require(it in 0..MAX_CHATS) }
         val hidden = List(hiddenCount) { input.readUTF() }
         require(hidden.distinct().size == hidden.size)
@@ -45,7 +50,8 @@ internal object AccountBackupDeletionCodec {
             require(ids.size < MAX_IDS_PER_CHAT && messageId !in ids)
             ids.add(messageId)
         }
-        return LocalDeletionBackup(hidden, suppressed.mapValues { it.value.toList() })
+        val deletions = if (includeChatDeletions) AccountBackupGraveyardCodec.read(input) else emptyList()
+        return LocalDeletionBackup(hidden, suppressed.mapValues { it.value.toList() }, deletions)
     }
 
     private const val MAX_CHATS = 1000

@@ -24,6 +24,7 @@ data class CommunityBackup(
     val hostFingerprintVerified: Boolean = false,
     val highestPolicyRevision: Long = 0,
     val highestPolicyHash: String? = null,
+    val chatDeletions: List<ChatDeletionBackup> = emptyList(),
 )
 
 data class CommunityTrustBackup(

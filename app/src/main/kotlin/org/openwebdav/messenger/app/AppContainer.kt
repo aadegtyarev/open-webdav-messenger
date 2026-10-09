@@ -21,6 +21,7 @@ import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoFactory
 import org.openwebdav.messenger.crypto.KeySources
+import org.openwebdav.messenger.data.ChatDeletionStateStore
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.CredentialRotation
@@ -593,13 +594,14 @@ internal object AppContainer {
         val access: String,
     )
 
-    private fun prepareGroupChatOpen(
+    private suspend fun prepareGroupChatOpen(
         chatId: String,
         chatName: String,
         communityId: String,
         expectedSelectionRevision: Long?,
         requestToken: ChatOpenRequestCoordinator.Token,
     ): PreparedGroupChatOpen? {
+        if (isChatDeletionCommitted(communityId, chatId)) return null
         val selection =
             groupChatOpenCoordinator.prepare(
                 chatId,
@@ -1097,7 +1099,12 @@ internal object AppContainer {
         chatId: String,
     ): ChatRegistry.Entry? = chatRegistry.all(communityId).singleOrNull { it.id == chatId }
 
-    fun observeHiddenDmKeys(): Flow<Set<Pair<String, String>>> = runtimeGraph()?.store?.observeHiddenDmKeys() ?: flowOf(emptySet())
+    fun observeDeletedChatKeys(): Flow<Set<Pair<String, String>>> = ChatDeletionStateStore.observeDeletedChatKeys(appContext)
+
+    private suspend fun isChatDeletionCommitted(
+        communityId: String,
+        chatId: String,
+    ): Boolean = ChatDeletionStateStore.isChatDeleted(appContext, communityId, chatId)
 
     /** A unified view of all chats across all communities — for the unified chat list. */
     data class UnifiedChat(
@@ -1312,13 +1319,14 @@ internal object AppContainer {
         }
     }
 
-    private fun prepareDmStart(
+    private suspend fun prepareDmStart(
         peer: DirectoryEntry,
         generation: Long,
     ): PreparedDmStart? {
         val graph = runtimeGraph() ?: return null
         val identity = graph.identity
         val chatId = ChatIds.dmChatId(crypto.nativeCrypto(), identity.copyBoxPublic(), peer.copyBoxPublicKey())
+        if (isChatDeletionCommitted(graph.communityId, chatId)) return null
         val matchingEntries = chatRegistry.all(graph.communityId).filter { it.id == chatId }
         if (matchingEntries.size > 1 || matchingEntries.any { it.kind != "dm" }) return null
         val existingDm = matchingEntries.isNotEmpty()

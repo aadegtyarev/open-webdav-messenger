@@ -31,6 +31,24 @@ interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertSuppressed(rows: List<SuppressedDmMessageEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertChatDeletion(deletion: ChatDeletionEntity): Long
+
+    @Query("SELECT * FROM chat_deletions WHERE communityId = :communityId AND chatId = :chatId")
+    suspend fun chatDeletion(
+        communityId: String,
+        chatId: String,
+    ): ChatDeletionEntity?
+
+    @Query("SELECT * FROM chat_deletions WHERE communityId = :communityId")
+    suspend fun chatDeletionsForCommunity(communityId: String): List<ChatDeletionEntity>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM chat_deletions WHERE communityId = :communityId AND chatId = :chatId)")
+    suspend fun isChatDeleted(
+        communityId: String,
+        chatId: String,
+    ): Boolean
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putHiddenDm(hidden: HiddenDmEntity)
 
@@ -39,6 +57,9 @@ interface MessageDao {
 
     @Query("SELECT * FROM hidden_dms")
     fun observeHiddenDms(): Flow<List<HiddenDmEntity>>
+
+    @Query("SELECT * FROM chat_deletions")
+    fun observeChatDeletions(): Flow<List<ChatDeletionEntity>>
 
     @Query("SELECT * FROM hidden_dms WHERE communityId = :communityId")
     suspend fun hiddenDmsForCommunity(communityId: String): List<HiddenDmEntity>
@@ -57,11 +78,21 @@ interface MessageDao {
         communityId: String,
         hiddenChatIds: List<String>,
         suppressedIds: List<SuppressedDmMessageEntity>,
+        chatDeletions: List<ChatDeletionEntity>,
     ) {
         deleteHiddenDmsForCommunity(communityId)
         deleteSuppressedDmsForCommunity(communityId)
         if (hiddenChatIds.isNotEmpty()) putHiddenDms(hiddenChatIds.map { HiddenDmEntity(communityId, it) })
         if (suppressedIds.isNotEmpty()) insertSuppressed(suppressedIds)
+        chatDeletions.filter { it.communityId == communityId }.forEach { incoming ->
+            if (chatDeletion(communityId, incoming.chatId) == null) insertChatDeletion(incoming)
+        }
+        chatDeletionsForCommunity(communityId).forEach { deletion ->
+            deleteMessagesForChat(communityId, deletion.chatId)
+            deleteCursorForChat(communityId, deletion.chatId)
+            clearHiddenDm(communityId, deletion.chatId)
+            deleteSuppressedForChat(communityId, deletion.chatId)
+        }
     }
 
     @Query("SELECT EXISTS(SELECT 1 FROM hidden_dms WHERE communityId = :communityId AND chatId = :chatId)")
@@ -113,11 +144,68 @@ interface MessageDao {
         chatId: String,
     )
 
+    @Query("DELETE FROM suppressed_dm_messages WHERE communityId = :communityId AND chatId = :chatId")
+    suspend fun deleteSuppressedForChat(
+        communityId: String,
+        chatId: String,
+    )
+
+    @Query(
+        "UPDATE chat_deletions SET phase = :nextPhase, updatedAtMillis = :updatedAtMillis " +
+            "WHERE communityId = :communityId AND chatId = :chatId AND tombstoneHash = :tombstoneHash AND phase = :expectedPhase",
+    )
+    suspend fun updateDeletionPhase(
+        communityId: String,
+        chatId: String,
+        tombstoneHash: String,
+        expectedPhase: String,
+        nextPhase: String,
+        updatedAtMillis: Long,
+    ): Int
+
+    @Transaction
+    suspend fun transitionDeletionPhase(
+        communityId: String,
+        chatId: String,
+        tombstoneHash: String,
+        expectedPhase: String,
+        nextPhase: String,
+        updatedAtMillis: Long,
+    ): Int {
+        val valid =
+            when (expectedPhase) {
+                ChatDeletionEntity.PHASE_LOCAL_COMMITTED -> nextPhase == ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED
+                ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED -> nextPhase == ChatDeletionEntity.PHASE_CLEANUP_PENDING
+                ChatDeletionEntity.PHASE_CLEANUP_PENDING -> nextPhase == ChatDeletionEntity.PHASE_COMPLETE
+                else -> false
+            }
+        if (!valid) return 0
+        return updateDeletionPhase(communityId, chatId, tombstoneHash, expectedPhase, nextPhase, updatedAtMillis)
+    }
+
+    @Transaction
+    suspend fun commitChatDeletion(deletion: ChatDeletionEntity): ChatDeletionCommitResult {
+        if (deletion.phase != ChatDeletionEntity.PHASE_LOCAL_COMMITTED) return ChatDeletionCommitResult.Conflict
+        val existing = chatDeletion(deletion.communityId, deletion.chatId)
+        if (existing != null && !existing.sameTombstone(deletion)) return ChatDeletionCommitResult.Conflict
+        if (existing == null && insertChatDeletion(deletion) == -1L) return ChatDeletionCommitResult.Conflict
+        deleteMessagesForChat(deletion.communityId, deletion.chatId)
+        deleteCursorForChat(deletion.communityId, deletion.chatId)
+        clearHiddenDm(deletion.communityId, deletion.chatId)
+        deleteSuppressedForChat(deletion.communityId, deletion.chatId)
+        return if (existing == null) ChatDeletionCommitResult.Committed else ChatDeletionCommitResult.AlreadyCommitted
+    }
+
+    private fun ChatDeletionEntity.sameTombstone(other: ChatDeletionEntity): Boolean =
+        scope == other.scope && originHash == other.originHash && tombstoneHash == other.tombstoneHash &&
+            tombstoneStoredBytes.contentEquals(other.tombstoneStoredBytes)
+
     @Transaction
     suspend fun insertUnlessSuppressed(
         message: MessageEntity,
         peerMessage: Boolean,
     ): Long {
+        if (isChatDeleted(message.communityId, message.chatId)) return -1L
         if (isMessageSuppressed(message.communityId, message.chatId, message.messageId)) return -1L
         if (isDmHidden(message.communityId, message.chatId)) {
             if (!peerMessage || message.sendStatus == MessageEntity.STATUS_SENDING) return -1L

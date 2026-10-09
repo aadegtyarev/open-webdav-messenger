@@ -5,12 +5,14 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.openwebdav.messenger.protocol.Base32
 import org.openwebdav.messenger.transport.ConnectionConfig
+import java.security.MessageDigest
 import java.util.Base64
 
 class AccountBackupCodecTest {
     @Test
-    fun version_five_round_trips_exact_access_dm_deletion_and_trust_metadata() {
+    fun version_six_round_trips_trust_and_durable_chat_deletion_metadata() {
         val backup =
             AccountBackup(
                 activeCommunityId = "community-b",
@@ -37,6 +39,21 @@ class AccountBackupCodecTest {
                             hostFingerprintVerified = true,
                             highestPolicyRevision = 4,
                             highestPolicyHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                            chatDeletions =
+                                listOf(
+                                    ChatDeletionBackup(
+                                        "deleted-dm",
+                                        "DM",
+                                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                        deletionHash(ByteArray(64) { it.toByte() }),
+                                        Base64.getEncoder().encodeToString(ByteArray(64) { it.toByte() }),
+                                        "CLEANUP_PENDING",
+                                        2,
+                                        1234L,
+                                        "retry later",
+                                        5678L,
+                                    ),
+                                ),
                         ),
                     ),
             )
@@ -44,7 +61,7 @@ class AccountBackupCodecTest {
         val restored = ExportPayload.fromJson(json)
         assertNotNull(restored)
         val bytes = Base64.getDecoder().decode(restored!!.accountBackupBase64)
-        assertEquals(5, java.nio.ByteBuffer.wrap(bytes).int)
+        assertEquals(6, java.nio.ByteBuffer.wrap(bytes).int)
         assertEquals(backup, AccountBackupCodec.decode(bytes))
     }
 
@@ -65,7 +82,7 @@ class AccountBackupCodecTest {
                 ),
             )
         val bytes =
-            AccountBackupCodec.encode(backup).copyOf(AccountBackupCodec.encode(backup).size - 19)
+            AccountBackupCodec.encode(backup).copyOf(AccountBackupCodec.encode(backup).size - 23)
                 .also { java.nio.ByteBuffer.wrap(it).putInt(2) }
 
         assertEquals(backup, AccountBackupCodec.decode(bytes))
@@ -74,29 +91,33 @@ class AccountBackupCodecTest {
     @Test
     fun unsupported_account_backup_versions_are_rejected() {
         val bytes = AccountBackupCodec.encode(AccountBackup("community-a", listOf(community("community-a", "General"))))
-        java.nio.ByteBuffer.wrap(bytes).putInt(6)
+        java.nio.ByteBuffer.wrap(bytes).putInt(7)
 
         assertNull(AccountBackupCodec.decode(bytes))
     }
 
     @Test
-    fun outer_backup_payload_v2_through_v5_migrate_and_v5_is_current() {
+    fun outer_backup_payload_v2_through_v6_migrate_and_v6_is_current() {
         val backup = AccountBackup("community-a", listOf(community("community-a", "General")))
         val current = payload(backup)
         val currentBytes = AccountBackupCodec.encode(backup)
-        val v4Bytes = currentBytes.copyOf(currentBytes.size - 11).also { java.nio.ByteBuffer.wrap(it).putInt(4) }
+        val v5Bytes = currentBytes.copyOf(currentBytes.size - 4).also { java.nio.ByteBuffer.wrap(it).putInt(5) }
+        val v4Bytes = currentBytes.copyOf(currentBytes.size - 15).also { java.nio.ByteBuffer.wrap(it).putInt(4) }
         val v4Json =
             ExportPayload.toJson(current.copy(accountBackupBase64 = Base64.getEncoder().encodeToString(v4Bytes)))
-                .replace("\"v\":5", "\"v\":4")
-        val v3Bytes = currentBytes.copyOf(currentBytes.size - 19).also { java.nio.ByteBuffer.wrap(it).putInt(3) }
+                .replace("\"v\":6", "\"v\":4")
+        val v3Bytes = currentBytes.copyOf(currentBytes.size - 23).also { java.nio.ByteBuffer.wrap(it).putInt(3) }
         val v3Payload = current.copy(accountBackupBase64 = Base64.getEncoder().encodeToString(v3Bytes))
-        val v3Json = ExportPayload.toJson(v3Payload).replace("\"v\":5", "\"v\":3")
+        val v3Json = ExportPayload.toJson(v3Payload).replace("\"v\":6", "\"v\":3")
         val v2Bytes = v3Bytes.copyOf().also { java.nio.ByteBuffer.wrap(it).putInt(2) }
         val v2Payload = current.copy(accountBackupBase64 = Base64.getEncoder().encodeToString(v2Bytes))
-        val v2Json = ExportPayload.toJson(v2Payload).replace("\"v\":5", "\"v\":2")
-        val v5Json = ExportPayload.toJson(current)
+        val v2Json = ExportPayload.toJson(v2Payload).replace("\"v\":6", "\"v\":2")
+        val v5Payload = current.copy(accountBackupBase64 = Base64.getEncoder().encodeToString(v5Bytes))
+        val v5Json = ExportPayload.toJson(v5Payload).replace("\"v\":6", "\"v\":5")
+        val v6Json = ExportPayload.toJson(current)
 
-        assertTrue(v5Json.contains("\"v\":5"))
+        assertTrue(v6Json.contains("\"v\":6"))
+        assertNotNull(ExportPayload.fromJson(v6Json))
         assertNotNull(ExportPayload.fromJson(v5Json))
         assertNotNull(ExportPayload.fromJson(v4Json))
         assertNotNull(ExportPayload.fromJson(v3Json))
@@ -164,6 +185,9 @@ class AccountBackupCodecTest {
             identitySerialized = "legacy-identity",
             accountBackupBase64 = Base64.getEncoder().encodeToString(AccountBackupCodec.encode(backup)),
         )
+
+    private fun deletionHash(bytes: ByteArray): String =
+        Base32.encodeBase32Lower(MessageDigest.getInstance("SHA-256").digest(bytes)).take(32)
 
     private fun community(
         id: String,

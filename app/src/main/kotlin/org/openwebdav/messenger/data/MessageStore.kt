@@ -2,6 +2,7 @@ package org.openwebdav.messenger.data
 
 import androidx.paging.PagingSource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import org.openwebdav.messenger.message.Message
 import org.openwebdav.messenger.message.ReactionMessage
@@ -100,8 +101,25 @@ class MessageStore(
         messageDao.recoverInterruptedOutgoing(communityId)
     }
 
-    fun observeHiddenDmKeys(): Flow<Set<Pair<String, String>>> =
-        messageDao.observeHiddenDms().map { rows -> rows.mapTo(mutableSetOf()) { it.communityId to it.chatId } }
+    fun observeDeletedChatKeys(): Flow<Set<Pair<String, String>>> =
+        combine(messageDao.observeHiddenDms(), messageDao.observeChatDeletions()) { hidden, deletions ->
+            (hidden.map { it.communityId to it.chatId } + deletions.map { it.communityId to it.chatId }).toSet()
+        }
+
+    suspend fun isChatDeleted(chatId: String): Boolean = messageDao.isChatDeleted(communityId, chatId)
+
+    suspend fun chatDeletion(chatId: String): ChatDeletionEntity? = messageDao.chatDeletion(communityId, chatId)
+
+    suspend fun commitChatDeletion(deletion: ChatDeletionEntity): ChatDeletionCommitResult =
+        if (deletion.communityId == communityId) messageDao.commitChatDeletion(deletion) else ChatDeletionCommitResult.Conflict
+
+    suspend fun transitionDeletionPhase(
+        chatId: String,
+        tombstoneHash: String,
+        expectedPhase: String,
+        nextPhase: String,
+        updatedAtMillis: Long,
+    ): Boolean = messageDao.transitionDeletionPhase(communityId, chatId, tombstoneHash, expectedPhase, nextPhase, updatedAtMillis) == 1
 
     /** Mark all messages in [chatId] up to [orderToken] as READ (for received messages viewed by the user). */
     suspend fun markMessagesReadUpTo(
