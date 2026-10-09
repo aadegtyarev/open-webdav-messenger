@@ -28,8 +28,10 @@ import org.openwebdav.messenger.directory.DirectoryEntry
 import org.openwebdav.messenger.directory.DirectoryFactory
 import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.directory.RemoteChatProvisioner
+import org.openwebdav.messenger.governance.CommunityCreationPolicyService
 import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
+import org.openwebdav.messenger.governance.CommunityGovernanceReader
 import org.openwebdav.messenger.governance.CommunityGovernanceWriter
 import org.openwebdav.messenger.governance.CommunityGroupOriginPublisher
 import org.openwebdav.messenger.governance.GovernanceObjectKind
@@ -405,6 +407,7 @@ internal object AppContainer {
         context: SelectedCommunityGroupContext,
         requestToken: ChatOpenRequestCoordinator.Token,
     ): String? {
+        if (!isGroupCreationAllowed(context, access)) return null
         var stagedChatId: String? = null
         var stagedChatKey: ChatKey? = null
         var rawChatId: ByteArray? = null
@@ -452,6 +455,37 @@ internal object AppContainer {
             if (!publishPublicGroup(stored, context.graph, rawChatId ?: return null, name)) return null
         }
         return chatId
+    }
+
+    private suspend fun isGroupCreationAllowed(
+        context: SelectedCommunityGroupContext,
+        access: ChatAccess,
+    ): Boolean {
+        val trustStore = CommunityTrustStore(requireContext())
+        val trust = trustStore.get(context.communityId) ?: return true
+        val key = crypto.chatKeyStore(requireContext()).load(context.communityId)
+        if (key == null) return trust.highestPolicyRevision == 0L
+        val reader =
+            CommunityGovernanceReader(
+                TransportFactory.create(context.stored.config),
+                CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto())),
+            )
+        val result =
+            CommunityCreationPolicyService(
+                reader,
+                context.communityId,
+                key,
+                trust.hostSigningPublicKey,
+                trust.highestPolicyRevision > 0,
+                identityFactory.identityCrypto(),
+                { revision, hash -> trustStore.acceptPolicyRevision(context.communityId, revision, hash) },
+            ).read()
+        return when (result) {
+            CommunityCreationPolicyService.Result.DefaultAllowed -> true
+            CommunityCreationPolicyService.Result.Blocked -> false
+            is CommunityCreationPolicyService.Result.Policy ->
+                if (access == ChatAccess.PUBLIC) result.value.allowPublic else result.value.allowPrivate
+        }
     }
 
     private suspend fun publishGroupOrigin(
