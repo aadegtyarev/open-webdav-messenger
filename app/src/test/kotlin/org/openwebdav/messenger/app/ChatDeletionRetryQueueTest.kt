@@ -11,23 +11,31 @@ class ChatDeletionRetryQueueTest {
         runTest {
             var saved: List<Any?>? = null
             var requestedLimit = 0
+            var nextAttemptAt = 0L
+            var processCount = 0
             val row = deletion()
             val queue =
                 ChatDeletionRetryQueue(
                     loadDue = { now, limit ->
                         assertEquals(100_000L, now)
                         requestedLimit = limit
-                        listOf(row)
+                        if (now >= nextAttemptAt) listOf(row) else emptyList()
                     },
-                    process = { "receipts pending" },
+                    process = {
+                        processCount++
+                        "receipts pending"
+                    },
                     saveFailure = { deletion, attempts, next, error, updated ->
+                        nextAttemptAt = next
                         saved = listOf(deletion, attempts, next, error, updated)
                     },
                     nowMillis = { 100_000L },
                 )
             assertEquals(0, queue.run(limit = 99))
+            assertEquals(0, queue.run(limit = 99))
             assertEquals(64, requestedLimit)
             assertEquals(listOf(row, 1, 130_000L, "receipts pending", 100_000L), saved)
+            assertEquals(1, processCount)
         }
     }
 

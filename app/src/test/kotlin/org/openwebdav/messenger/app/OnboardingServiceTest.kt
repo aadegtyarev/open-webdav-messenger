@@ -40,6 +40,8 @@ class OnboardingServiceTest {
         var pinnedGenesis: ByteArray? = null
         var publishedGenesis: ByteArray? = null
         var pinGenesisSucceeds = true
+        var inviteGenesis: ByteArray? = null
+        var inviteGenesisVerified: Boolean? = null
         var publishGenesisSucceeds = true
 
         override fun keySources(): KeySources = AppTestSupport.keySources()
@@ -85,6 +87,16 @@ class OnboardingServiceTest {
             } finally {
                 secret.fill(0)
             }
+        }
+
+        override fun pinCommunityGenesis(
+            communityId: String,
+            genesisRecord: ByteArray,
+            verified: Boolean,
+        ): Boolean {
+            inviteGenesis = genesisRecord.copyOf()
+            inviteGenesisVerified = verified
+            return pinGenesisSucceeds
         }
 
         override fun pinCreatedCommunityGenesis(
@@ -238,6 +250,7 @@ class OnboardingServiceTest {
             val chatId = "shared-chat-id-000000000001"
             val key = AppTestSupport.keySources().newRandomKey()
             val invite = AppTestSupport.inviteString(ownerConfig, chatId, key, "Owner's Community")
+            val decoded = AppTestSupport.inviteCodec().decodeBlocking(invite) as InviteCodec.Result.Decoded
 
             val deps = RecordingDeps(AppTestSupport.newIdentity())
             val result = service(deps).joinFromInvite(invite)
@@ -250,6 +263,8 @@ class OnboardingServiceTest {
             assertEquals(ownerConfig.baseUrl, deps.savedConfig!!.baseUrl)
             assertEquals(ownerConfig.appPassword, deps.savedConfig!!.appPassword)
             assertTrue(deps.chatKeyStore.has(chatId))
+            assertTrue(checkNotNull(deps.inviteGenesis).contentEquals(decoded.token.genesisRecord))
+            assertEquals(true, deps.inviteGenesisVerified)
             // ...and the imported key matches what the owner put in the invite (byte-identical).
             assertArrayEqualsKey(key, deps.chatKeyStore.load(chatId))
             // The Joined result exposes NO disk fields — only the community name + chat-id.

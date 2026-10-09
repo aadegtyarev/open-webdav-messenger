@@ -67,6 +67,66 @@ class AccountBackupCodecTest {
     }
 
     @Test
+    fun version_five_decodes_verified_and_unverified_trust_state() {
+        val backup =
+            AccountBackup(
+                "community-a",
+                listOf(
+                    community("community-a", "General").copy(
+                        genesisRecordBase64 = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3)),
+                        hostFingerprintVerified = true,
+                        highestPolicyRevision = 4,
+                        highestPolicyHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    ),
+                    community("community-b", "General").copy(
+                        genesisRecordBase64 = Base64.getEncoder().encodeToString(byteArrayOf(4, 5, 6)),
+                        hostFingerprintVerified = false,
+                    ),
+                ),
+            )
+        assertEquals(backup, AccountBackupCodec.decode(encodeVersionFive(backup)))
+    }
+
+    private fun encodeVersionFive(backup: AccountBackup): ByteArray =
+        java.io.ByteArrayOutputStream().also { bytes ->
+            java.io.DataOutputStream(bytes).use { output ->
+                output.writeInt(5)
+                output.writeUTF(backup.activeCommunityId)
+                output.writeInt(backup.communities.size)
+                backup.communities.forEach { community ->
+                    output.writeUTF(community.id)
+                    output.writeUTF(community.name)
+                    output.writeUTF(community.anchorChatId)
+                    output.writeUTF(community.config.baseUrl)
+                    output.writeUTF(community.config.username)
+                    output.writeUTF(community.config.appPassword)
+                    output.writeUTF(community.config.chatRoot)
+                    output.writeBoolean(community.communityKeyBase64 != null)
+                    community.communityKeyBase64?.let(output::writeUTF)
+                    output.writeBoolean(community.isHost)
+                    output.writeInt(community.pollFloorSeconds)
+                    output.writeInt(community.retentionWindowDays)
+                    output.writeInt(community.chats.size)
+                    community.chats.forEach { chat ->
+                        output.writeUTF(chat.id)
+                        output.writeUTF(chat.name)
+                        output.writeUTF(chat.kind)
+                        output.writeUTF(chat.access)
+                    }
+                    output.writeInt(community.hiddenDmChatIds.size)
+                    community.hiddenDmChatIds.forEach(output::writeUTF)
+                    val suppressed = community.suppressedDmMessageIds.flatMap { (chatId, ids) -> ids.map { chatId to it } }
+                    output.writeInt(suppressed.size)
+                    suppressed.forEach { (chatId, messageId) ->
+                        output.writeUTF(chatId)
+                        output.writeUTF(messageId)
+                    }
+                    AccountBackupTrustCodec.write(output, community)
+                }
+            }
+        }.toByteArray()
+
+    @Test
     fun version_two_payload_decodes_access_without_inference() {
         val backup =
             AccountBackup(

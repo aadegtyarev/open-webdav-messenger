@@ -38,7 +38,7 @@ internal class CommunityTrustBackupRestorer(
             } else {
                 require(policyRevision != old.highestPolicyRevision || policyHash == old.highestPolicyHash)
                 old.copy(
-                    fingerprintVerified = old.fingerprintVerified || fingerprintVerified,
+                    fingerprintVerified = old.fingerprintVerified,
                     highestPolicyRevision = maxOf(old.highestPolicyRevision, policyRevision),
                     highestPolicyHash = if (policyRevision > old.highestPolicyRevision) policyHash else old.highestPolicyHash,
                 )

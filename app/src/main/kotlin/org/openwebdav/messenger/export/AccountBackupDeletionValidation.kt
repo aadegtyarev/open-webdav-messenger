@@ -10,7 +10,7 @@ internal object AccountBackupDeletionValidation {
             suppressed.all { (chatId, ids) ->
                 chatId in directMessages && ids.size <= MAX_IDS_PER_CHAT && ids.distinct().size == ids.size
             } && suppressed.values.sumOf { it.size } <= MAX_IDS_TOTAL &&
-            AccountBackupGraveyardCodec.isValid(community.chatDeletions)
+            AccountBackupGraveyardValidation.isValid(community.chatDeletions)
     }
 
     private const val MAX_CHATS = 1000

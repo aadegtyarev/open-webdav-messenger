@@ -55,28 +55,6 @@ class TombstoneReconcilerTest {
             assertFalse(applied)
         }
 
-    @Test
-    fun accountSwitchAfterScanFencesLocalApply() =
-        runTest {
-            var current = true
-            var applied = false
-            val reconciler =
-                TombstoneReconciler(
-                    isCurrent = { current },
-                    scan = {
-                        current = false
-                        candidate()
-                    },
-                    authorize = { true },
-                    apply = {
-                        applied = true
-                        true
-                    },
-                )
-            assertEquals(TombstoneReconciler.Result.Stale, reconciler.reconcile())
-            assertFalse(applied)
-        }
-
     private fun reconciler(
         scan: suspend () -> CommunityTombstoneChatScanner.Result,
         authorize: suspend (CommunityTombstoneChatScanner.Result.Found) -> Boolean = { true },

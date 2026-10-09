@@ -29,6 +29,23 @@ class CommunityTrustBackupRestorerTest {
     }
 
     @Test
+    fun verified_backup_does_not_upgrade_an_existing_unverified_pin() {
+        val unverified = pin(revision = 0, verified = false)
+        val persistence = MemoryTrustPersistence(listOf(unverified))
+
+        CommunityTrustBackupRestorer(persistence).restore(
+            "community-1",
+            unverified.genesisRecord,
+            true,
+            0,
+            null,
+            crypto,
+        )
+
+        assertFalse(persistence.load().single().fingerprintVerified)
+    }
+
+    @Test
     fun restore_rejects_host_key_rotation_without_a_trust_chain() {
         val existing = pin(revision = 0, verified = true)
         val replacement = pin(revision = 0, verified = true)
