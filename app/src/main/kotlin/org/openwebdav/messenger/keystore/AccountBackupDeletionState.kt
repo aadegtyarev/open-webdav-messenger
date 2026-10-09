@@ -50,6 +50,7 @@ internal class AccountBackupDeletionState(private val context: Context) {
                         communityId = communityId,
                         chatId = deletion.chatId,
                         scope = deletion.scope,
+                        originMode = deletion.originMode,
                         originHash = deletion.originHash,
                         tombstoneHash = deletion.tombstoneHash,
                         tombstoneStoredBytes = java.util.Base64.getDecoder().decode(deletion.tombstoneStoredBytesBase64),

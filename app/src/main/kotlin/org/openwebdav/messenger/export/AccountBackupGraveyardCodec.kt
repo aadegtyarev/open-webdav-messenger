@@ -10,7 +10,8 @@ internal object AccountBackupGraveyardCodec {
         runCatching {
             require(deletions.size <= MAX_CHATS && deletions.map { it.chatId }.distinct().size == deletions.size)
             deletions.forEach { deletion ->
-                require(IDENTIFIER.matches(deletion.chatId) && deletion.scope in SCOPES && deletion.phase in PHASES)
+                require(IDENTIFIER.matches(deletion.chatId))
+                require(deletion.scope in SCOPES && deletion.originMode in ORIGIN_MODES && deletion.phase in PHASES)
                 require(HASH.matches(deletion.originHash) && HASH.matches(deletion.tombstoneHash))
                 require(deletion.cleanupAttempts in 0..MAX_ATTEMPTS && (deletion.lastError?.length ?: 0) <= MAX_ERROR_CHARS)
                 val bytes = java.util.Base64.getDecoder().decode(deletion.tombstoneStoredBytesBase64)
@@ -29,7 +30,8 @@ internal object AccountBackupGraveyardCodec {
         require(isValid(ordered))
         output.writeInt(ordered.size)
         ordered.forEach { deletion ->
-            require(IDENTIFIER.matches(deletion.chatId) && deletion.scope in SCOPES && deletion.phase in PHASES)
+            require(IDENTIFIER.matches(deletion.chatId))
+            require(deletion.scope in SCOPES && deletion.originMode in ORIGIN_MODES && deletion.phase in PHASES)
             require(HASH.matches(deletion.originHash) && HASH.matches(deletion.tombstoneHash))
             require(deletion.cleanupAttempts in 0..MAX_ATTEMPTS && (deletion.lastError?.length ?: 0) <= MAX_ERROR_CHARS)
             val raw = java.util.Base64.getDecoder().decode(deletion.tombstoneStoredBytesBase64)
@@ -37,6 +39,7 @@ internal object AccountBackupGraveyardCodec {
             require(java.util.Base64.getEncoder().encodeToString(raw) == deletion.tombstoneStoredBytesBase64)
             output.writeUTF(deletion.chatId)
             output.writeUTF(deletion.scope)
+            output.writeUTF(deletion.originMode)
             output.writeUTF(deletion.originHash)
             output.writeUTF(deletion.tombstoneHash)
             output.writeInt(raw.size)
@@ -58,6 +61,7 @@ internal object AccountBackupGraveyardCodec {
             List(count) {
                 val chatId = input.readUTF().also { require(IDENTIFIER.matches(it) && seen.add(it)) }
                 val scope = input.readUTF().also { require(it in SCOPES) }
+                val originMode = input.readUTF().also { require(it in ORIGIN_MODES) }
                 val originHash = input.readUTF().also { require(HASH.matches(it)) }
                 val tombstoneHash = input.readUTF().also { require(HASH.matches(it)) }
                 val size = input.readInt().also { require(it in 1..MAX_TOMBSTONE_BYTES) }
@@ -70,6 +74,7 @@ internal object AccountBackupGraveyardCodec {
                 ChatDeletionBackup(
                     chatId,
                     scope,
+                    originMode,
                     originHash,
                     tombstoneHash,
                     java.util.Base64.getEncoder().encodeToString(bytes),
@@ -87,6 +92,7 @@ internal object AccountBackupGraveyardCodec {
     private val IDENTIFIER = Regex("[A-Za-z0-9_-]{1,96}")
     private val HASH = Regex("[a-z2-7]{32}")
     private val SCOPES = setOf("GROUP", "DM")
+    private val ORIGIN_MODES = setOf("ORIGIN_HASH", "LEGACY_CHAT_ID")
     private val PHASES = setOf("LOCAL_COMMITTED", "TOMBSTONE_PUBLISHED", "CLEANUP_PENDING", "COMPLETE")
     private const val MAX_CHATS = 1000
     private const val MAX_ATTEMPTS = 1_000_000

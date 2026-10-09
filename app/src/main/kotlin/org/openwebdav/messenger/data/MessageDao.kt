@@ -185,7 +185,12 @@ interface MessageDao {
 
     @Transaction
     suspend fun commitChatDeletion(deletion: ChatDeletionEntity): ChatDeletionCommitResult {
-        if (deletion.phase != ChatDeletionEntity.PHASE_LOCAL_COMMITTED) return ChatDeletionCommitResult.Conflict
+        if (deletion.phase != ChatDeletionEntity.PHASE_LOCAL_COMMITTED ||
+            deletion.scope !in setOf(ChatDeletionEntity.SCOPE_GROUP, ChatDeletionEntity.SCOPE_DM) ||
+            deletion.originMode !in setOf(ChatDeletionEntity.ORIGIN_MODE_HASH, ChatDeletionEntity.ORIGIN_MODE_LEGACY_CHAT_ID)
+        ) {
+            return ChatDeletionCommitResult.Conflict
+        }
         val existing = chatDeletion(deletion.communityId, deletion.chatId)
         if (existing != null && !existing.sameTombstone(deletion)) return ChatDeletionCommitResult.Conflict
         if (existing == null && insertChatDeletion(deletion) == -1L) return ChatDeletionCommitResult.Conflict
@@ -197,7 +202,7 @@ interface MessageDao {
     }
 
     private fun ChatDeletionEntity.sameTombstone(other: ChatDeletionEntity): Boolean =
-        scope == other.scope && originHash == other.originHash && tombstoneHash == other.tombstoneHash &&
+        scope == other.scope && originMode == other.originMode && originHash == other.originHash && tombstoneHash == other.tombstoneHash &&
             tombstoneStoredBytes.contentEquals(other.tombstoneStoredBytes)
 
     @Transaction

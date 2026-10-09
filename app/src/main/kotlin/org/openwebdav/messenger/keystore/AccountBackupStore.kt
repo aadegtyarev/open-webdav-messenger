@@ -73,6 +73,7 @@ internal class AccountBackupStore(
                         ChatDeletionBackup(
                             row.chatId,
                             row.scope,
+                            row.originMode,
                             row.originHash,
                             row.tombstoneHash,
                             java.util.Base64.getEncoder().encodeToString(row.tombstoneStoredBytes),

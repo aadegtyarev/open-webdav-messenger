@@ -13,6 +13,7 @@ internal object CommunityTombstoneWire {
                 output.write(MAGIC)
                 output.writeByte(VERSION)
                 output.writeByte(if (record.scope == TombstoneScope.GROUP) 0 else 1)
+                output.writeByte(record.originMode.ordinal)
                 output.writeByte(record.signerRole.ordinal)
                 writeText(output, record.communityId)
                 writeText(output, record.chatId)
@@ -40,6 +41,7 @@ internal object CommunityTombstoneWire {
                         1 -> TombstoneScope.DM
                         else -> error("invalid tombstone scope")
                     }
+                val originMode = TombstoneOriginMode.entries.getOrNull(input.readUnsignedByte()) ?: error("invalid origin mode")
                 val role = TombstoneSignerRole.entries.getOrNull(input.readUnsignedByte()) ?: error("invalid signer role")
                 val communityId = readText(input)
                 val chatId = readText(input)
@@ -54,7 +56,7 @@ internal object CommunityTombstoneWire {
                 val signature = readKey(input, SIGNATURE_BYTES)
                 require(input.available() == 0)
                 Decoded(
-                    CommunityTombstone(communityId, chatId, originHash, scope, revision, role, signer, participants),
+                    CommunityTombstone(communityId, chatId, originHash, scope, revision, role, signer, participants, originMode),
                     bytes.copyOfRange(0, bytes.size - SIGNATURE_BYTES),
                     signature,
                 )
@@ -88,6 +90,6 @@ internal object CommunityTombstoneWire {
     private const val HASH_BYTES = 32
     private const val PARTICIPANTS = 2
     private const val MAX_TEXT_BYTES = 96
-    private const val MIN_BYTES = 4 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + HASH_BYTES + 8 + KEY_BYTES + 1 + SIGNATURE_BYTES
+    private const val MIN_BYTES = 4 + 1 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + HASH_BYTES + 8 + KEY_BYTES + 1 + SIGNATURE_BYTES
     private const val MAX_BYTES = MIN_BYTES + 2 * MAX_TEXT_BYTES + PARTICIPANTS * KEY_BYTES * 2
 }

@@ -809,17 +809,26 @@ append-only. Identical duplicates are idempotent; conflicting or cross-context
 records fail closed; one valid tombstone permanently closes its origin.
 
 The canonical signed plaintext is `OWTS ‖ version(0x01) ‖ scope(0=group,1=dm) ‖
+origin-mode(0=origin-hash,1=legacy-chat-id) ‖
 role(0=pinned-host,1=group-creator,2=dm-initiator) ‖ uint16be+UTF8(community-id) ‖
-uint16be+UTF8(chat-id) ‖ origin-hash(32 lowercase base32 ASCII chars) ‖
+uint16be+UTF8(chat-id) ‖ origin-reference-hash(32 lowercase base32 ASCII chars) ‖
 uint64be(revision) ‖ signer-signing-key(32) ‖ participant-count(0 or 2) ‖
 participants ‖ signature(64)`. Each DM participant is signing-key(32) followed
 by box-key(32), ordered by unsigned lexicographic signing-key bytes. Group
-records have no participants and role 0 or 1; DM records have exactly two
+records have no participants; origin-hash permits role 0 or 1, while
+legacy-chat-id permits only role 0. DM records require origin-hash, exactly two
 distinct participants, role 2, and the signer is one participant. Revision is
 positive. The signature input is the scope domain (`owdm/group-tombstone/v1`
 or `owdm/dm-tombstone/v1`), `0x00`, then all bytes before the signature.
-Unknown values, noncanonical ordering, invalid identities, and trailing bytes
-are rejected.
+
+For origin-hash mode, origin-reference-hash is the exact verified immutable
+origin content hash. Legacy-chat-id mode is group-only and host-only. Its
+reference hash is the first 32 lowercase base32 characters of SHA-256 over
+`0x01 ‖ UTF8("owdm/governance/legacy-chat-origin") ‖ 0x00 ‖
+uint16be+UTF8(community-id) ‖ uint16be+UTF8(chat-id)`. It binds no descriptor,
+counter, or conflicting-origin choice; conflicting evidence is retained. A
+recreated legacy chat must use a new chat ID. Unknown values, cross-mode replay,
+noncanonical ordering, invalid identities, and trailing bytes are rejected.
 
 Clients persist a local graveyard before remote work. After a successful
 append-only PUT they hide the chat, reject sends, and fence poll/open/outbox

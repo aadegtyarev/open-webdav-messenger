@@ -44,6 +44,7 @@ class AccountBackupCodecTest {
                                     ChatDeletionBackup(
                                         "deleted-dm",
                                         "DM",
+                                        "ORIGIN_HASH",
                                         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                                         deletionHash(ByteArray(64) { it.toByte() }),
                                         Base64.getEncoder().encodeToString(ByteArray(64) { it.toByte() }),

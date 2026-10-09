@@ -21,11 +21,13 @@ internal object CommunityTombstoneCodec {
         chatId: String,
         originHash: String,
         scope: TombstoneScope,
+        originMode: TombstoneOriginMode,
         crypto: IdentityCrypto,
     ): CommunityTombstone? {
         val record = verifyAny(bytes, crypto) ?: return null
         return record.takeIf {
-            it.communityId == communityId && it.chatId == chatId && it.originHash == originHash && it.scope == scope
+            it.communityId == communityId && it.chatId == chatId && it.originHash == originHash &&
+                it.scope == scope && it.originMode == originMode
         }
     }
 
@@ -55,10 +57,15 @@ internal object CommunityTombstoneCodec {
         }
         return when (record.scope) {
             TombstoneScope.GROUP ->
-                record.signerRole in setOf(TombstoneSignerRole.PINNED_HOST, TombstoneSignerRole.GROUP_CREATOR) &&
-                    record.participants.isEmpty()
+                record.participants.isEmpty() &&
+                    when (record.originMode) {
+                        TombstoneOriginMode.ORIGIN_HASH ->
+                            record.signerRole in setOf(TombstoneSignerRole.PINNED_HOST, TombstoneSignerRole.GROUP_CREATOR)
+                        TombstoneOriginMode.LEGACY_CHAT_ID -> record.signerRole == TombstoneSignerRole.PINNED_HOST
+                    }
             TombstoneScope.DM ->
-                record.signerRole == TombstoneSignerRole.DM_INITIATOR && record.participants.size == PARTICIPANTS &&
+                record.originMode == TombstoneOriginMode.ORIGIN_HASH &&
+                    record.signerRole == TombstoneSignerRole.DM_INITIATOR && record.participants.size == PARTICIPANTS &&
                     record.participants.any { it.signingPublicKey.contentEquals(record.signerSigningPublicKey) } &&
                     record.participants.all { it.signingPublicKey.size == KEY_BYTES && it.boxPublicKey.size == KEY_BYTES } &&
                     record.participants.map { it.signingPublicKey.toList() }.distinct().size == PARTICIPANTS

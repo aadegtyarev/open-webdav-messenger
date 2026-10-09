@@ -165,6 +165,7 @@ class MessageStoreTest {
                     "default",
                     "c1",
                     ChatDeletionEntity.SCOPE_GROUP,
+                    ChatDeletionEntity.ORIGIN_MODE_HASH,
                     "a".repeat(32),
                     "b".repeat(32),
                     byteArrayOf(1, 2),

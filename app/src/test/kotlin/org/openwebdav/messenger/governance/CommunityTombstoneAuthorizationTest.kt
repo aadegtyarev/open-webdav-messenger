@@ -32,6 +32,20 @@ class CommunityTombstoneAuthorizationTest {
         val pin = CommunityTrustRecord("community-1", hash, byteArrayOf(), host.copySignPublic(), host.copyBoxPublic(), true, 0, null)
         assertNotNull(CommunityTombstoneAuthorization.group(hostDelete, null, null, pin))
         assertNull(CommunityTombstoneAuthorization.group(hostDelete, null, null, pin.copy(fingerprintVerified = false)))
+
+        val legacy =
+            hostDelete.copy(
+                originHash = LegacyChatOriginReference.contentAddress("community-1", CHAT_ID),
+                originMode = TombstoneOriginMode.LEGACY_CHAT_ID,
+            )
+        assertNotNull(CommunityTombstoneAuthorization.group(legacy, null, null, pin))
+        assertNull(CommunityTombstoneAuthorization.group(legacy.copy(chatId = "another-chat"), null, null, pin))
+        val creatorLegacy =
+            creatorDelete.copy(
+                originHash = LegacyChatOriginReference.contentAddress("community-1", CHAT_ID),
+                originMode = TombstoneOriginMode.LEGACY_CHAT_ID,
+            )
+        assertNull(CommunityTombstoneAuthorization.group(creatorLegacy, origin, creatorLegacy.originHash, null))
     }
 
     @Test

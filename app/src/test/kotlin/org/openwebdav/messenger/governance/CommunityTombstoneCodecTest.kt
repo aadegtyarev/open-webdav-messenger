@@ -26,12 +26,50 @@ class CommunityTombstoneCodecTest {
 
         assertEquals(
             TombstoneSignerRole.GROUP_CREATOR,
-            CommunityTombstoneCodec.verify(bytes, record.communityId, record.chatId, record.originHash, record.scope, crypto)?.signerRole,
+            CommunityTombstoneCodec.verify(
+                bytes,
+                record.communityId,
+                record.chatId,
+                record.originHash,
+                record.scope,
+                record.originMode,
+                crypto,
+            )?.signerRole,
         )
-        assertNull(CommunityTombstoneCodec.verify(bytes, record.communityId, record.chatId, record.originHash, TombstoneScope.DM, crypto))
-        assertNull(CommunityTombstoneCodec.verify(bytes, record.communityId, record.chatId, "b".repeat(32), record.scope, crypto))
+        assertNull(
+            CommunityTombstoneCodec.verify(
+                bytes,
+                record.communityId,
+                record.chatId,
+                record.originHash,
+                TombstoneScope.DM,
+                record.originMode,
+                crypto,
+            ),
+        )
+        assertNull(
+            CommunityTombstoneCodec.verify(
+                bytes,
+                record.communityId,
+                record.chatId,
+                "b".repeat(32),
+                record.scope,
+                record.originMode,
+                crypto,
+            ),
+        )
         val tampered = bytes.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
-        assertNull(CommunityTombstoneCodec.verify(tampered, record.communityId, record.chatId, record.originHash, record.scope, crypto))
+        assertNull(
+            CommunityTombstoneCodec.verify(
+                tampered,
+                record.communityId,
+                record.chatId,
+                record.originHash,
+                record.scope,
+                record.originMode,
+                crypto,
+            ),
+        )
     }
 
     @Test
@@ -60,6 +98,7 @@ class CommunityTombstoneCodecTest {
                 record.chatId,
                 record.originHash,
                 record.scope,
+                record.originMode,
                 crypto,
             )?.participants?.size,
         )

@@ -201,6 +201,24 @@ class MessengerDatabaseMigrationTest {
     }
 
     @Test
+    fun version8AddsTypedOriginModeToExistingGraveyardRows() {
+        helper.createDatabase(TEST_DB, 8).apply {
+            execSQL(
+                "INSERT INTO chat_deletions (communityId, chatId, scope, originHash, tombstoneHash, tombstoneStoredBytes, " +
+                    "phase, cleanupAttempts, nextAttemptAtMillis, lastError, updatedAtMillis) " +
+                    "VALUES ('community-a', 'chat-a', 'GROUP', 'a', 'b', X'01', 'LOCAL_COMMITTED', 0, NULL, NULL, 1)",
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 9, true, MessengerDatabase.MIGRATION_8_9).use { migrated ->
+            migrated.query("SELECT originMode FROM chat_deletions WHERE chatId = 'chat-a'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(ChatDeletionEntity.ORIGIN_MODE_HASH, row.getString(0))
+            }
+        }
+    }
+
+    @Test
     fun populatedVersion5OutboxReceivesEmptyClaimTokenColumn() {
         helper.createDatabase(TEST_DB, 5).apply {
             execSQL(
