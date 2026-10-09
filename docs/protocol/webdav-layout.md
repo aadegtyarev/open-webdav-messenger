@@ -705,6 +705,130 @@ another member, chat ownership, or community authority.
 
 ---
 
+## 13. Community governance, origins, and tombstones
+
+This section adds immutable governance objects under the community-root (the same
+root used by §10–§12). It does not change protocol version 2, the §5 message
+frame, or existing community-directory formats. The WebDAV disk remains
+attacker-writable: signatures and AEAD are verified before any authority or
+lifecycle decision. Governance records and collections are never cleanup targets.
+
+### 13.1 Paths, names, and bounds
+
+```
+governance/genesis/<content-hash>
+governance/policies/<content-hash>
+governance/origins/group/<content-hash>
+governance/origins/dm/<content-hash>
+governance/tombstones/group/<content-hash>
+governance/tombstones/dm/<content-hash>
+```
+
+Each leaf is listed with Depth:1 and a hard limit of 1,000 direct members; an
+overflow, nested/foreign href, malformed response, or failed listing is not
+interpreted as an empty collection. A file name is exactly 32 lowercase Base32
+characters `[a-z2-7]`, equal to
+`b32lower(SHA-256(exact stored file bytes))[0:32]`. Reads verify the exact-byte
+hash before parsing. Individual files are at most 64 KiB; policy grandfather
+snapshots contain at most 1,024 hashes. Invalid names are rejected before GET.
+PUT is append-only and retries reuse the exact bytes; 412/conflicting bytes do
+not select a winner. Genesis and tombstones are retained indefinitely. Policy
+and origin files are not deleted by cleanup.
+
+### 13.2 Common sealed record envelope
+
+The file bytes are `OWGV ‖ wire-version(0x01) ‖ object-kind ‖ nonce(24) ‖
+XChaCha20-Poly1305(ciphertext ‖ tag(16))`. `object-kind` is a fixed one-byte
+value for genesis, policy, group-origin, DM-origin, group-tombstone, or
+DM-tombstone. AAD is
+`UTF8("owdm/community-governance/aead") ‖ 0x00 ‖ 0x01 ‖ object-kind ‖
+uint16be(community-id-length) ‖ UTF8(community-id)`. Genesis, policy, group
+origin, and group tombstone use the community key where that key is available.
+The DM origin and tombstone are encrypted with the exact DM key; their stored
+bytes and listing names reveal no participant IDs. Inner records are canonical
+binary, domain-separated, context-bound, and signature-checked as specified
+below. Implementations reject unknown kinds/versions, malformed UTF-8, trailing
+bytes, duplicate/non-canonical lists, and cross-community or cross-chat replay.
+
+### 13.3 Genesis and host trust
+
+The genesis plaintext is `OWGN ‖ version(0x01) ‖ community-id-length(uint16) ‖
+community-id(UTF-8) ‖ host-signing-public-key(32) ‖ host-box-public-key(32) ‖
+nonce(32) ‖ Ed25519-signature(64)`. Its signature input is
+`UTF8("owdm/community-genesis/v1") ‖ 0x00 ‖ unsigned-record`. The record binds
+the exact community ID to one host key pair; no host-key rotation is defined.
+New-community invites carry the exact genesis record and pin it in the encrypted
+local registry. Existing communities fetch only a genesis hash explicitly
+carried by an invite, never trust a listed genesis by itself. Members verify the
+short host-signing-key fingerprint or import a fresh host-signed governance
+invite before authorizing host actions. Missing, invalid, conflicting, or
+unverified genesis fails closed for host authority. Self-signed §10 metadata and
+local `isHost` are not authority.
+
+### 13.4 Signed creation policy
+
+The policy plaintext is `OWCP ‖ version(0x01) ‖ community-id-length(uint16) ‖
+community-id ‖ revision(uint64be, >0) ‖ allow-public(bool) ‖
+allow-private(bool) ‖ grandfather-count(uint16) ‖ sorted unique origin-hashes ‖
+signature(64)`. Each origin hash is exactly 32 lowercase Base32 bytes; count is
+at most 1,024. The host signature covers the canonical unsigned bytes preceded
+by `UTF8("owdm/community-creation-policy/v1") ‖ 0x00`. Policy is append-only.
+Only the pinned, verified host key can authorize it. The local registry retains
+the highest accepted revision and its exact file hash: lower revisions are
+rollback, equal-revision/different-hash is equivocation, and neither selects a
+new policy. When a trusted policy has existed, unavailable/missing/rollback or
+equivocating latest policy fails closed for new creation; existing chats remain
+open. Disabling a type requires a complete verified origin listing and a
+snapshot containing every known immutable origin hash. Legacy clients or shared
+credentials can bypass this cooperative policy.
+
+### 13.5 Immutable origins
+
+Group-origin plaintext binds version, exact community ID, chat ID, access,
+creator signing/box keys, nonce, and creator signature under
+`owdm/group-origin/v1`. Group origin files use the community key. The first
+verified origin is immutable; missing/legacy origins do not imply creator
+authority. Conflicting valid origins fail closed and never select a winner.
+DM-origin plaintext binds version, exact community ID, chat ID, sorted exact
+participant signing keys, initiator key, nonce, and initiator signature under
+`owdm/dm-origin/v1`; it is additionally AEAD-authenticated with the DM key.
+Only the origin-authenticated initiator can authorize DM deletion-for-both. A
+host never controls a DM. Origins are content-addressed immutable records and
+are retained after chat deletion.
+
+### 13.6 Tombstones and delete-wins reconciliation
+
+A tombstone plaintext binds version, exact community/chat IDs, exact immutable
+origin hash, scope (`group` or `dm`), deletion revision, signer role, and
+signature under a scope-specific domain. Group tombstones are signed by the
+verified pinned host or the exact immutable group creator; creator authority is
+unavailable for legacy, missing, or conflicting origins. DM tombstones bind the
+exact participant pair and initiator origin, are signed by the initiator, and
+are additionally authenticated with the exact DM key. Tombstone files are
+append-only. Identical duplicates are idempotent; conflicting or cross-context
+records fail closed; one valid tombstone permanently closes its origin.
+
+Clients persist a local graveyard before remote work. After a successful
+append-only PUT they hide the chat, reject sends, and fence poll/open/outbox
+work; PUT success is not peer observation. Cleanup is best-effort and deletes
+only chat-scoped mutable descriptors, logs, changes/notifies, receipts, private
+membership, and content. 404 is success; other failures remain durably retryable
+and never erase the tombstone. Offline clients reconcile tombstones before
+open/discovery/poll and purge local history, keys, caches, cursors, and outbox
+before exposing state. Partial cleanup never resurrects a tombstoned chat.
+
+### 13.7 Confidentiality and limits
+
+A WebDAV operator can observe collection activity, file counts, sizes, and
+content hashes. It cannot read encrypted governance payloads without the
+community key, and DM object bytes disclose no participant identity without the
+DM key. The protocol cannot prevent direct raw WebDAV writes/deletes, old clients
+ignoring policy, shared-credential abuse, secure-flash remnants, or copies
+already exported by peers. Remote cleanup is retryable best-effort, not a
+multi-file crash-atomic transaction.
+
+---
+
 ## Cross-references
 
 - `docs/architecture.md` → decision 2 (Disk topology / Topology A), decision 3 (Aggregated sync — **revised to shared-log + change-index + window** by the sync feature; the decision-3 text update is the post-coding handoff), decision 4 (Compression codec), decision 9 (Crypto substrate — AEAD/key sources that fill §5.1; the **community key** is a fourth-family symmetric key here, §10.2), decision 10 (Identity substrate — Ed25519/X25519 the §10.3 entry carries), decision 11 (Message model — §8), and *Behavioral contract* (chat taxonomy, message-id/file-naming/ordering/codec invariants — this file is their authoritative source for the byte/path layout).
