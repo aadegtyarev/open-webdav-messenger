@@ -59,6 +59,10 @@ class CommunityTombstoneServiceTest {
 
                 val published = service.publish(authorized, signer.copySignSecret(), key)
                 assertTrue(published is CommunityTombstoneService.Result.Published)
+                val scanned =
+                    CommunityTombstoneChatScanner(reader, envelope, crypto)
+                        .scan("community-1", CHAT_ID, TombstoneScope.GROUP, key)
+                assertTrue(scanned is CommunityTombstoneChatScanner.Result.Found)
                 assertEquals(CommunityTombstoneService.Result.AlreadyPresent, service.publish(authorized, signer.copySignSecret(), key))
             } finally {
                 server.shutdown()
