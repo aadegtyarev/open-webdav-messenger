@@ -114,10 +114,13 @@ interface MessageDao {
     )
 
     @Transaction
-    suspend fun insertUnlessSuppressed(message: MessageEntity): Long {
+    suspend fun insertUnlessSuppressed(
+        message: MessageEntity,
+        peerMessage: Boolean,
+    ): Long {
         if (isMessageSuppressed(message.communityId, message.chatId, message.messageId)) return -1L
         if (isDmHidden(message.communityId, message.chatId)) {
-            if (message.sendStatus == MessageEntity.STATUS_SENDING) return -1L
+            if (!peerMessage || message.sendStatus == MessageEntity.STATUS_SENDING) return -1L
             clearHiddenDm(message.communityId, message.chatId)
         }
         return insertIgnore(message)

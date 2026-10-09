@@ -106,6 +106,15 @@ class MessageStoreTest {
                     sendStatus = MessageEntity.STATUS_SENDING,
                 ),
             )
+            assertFalse(
+                store.persist(
+                    "own-remote-replay",
+                    "0002",
+                    text("own replay"),
+                    receivedAtMillis = 3L,
+                    peerMessage = false,
+                ),
+            )
             assertTrue(store.isDmHidden("c1"))
 
             assertTrue(store.persist("new-peer-id", "0003", text("new peer"), receivedAtMillis = 4L))

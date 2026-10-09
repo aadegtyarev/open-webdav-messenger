@@ -33,6 +33,7 @@ class MessageStore(
         outboxEnvelope: ByteArray? = null,
         outboxRecipients: List<String> = emptyList(),
         outboxCommunityId: String? = null,
+        peerMessage: Boolean = true,
     ): Boolean =
         messageDao.insertUnlessSuppressed(
             toEntity(
@@ -46,6 +47,7 @@ class MessageStore(
                 outboxCommunityId,
                 communityId,
             ),
+            peerMessage,
         ) != DEDUP_NO_ROW
 
     /** Mark a locally-sent message as fully delivered and discard its retry payload. */
