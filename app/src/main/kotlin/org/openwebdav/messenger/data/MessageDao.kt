@@ -28,6 +28,12 @@ interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnore(message: MessageEntity): Long
 
+    @Query("SELECT * FROM messages WHERE communityId = :communityId AND messageId = :messageId")
+    suspend fun messageById(
+        communityId: String,
+        messageId: String,
+    ): MessageEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertSuppressed(rows: List<SuppressedDmMessageEntity>)
 

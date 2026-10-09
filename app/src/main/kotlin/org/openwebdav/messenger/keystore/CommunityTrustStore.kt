@@ -9,6 +9,7 @@ internal class CommunityTrustStore(context: Context) {
     private val persistence = EncryptedCommunityTrustStorage(context)
     private val backupRestorer = CommunityTrustBackupRestorer(persistence)
     private val pinManager = CommunityTrustPinManager(persistence)
+    private val fingerprintVerifier = CommunityTrustFingerprintVerifier(persistence)
 
     @Synchronized
     fun get(communityId: String): CommunityTrustRecord? = persistence.load().singleOrNull { it.communityId == communityId }
@@ -38,16 +39,7 @@ internal class CommunityTrustStore(context: Context) {
     fun verifyFingerprint(
         communityId: String,
         expected: String,
-    ): Boolean {
-        val records = persistence.load().toMutableList()
-        val index = records.indexOfFirst { it.communityId == communityId }
-        if (index < 0 || CommunityTrustFingerprint.of(records[index].hostSigningPublicKey) != expected.lowercase()) return false
-        if (!records[index].fingerprintVerified) {
-            records[index] = records[index].copy(fingerprintVerified = true)
-            persistence.save(records)
-        }
-        return true
-    }
+    ): Boolean = fingerprintVerifier.verify(communityId, expected)
 
     @Synchronized
     fun acceptPolicyRevision(

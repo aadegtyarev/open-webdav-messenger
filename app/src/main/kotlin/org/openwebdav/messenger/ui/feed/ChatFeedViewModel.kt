@@ -38,6 +38,9 @@ import org.openwebdav.messenger.transport.TransportFactory
 internal class ChatFeedViewModel(
     private val graph: RuntimeGraph,
     private val sendService: ChatMessageSender = MessageSendService(graph, isCurrent = { AppContainer.runtimeGraph() === graph }),
+    private val reconcileTombstone: suspend () -> TombstoneReconciler.Result = {
+        AppContainer.reconcileRemoteTombstone(graph.communityId, graph.chatId, expectedGraph = graph)
+    },
 ) : ViewModel() {
     val communityName: String = graph.communityName
     val recipientReadiness = graph.recipientReadiness
@@ -112,11 +115,7 @@ internal class ChatFeedViewModel(
             var clearedRevision: Long? = null
             try {
                 val reconciliation =
-                    AppContainer.reconcileRemoteTombstone(
-                        graph.communityId,
-                        graph.chatId,
-                        expectedGraph = graph,
-                    )
+                    reconcileTombstone()
                 if (reconciliation !in setOf(TombstoneReconciler.Result.NoTombstone, TombstoneReconciler.Result.Unauthorized)) {
                     _sendError.value = SEND_FAILED_MESSAGE
                     return@launch

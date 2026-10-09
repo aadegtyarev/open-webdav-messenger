@@ -108,6 +108,8 @@ class MessageStore(
 
     suspend fun isChatDeleted(chatId: String): Boolean = messageDao.isChatDeleted(communityId, chatId)
 
+    suspend fun isOutgoingBlocked(chatId: String): Boolean = isChatDeleted(chatId) || messageDao.isDmHidden(communityId, chatId)
+
     suspend fun chatDeletion(chatId: String): ChatDeletionEntity? = messageDao.chatDeletion(communityId, chatId)
 
     suspend fun dueChatDeletions(
@@ -179,6 +181,11 @@ class MessageStore(
 
     /** One-shot ordered read (tests / non-observable callers). */
     suspend fun messagesForChat(chatId: String): List<MessageEntity> = messageDao.messagesForChat(communityId, chatId)
+
+    suspend fun messageById(
+        messageId: String,
+        ownerCommunityId: String = communityId,
+    ): MessageEntity? = messageDao.messageById(ownerCommunityId, messageId)
 
     /** Observable count of unread messages (sendStatus = 'SENT') for a chat. */
     fun observeUnreadCount(chatId: String): Flow<Int> = messageDao.observeUnreadCount(communityId, chatId)

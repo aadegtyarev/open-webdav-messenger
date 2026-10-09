@@ -34,6 +34,12 @@
     <string name="chat_delete_authority_loading">Checking delete authority</string>
     <string name="chat_delete_authority_retry">Delete authority unavailable. Tap to retry.</string>
     <string name="chat_delete_failure">Deletion was not authorized or could not be safely started.</string>
+    <string name="chat_actions_accessibility">Actions for %1$s</string>
+    <string name="dm_delete_success">Chat deleted locally.</string>
+    <string name="chat_delete_local_committed">Local deletion committed; tombstone publication is pending retry.</string>
+    <string name="chat_delete_tombstone_published">Tombstone published; remote content cleanup is pending.</string>
+    <string name="chat_delete_cleanup_pending">Chat is deleted. Remote cleanup remains pending and will retry; governance records are retained.</string>
+    <string name="chat_delete_complete">Chat deletion and supported remote cleanup completed.</string>
     <string name="cancel">Cancel</string>
     <string name="community_host_identity_title">Community host identity</string>
     <string name="community_host_fingerprint">Host fingerprint: %1$s</string>

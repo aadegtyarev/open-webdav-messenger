@@ -22,12 +22,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
+import org.openwebdav.messenger.data.ChatDeletionEntity
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
+import org.openwebdav.messenger.directory.SealFailingNative
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.ChatPaths
@@ -85,8 +88,12 @@ class MessageSendServiceTest {
         store: MessageStore,
         webDavServer: MockWebServer = server,
         communityId: String = "default",
+        envelope: MessageEnvelope =
+            MessageEnvelope.create(
+                MessageCrypto(Aead(AppTestSupport.native())),
+                AppTestSupport.identityCrypto(),
+            ),
     ): RuntimeGraph {
-        val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
         val engine =
             SyncEngine(
                 transport = SyncTestSupport.transport(webDavServer),
@@ -131,6 +138,24 @@ class MessageSendServiceTest {
         }
 
     @Test
+    fun seal_failure_does_not_persist_or_publish_an_outgoing_message() =
+        runTest {
+            val store = store()
+            val failingEnvelope =
+                MessageEnvelope.create(
+                    MessageCrypto(Aead(SealFailingNative(AppTestSupport.native()))),
+                    AppTestSupport.identityCrypto(),
+                )
+            val service = MessageSendService(graph(store, envelope = failingEnvelope), ioDispatcher = Dispatchers.Unconfined)
+
+            val failure = runCatching { service.send("seal must fail") }.exceptionOrNull()
+
+            assertTrue(failure is IllegalStateException)
+            assertTrue(store.messagesForChat(chatId).isEmpty())
+            assertTrue(disk.fileNames(ChatPaths.logDir(chatId)).isEmpty())
+        }
+
+    @Test
     fun send_requires_verified_roster_and_persists_the_same_recipient_snapshot() =
         runTest {
             val store = store("community-a")
@@ -164,6 +189,75 @@ class MessageSendServiceTest {
             assertTrue(store.messagesForChat(chatId).isEmpty())
             assertTrue(disk.fileNames(ChatPaths.logDir(chatId)).isEmpty())
         }
+
+    @Test
+    fun send_serializes_with_graveyard_commit_and_never_writes_after_it() =
+        runTest {
+            val store = store("community-a")
+            val graph = graph(store, communityId = "community-a")
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.IO)
+            val putStarted = CountDownLatch(1)
+            val releasePut = CountDownLatch(1)
+            val events = java.util.Collections.synchronizedList(mutableListOf<String>())
+            server.dispatcher =
+                object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "PUT" && request.path.orEmpty().contains("/${ChatPaths.LOG}/")) {
+                            putStarted.countDown()
+                            check(releasePut.await(5, TimeUnit.SECONDS))
+                            val response = disk.dispatch(request)
+                            events += "put-complete"
+                            return response
+                        }
+                        return disk.dispatch(request)
+                    }
+                }
+            val sending = async(Dispatchers.IO) { service.send("before deletion") }
+            assertTrue(withContext(Dispatchers.IO) { putStarted.await(5, TimeUnit.SECONDS) })
+            val commitAttempting = CompletableDeferred<Unit>()
+            val deletion =
+                async(Dispatchers.IO) {
+                    commitAttempting.complete(Unit)
+                    AccountMutationBarrier.process.withExclusive {
+                        val result = store.commitChatDeletion(deletionRow("community-a"))
+                        events += "graveyard-committed"
+                        result
+                    }
+                }
+            commitAttempting.await()
+            assertFalse("graveyard waits behind the active send operation", deletion.isCompleted)
+            releasePut.countDown()
+            sending.await()
+            deletion.await()
+            assertTrue(events.indexOf("put-complete") < events.indexOf("graveyard-committed"))
+            assertTrue(store.isChatDeleted(chatId))
+        }
+
+    @Test
+    fun committed_graveyard_rejects_new_sends_before_room_or_webdav() =
+        runTest {
+            val store = store("community-a")
+            store.commitChatDeletion(deletionRow("community-a"))
+            val graph = graph(store, communityId = "community-a")
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined)
+
+            assertTrue(runCatching { service.send("deleted chat") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(store.messagesForChat(chatId).isEmpty())
+            assertTrue(disk.fileNames(ChatPaths.logDir(chatId)).isEmpty())
+            assertFalse(service.retry("missing-message"))
+        }
+
+    private fun deletionRow(communityId: String) =
+        ChatDeletionEntity(
+            communityId = communityId,
+            chatId = chatId,
+            scope = ChatDeletionEntity.SCOPE_GROUP,
+            originHash = "a".repeat(32),
+            tombstoneHash = "b".repeat(32),
+            tombstoneStoredBytes = byteArrayOf(1),
+            phase = ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
+            updatedAtMillis = 1L,
+        )
 
     @Test
     fun uncertain_put_retry_reuses_original_envelope_and_message_id() =

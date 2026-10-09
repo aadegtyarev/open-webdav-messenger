@@ -2,6 +2,7 @@ package org.openwebdav.messenger.ui.chatlist
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
@@ -31,7 +33,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +43,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -48,8 +54,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppContainer.UnifiedChat
+import org.openwebdav.messenger.app.ChatDeleteCapability
+import org.openwebdav.messenger.app.ChatListDeletionResult
 import org.openwebdav.messenger.app.ChatOpenRequestCoordinator
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,6 +78,12 @@ internal fun UnifiedChatListScreen(
         }
     },
     observeUnreadCount: (String, String) -> Flow<Int> = AppContainer::observeUnreadCount,
+    projectDeleteCapability: suspend (String, String) -> ChatDeleteCapability = { communityId, chatId ->
+        AppContainer.projectDeleteForAllCapability(communityId, chatId)
+    },
+    deleteChat: suspend (String, String, Boolean) -> ChatListDeletionResult = { communityId, chatId, localOnly ->
+        AppContainer.deleteChatFromList(communityId, chatId, localOnly)
+    },
 ) {
     val chats =
         remember(chatItems, deletedChatKeys) {
@@ -80,7 +95,51 @@ internal fun UnifiedChatListScreen(
     var showCreateChatDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     var openRequestGeneration by remember { mutableLongStateOf(0L) }
+    var deleteTarget by remember { mutableStateOf<Pair<UnifiedChat, Boolean>?>(null) }
+    var typedDeleteTitle by remember { mutableStateOf("") }
+    var deleting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    deleteTarget?.let { (chat, localOnly) ->
+        ChatListDeletionDialog(
+            chat = chat,
+            localOnly = localOnly,
+            typedTitle = typedDeleteTitle,
+            busy = deleting,
+            onTypedTitle = { typedDeleteTitle = it },
+            onDismiss = {
+                deleteTarget = null
+                typedDeleteTitle = ""
+            },
+            onConfirm = {
+                deleting = true
+                scope.launch {
+                    val result =
+                        try {
+                            withContext(Dispatchers.IO) { deleteChat(chat.communityId, chat.chatId, localOnly) }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            ChatListDeletionResult.FAILED
+                        }
+                    deleting = false
+                    deleteTarget = null
+                    typedDeleteTitle = ""
+                    val message =
+                        when (result) {
+                            ChatListDeletionResult.LOCAL_DELETED -> context.getString(R.string.dm_delete_success)
+                            ChatListDeletionResult.REMOTE_LOCAL_COMMITTED -> context.getString(R.string.chat_delete_local_committed)
+                            ChatListDeletionResult.REMOTE_TOMBSTONE_PUBLISHED -> context.getString(R.string.chat_delete_tombstone_published)
+                            ChatListDeletionResult.REMOTE_CLEANUP_PENDING -> context.getString(R.string.chat_delete_cleanup_pending)
+                            ChatListDeletionResult.REMOTE_COMPLETE -> context.getString(R.string.chat_delete_complete)
+                            ChatListDeletionResult.FAILED -> context.getString(R.string.chat_delete_failure)
+                        }
+                    snackbarHostState.showSnackbar(message)
+                }
+            },
+        )
+    }
 
     if (showCreateChatDialog) {
         CreateChatDialog(
@@ -166,6 +225,12 @@ internal fun UnifiedChatListScreen(
                     ChatRow(
                         chat = chat,
                         observeUnreadCount = observeUnreadCount,
+                        projectDeleteCapability = projectDeleteCapability,
+                        deletionBusy = deleting,
+                        onDeleteRequest = { target, localOnly ->
+                            deleteTarget = target to localOnly
+                            typedDeleteTitle = ""
+                        },
                         onClick = {
                             val request = ++openRequestGeneration
                             val requestToken = AppContainer.beginChatOpenRequest()
@@ -199,8 +264,23 @@ internal fun UnifiedChatListScreen(
 private fun ChatRow(
     chat: UnifiedChat,
     observeUnreadCount: (String, String) -> Flow<Int>,
+    projectDeleteCapability: suspend (String, String) -> ChatDeleteCapability,
+    deletionBusy: Boolean,
+    onDeleteRequest: (UnifiedChat, Boolean) -> Unit,
     onClick: () -> Unit,
 ) {
+    var deleteCapability by remember(chat.communityId, chat.chatId) {
+        mutableStateOf(if (chat.kind == "general") ChatDeleteCapability.NotAuthorized else ChatDeleteCapability.Loading)
+    }
+    var refreshToken by remember(chat.communityId, chat.chatId) { mutableIntStateOf(0) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(chat.communityId, chat.chatId, refreshToken) {
+        if (chat.kind != "general") {
+            deleteCapability =
+                runCatching { projectDeleteCapability(chat.communityId, chat.chatId) }
+                    .getOrDefault(ChatDeleteCapability.Unavailable)
+        }
+    }
     val icon =
         when (chat.kind) {
             "dm" -> Icons.Filled.Person
@@ -212,6 +292,7 @@ private fun ChatRow(
             "group" -> "${chat.communityName} · ${chat.name}"
             else -> chat.name
         }
+    val actionsLabel = stringResource(R.string.chat_actions_accessibility, label)
     Row(
         modifier =
             Modifier
@@ -232,6 +313,56 @@ private fun ChatRow(
             )
         }
         UnreadBadge(chat.communityId, chat.chatId, observeUnreadCount)
+        if (chat.kind != "general") {
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    enabled = !deletionBusy,
+                    modifier =
+                        Modifier.size(48.dp).semantics {
+                            contentDescription = actionsLabel
+                        },
+                ) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = null)
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    when (deleteCapability) {
+                        ChatDeleteCapability.Loading ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_delete_authority_loading)) },
+                                enabled = false,
+                                onClick = {},
+                            )
+                        ChatDeleteCapability.Unavailable ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_delete_authority_retry)) },
+                                enabled = !deletionBusy,
+                                onClick = { refreshToken++ },
+                            )
+                        ChatDeleteCapability.Available ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_delete_all_action)) },
+                                enabled = !deletionBusy,
+                                onClick = {
+                                    menuExpanded = false
+                                    onDeleteRequest(chat, false)
+                                },
+                            )
+                        ChatDeleteCapability.NotAuthorized -> Unit
+                    }
+                    if (chat.kind == "dm") {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.dm_delete_action)) },
+                            enabled = !deletionBusy,
+                            onClick = {
+                                menuExpanded = false
+                                onDeleteRequest(chat, true)
+                            },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
