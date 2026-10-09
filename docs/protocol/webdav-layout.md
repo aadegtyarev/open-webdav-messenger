@@ -808,6 +808,19 @@ are additionally authenticated with the exact DM key. Tombstone files are
 append-only. Identical duplicates are idempotent; conflicting or cross-context
 records fail closed; one valid tombstone permanently closes its origin.
 
+The canonical signed plaintext is `OWTS ‖ version(0x01) ‖ scope(0=group,1=dm) ‖
+role(0=pinned-host,1=group-creator,2=dm-initiator) ‖ uint16be+UTF8(community-id) ‖
+uint16be+UTF8(chat-id) ‖ origin-hash(32 lowercase base32 ASCII chars) ‖
+uint64be(revision) ‖ signer-signing-key(32) ‖ participant-count(0 or 2) ‖
+participants ‖ signature(64)`. Each DM participant is signing-key(32) followed
+by box-key(32), ordered by unsigned lexicographic signing-key bytes. Group
+records have no participants and role 0 or 1; DM records have exactly two
+distinct participants, role 2, and the signer is one participant. Revision is
+positive. The signature input is the scope domain (`owdm/group-tombstone/v1`
+or `owdm/dm-tombstone/v1`), `0x00`, then all bytes before the signature.
+Unknown values, noncanonical ordering, invalid identities, and trailing bytes
+are rejected.
+
 Clients persist a local graveyard before remote work. After a successful
 append-only PUT they hide the chat, reject sends, and fence poll/open/outbox
 work; PUT success is not peer observation. Cleanup is best-effort and deletes
