@@ -5,14 +5,27 @@ import org.openwebdav.messenger.governance.CommunityTrustRecord
 import org.openwebdav.messenger.governance.PolicyRevisionDecision
 import org.openwebdav.messenger.identity.IdentityCrypto
 
-internal class CommunityTrustStore(context: Context) {
+internal interface CommunityTrustBackupStore {
+    fun restoreRecord(
+        communityId: String,
+        genesisBytes: ByteArray,
+        fingerprintVerified: Boolean,
+        policyRevision: Long,
+        policyHash: String?,
+        crypto: IdentityCrypto,
+    )
+
+    fun remove(communityId: String)
+}
+
+internal class CommunityTrustStore(context: Context) : CommunityTrustBackupStore {
     private val persistence = EncryptedCommunityTrustStorage(context)
     private val backupRestorer = CommunityTrustBackupRestorer(persistence)
     private val pinManager = CommunityTrustPinManager(persistence)
     private val fingerprintVerifier = CommunityTrustFingerprintVerifier(persistence)
 
-    @Synchronized
-    fun get(communityId: String): CommunityTrustRecord? = persistence.load().singleOrNull { it.communityId == communityId }
+    fun get(communityId: String): CommunityTrustRecord? =
+        CommunityTrustTransactions.withLock { persistence.load().singleOrNull { it.communityId == communityId } }
 
     @Synchronized
     fun pinGenesis(
@@ -23,7 +36,7 @@ internal class CommunityTrustStore(context: Context) {
     ): TrustPinResult = pinManager.pin(communityId, genesisBytes, crypto, source)
 
     @Synchronized
-    fun restoreRecord(
+    override fun restoreRecord(
         communityId: String,
         genesisBytes: ByteArray,
         fingerprintVerified: Boolean,
@@ -33,7 +46,7 @@ internal class CommunityTrustStore(context: Context) {
     ) = backupRestorer.restore(communityId, genesisBytes, fingerprintVerified, policyRevision, policyHash, crypto)
 
     @Synchronized
-    fun remove(communityId: String) = backupRestorer.remove(communityId)
+    override fun remove(communityId: String) = backupRestorer.remove(communityId)
 
     @Synchronized
     fun verifyFingerprint(
@@ -41,27 +54,9 @@ internal class CommunityTrustStore(context: Context) {
         expected: String,
     ): Boolean = fingerprintVerifier.verify(communityId, expected)
 
-    @Synchronized
     fun acceptPolicyRevision(
         communityId: String,
         revision: Long,
         policyHash: String,
-    ): PolicyRevisionDecision {
-        val records = persistence.load().toMutableList()
-        val index = records.indexOfFirst { it.communityId == communityId }
-        if (index < 0 || !records[index].fingerprintVerified) return PolicyRevisionDecision.UntrustedHost
-        if (revision <= 0 || !HASH.matches(policyHash)) return PolicyRevisionDecision.Invalid
-        val old = records[index]
-        if (revision < old.highestPolicyRevision) return PolicyRevisionDecision.Rollback
-        if (revision == old.highestPolicyRevision) {
-            return if (old.highestPolicyHash == policyHash) PolicyRevisionDecision.Duplicate else PolicyRevisionDecision.Equivocation
-        }
-        records[index] = old.copy(highestPolicyRevision = revision, highestPolicyHash = policyHash)
-        persistence.save(records)
-        return PolicyRevisionDecision.Accepted
-    }
-
-    private companion object {
-        val HASH = Regex("[a-z2-7]{32}")
-    }
+    ): PolicyRevisionDecision = CommunityTrustTransactions.acceptPolicyRevision(persistence, communityId, revision, policyHash)
 }

@@ -39,6 +39,9 @@ class CommunityTombstoneAuthorizationTest {
                 originMode = TombstoneOriginMode.LEGACY_CHAT_ID,
             )
         assertNotNull(CommunityTombstoneAuthorization.group(legacy, null, null, pin))
+        assertNotNull(CommunityTombstoneAuthorization.groupUnderOriginConflict(legacy, pin))
+        assertNull(CommunityTombstoneAuthorization.groupUnderOriginConflict(legacy, pin.copy(fingerprintVerified = false)))
+        assertNull(CommunityTombstoneAuthorization.groupUnderOriginConflict(hostDelete, pin))
         assertNull(CommunityTombstoneAuthorization.group(legacy.copy(chatId = "another-chat"), null, null, pin))
         val creatorLegacy =
             creatorDelete.copy(
@@ -46,6 +49,7 @@ class CommunityTombstoneAuthorizationTest {
                 originMode = TombstoneOriginMode.LEGACY_CHAT_ID,
             )
         assertNull(CommunityTombstoneAuthorization.group(creatorLegacy, origin, creatorLegacy.originHash, null))
+        assertNull(CommunityTombstoneAuthorization.groupUnderOriginConflict(creatorLegacy, pin))
     }
 
     @Test

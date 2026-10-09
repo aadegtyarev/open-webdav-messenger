@@ -14,7 +14,7 @@ internal class CommunityCreationPolicyAdministration(
     private val highestRevision: Long,
     private val highestHash: String?,
     private val crypto: IdentityCrypto,
-    private val acceptRevision: (Long, String) -> PolicyRevisionDecision,
+    private val acceptRevision: suspend (Long, String) -> PolicyRevisionDecision,
 ) {
     suspend fun update(
         allowPublic: Boolean,

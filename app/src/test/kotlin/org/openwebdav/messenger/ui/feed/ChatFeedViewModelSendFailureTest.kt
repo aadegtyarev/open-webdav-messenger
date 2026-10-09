@@ -111,6 +111,7 @@ class ChatFeedViewModelSendFailureTest {
     ) : ChatMessageSender {
         var attempts = 0
         var persisted = 0
+        var retryAttempts = 0
 
         override suspend fun send(
             text: String,
@@ -127,7 +128,10 @@ class ChatFeedViewModelSendFailureTest {
             return MessageSendService.SendResult("test-message-id", resultComplete)
         }
 
-        override suspend fun retry(messageId: String): Boolean = true
+        override suspend fun retry(messageId: String): Boolean {
+            retryAttempts++
+            return true
+        }
     }
 
     @Test
@@ -203,6 +207,25 @@ class ChatFeedViewModelSendFailureTest {
             assertEquals(2, sender.attempts)
             assertEquals(1, sender.persisted)
             assertEquals("", vm.draft.first())
+        }
+
+    @Test
+    fun remote_tombstone_blocks_explicit_retry_with_empty_local_graveyard() =
+        runTest(mainDispatcher) {
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler))
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.Applied },
+                    ),
+                )
+
+            vm.retryFailed("message-id")
+            advanceUntilIdle()
+
+            assertEquals(0, sender.retryAttempts)
         }
 
     /** A failure before local persistence keeps the draft and surfaces the error. */

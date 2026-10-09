@@ -54,6 +54,7 @@ import org.openwebdav.messenger.governance.CommunityTombstoneCodec
 import org.openwebdav.messenger.governance.CommunityTombstoneService
 import org.openwebdav.messenger.governance.GovernanceObjectKind
 import org.openwebdav.messenger.governance.LegacyChatOriginReference
+import org.openwebdav.messenger.governance.PolicyRevisionDecision
 import org.openwebdav.messenger.governance.TombstoneOriginMode
 import org.openwebdav.messenger.governance.TombstoneScope
 import org.openwebdav.messenger.governance.TombstoneSignerRole
@@ -304,12 +305,12 @@ internal object AppContainer {
 
     internal suspend fun readCreationPolicySettings(): CreationPolicySettingsState {
         val graph = runtimeGraph() ?: return CreationPolicySettingsState.Unavailable
+        val generation = AccountMutationBarrier.process.replacementGeneration()
         val trustStore = CommunityTrustStore(requireContext())
         val trust = trustStore.get(graph.communityId) ?: return CreationPolicySettingsState.DefaultAllowed
         if (!trust.fingerprintVerified) return CreationPolicySettingsState.Unavailable
-        val key =
-            loadRosterCommunityKey(configStore.loadStored(graph.communityId) ?: return CreationPolicySettingsState.Unavailable)
-                ?: return CreationPolicySettingsState.Unavailable
+        val stored = configStore.loadStored(graph.communityId) ?: return CreationPolicySettingsState.Unavailable
+        val key = loadRosterCommunityKey(stored) ?: return CreationPolicySettingsState.Unavailable
         val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
         val reader = CommunityGovernanceReader(TransportFactory.create(graph.config), envelopes)
         val result =
@@ -320,9 +321,23 @@ internal object AppContainer {
                 trust.hostSigningPublicKey,
                 trust.highestPolicyRevision > 0,
                 identityFactory.identityCrypto(),
-                { revision, hash -> trustStore.acceptPolicyRevision(graph.communityId, revision, hash) },
+                { revision, hash ->
+                    acceptPolicyRevisionForCurrentContext(
+                        graph.communityId,
+                        stored.config,
+                        trust,
+                        generation,
+                        graph,
+                        trustStore,
+                        { runtimeGraph() === graph && currentCommunityId == graph.communityId },
+                        revision,
+                        hash,
+                    )
+                },
             ).read()
-        if (runtimeGraph() !== graph) return CreationPolicySettingsState.Unavailable
+        if (runtimeGraph() !== graph || generation != AccountMutationBarrier.process.replacementGeneration()) {
+            return CreationPolicySettingsState.Unavailable
+        }
         return when (result) {
             CommunityCreationPolicyService.Result.DefaultAllowed -> CreationPolicySettingsState.DefaultAllowed
             CommunityCreationPolicyService.Result.Blocked -> CreationPolicySettingsState.Blocked
@@ -330,6 +345,31 @@ internal object AppContainer {
                 CreationPolicySettingsState.Policy(result.value.allowPublic, result.value.allowPrivate, result.value.revision)
         }
     }
+
+    private suspend fun acceptPolicyRevisionForCurrentContext(
+        communityId: String,
+        config: ConnectionConfig,
+        trust: org.openwebdav.messenger.governance.CommunityTrustRecord,
+        generation: Long,
+        expectedGraph: RuntimeGraph?,
+        trustStore: CommunityTrustStore,
+        contextCurrent: () -> Boolean,
+        revision: Long,
+        hash: String,
+    ): PolicyRevisionDecision =
+        AccountMutationBarrier.process.withStableAccount {
+            val currentTrust = trustStore.get(communityId)
+            if (generation != AccountMutationBarrier.process.replacementGeneration() ||
+                configStore.loadStored(communityId)?.config != config ||
+                (expectedGraph != null && runtimeGraph() !== expectedGraph) ||
+                !contextCurrent() || currentTrust?.genesisHash != trust.genesisHash ||
+                currentTrust?.hostSigningPublicKey?.contentEquals(trust.hostSigningPublicKey) != true
+            ) {
+                PolicyRevisionDecision.UntrustedHost
+            } else {
+                trustStore.acceptPolicyRevision(communityId, revision, hash)
+            }
+        }
 
     internal suspend fun updateCreationPolicy(
         allowPublic: Boolean,
@@ -363,7 +403,23 @@ internal object AppContainer {
                         trust.highestPolicyRevision,
                         trust.highestPolicyHash,
                         identityFactory.identityCrypto(),
-                        { revision, hash -> trustStore.acceptPolicyRevision(graph.communityId, revision, hash) },
+                        { revision, hash ->
+                            acceptPolicyRevisionForCurrentContext(
+                                graph.communityId,
+                                stored.config,
+                                trust,
+                                generation,
+                                graph,
+                                trustStore,
+                                {
+                                    runtimeGraph() === graph && currentCommunityId == graph.communityId &&
+                                        UserSettings.isHostFor(graph.communityId) &&
+                                        graph.identity.copySignPublic().contentEquals(trust.hostSigningPublicKey)
+                                },
+                                revision,
+                                hash,
+                            )
+                        },
                     ).update(allowPublic, allowPrivate)
                 } finally {
                     secret.fill(0)
@@ -620,6 +676,7 @@ internal object AppContainer {
         context: SelectedCommunityGroupContext,
         access: ChatAccess,
     ): Boolean {
+        val generation = AccountMutationBarrier.process.replacementGeneration()
         val trustStore = CommunityTrustStore(requireContext())
         val trust = trustStore.get(context.communityId) ?: return true
         val key = crypto.chatKeyStore(requireContext()).load(context.communityId)
@@ -637,7 +694,22 @@ internal object AppContainer {
                 trust.hostSigningPublicKey,
                 trust.highestPolicyRevision > 0,
                 identityFactory.identityCrypto(),
-                { revision, hash -> trustStore.acceptPolicyRevision(context.communityId, revision, hash) },
+                { revision, hash ->
+                    acceptPolicyRevisionForCurrentContext(
+                        context.communityId,
+                        context.stored.config,
+                        trust,
+                        generation,
+                        context.graph,
+                        trustStore,
+                        {
+                            runtimeGraph() === context.graph && currentCommunityId == context.communityId &&
+                                runtimeSelectionGuard.isCurrent(context.selectionRevision)
+                        },
+                        revision,
+                        hash,
+                    )
+                },
             ).read()
         return CommunityCreationPolicyRules.allowsCreation(result, access)
     }
@@ -1435,12 +1507,29 @@ internal object AppContainer {
                                 ChatDeletionCommitResult.Conflict
                             } else {
                                 val existing = graph.store.chatDeletion(row.chatId)
-                                when {
-                                    existing == null -> graph.store.commitChatDeletion(row)
-                                    existing.tombstoneHash == row.tombstoneHash && existing.originHash == row.originHash &&
-                                        existing.scope == row.scope && existing.originMode == row.originMode ->
-                                        ChatDeletionCommitResult.AlreadyCommitted
-                                    else -> ChatDeletionCommitResult.Conflict
+                                val committed =
+                                    when {
+                                        existing == null -> graph.store.commitChatDeletion(row)
+                                        existing.tombstoneHash == row.tombstoneHash && existing.originHash == row.originHash &&
+                                            existing.scope == row.scope && existing.originMode == row.originMode ->
+                                            ChatDeletionCommitResult.AlreadyCommitted
+                                        else -> ChatDeletionCommitResult.Conflict
+                                    }
+                                if (committed is ChatDeletionCommitResult.Conflict) {
+                                    committed
+                                } else if (
+                                    purgeDeletedChatStateLocked(
+                                        graph.communityId,
+                                        row.chatId,
+                                        if (row.scope == ChatDeletionEntity.SCOPE_DM) "dm" else "group",
+                                        graph.identity,
+                                        AccountMutationBarrier.process.replacementGeneration(),
+                                        removeKey = row.scope == ChatDeletionEntity.SCOPE_GROUP,
+                                    )
+                                ) {
+                                    committed
+                                } else {
+                                    ChatDeletionCommitResult.Conflict
                                 }
                             }
                         }
@@ -1547,12 +1636,29 @@ internal object AppContainer {
                                 ChatDeletionCommitResult.Conflict
                             } else {
                                 val existing = graph.store.chatDeletion(row.chatId)
-                                when {
-                                    existing == null -> graph.store.commitChatDeletion(row)
-                                    existing.tombstoneHash == row.tombstoneHash && existing.originHash == row.originHash &&
-                                        existing.scope == row.scope && existing.originMode == row.originMode ->
-                                        ChatDeletionCommitResult.AlreadyCommitted
-                                    else -> ChatDeletionCommitResult.Conflict
+                                val committed =
+                                    when {
+                                        existing == null -> graph.store.commitChatDeletion(row)
+                                        existing.tombstoneHash == row.tombstoneHash && existing.originHash == row.originHash &&
+                                            existing.scope == row.scope && existing.originMode == row.originMode ->
+                                            ChatDeletionCommitResult.AlreadyCommitted
+                                        else -> ChatDeletionCommitResult.Conflict
+                                    }
+                                if (committed is ChatDeletionCommitResult.Conflict) {
+                                    committed
+                                } else if (
+                                    purgeDeletedChatStateLocked(
+                                        graph.communityId,
+                                        row.chatId,
+                                        "group",
+                                        graph.identity,
+                                        generation,
+                                        removeKey = true,
+                                    )
+                                ) {
+                                    committed
+                                } else {
+                                    ChatDeletionCommitResult.Conflict
                                 }
                             }
                         }
@@ -1591,6 +1697,39 @@ internal object AppContainer {
             )
         if (!current()) return ChatDeletionStatus.STALE
         return coordinator.execute(deletion)
+    }
+
+    private fun purgeDeletedChatStateLocked(
+        communityId: String,
+        chatId: String,
+        kind: String,
+        identity: Identity,
+        generation: Long,
+        removeKey: Boolean,
+    ): Boolean {
+        val context = appContext ?: return false
+        val stored = configStore.loadStored(communityId) ?: return false
+        val expectedConfig = stored.config
+        val purger =
+            ChatDeletionPurger(
+                isCurrent = {
+                    generation == AccountMutationBarrier.process.replacementGeneration() &&
+                        configStore.loadStored(communityId)?.config == expectedConfig
+                },
+                fenceGraph = { id, target ->
+                    runtimeGraph()?.takeIf { it.communityId == id && it.chatId == target }?.fenceDeletedChat()
+                },
+                invalidateRoster = { id, target -> rosterCache.invalidate(id, target) },
+                invalidatePrivateMembership = { id, target -> privateMembershipCache.invalidate(id, target) },
+                invalidatePendingClaim = { id, target -> pendingPrivateClaimStore.invalidate(id, target, identity) },
+                invalidateRetryCursor = { id, target -> privateClaimRetryCursorStore.removeChat(id, identity, target) },
+                removeChatKey = { target -> crypto.chatKeyStore(context).removeStrict(target) },
+                removeRegistryEntry = { id, target ->
+                    val rows = chatRegistry.all(id)
+                    if (rows.any { it.id == target }) chatRegistry.replace(id, rows.filterNot { it.id == target })
+                },
+            )
+        return purger.purge(communityId, chatId, stored.chatId, kind, removeKey)
     }
 
     suspend fun reconcileRemoteTombstone(
@@ -1645,7 +1784,8 @@ internal object AppContainer {
                                 CommunityGroupOriginScanner.Result.Empty ->
                                     candidate.record.originMode == TombstoneOriginMode.LEGACY_CHAT_ID &&
                                         CommunityTombstoneAuthorization.group(candidate.record, null, null, trust) != null
-                                CommunityGroupOriginScanner.Result.Conflict -> false
+                                CommunityGroupOriginScanner.Result.Conflict ->
+                                    CommunityTombstoneAuthorization.groupUnderOriginConflict(candidate.record, trust) != null
                             }
                         }
                         TombstoneScope.DM -> {
@@ -1707,16 +1847,15 @@ internal object AppContainer {
                                             ChatDeletionEntity.PHASE_CLEANUP_PENDING,
                                             System.currentTimeMillis(),
                                         )
-                                        if (runtimeGraph()?.let { it.communityId == communityId && it.chatId == chatId } == true) {
-                                            runtimeGraph()?.fenceDeletedChat()
-                                        }
-                                        runCatching {
-                                            chatRegistry.replace(communityId, chatRegistry.all(communityId).filterNot { it.id == chatId })
-                                        }
-                                        if (scope == TombstoneScope.DM) {
-                                            runCatching { crypto.chatKeyStore(requireContext()).removeStrict(chatId) }
-                                        }
-                                        true
+                                        val identity = runtimeGraph()?.identity ?: identityFactory.identityStore(context).loadOrCreate()
+                                        purgeDeletedChatStateLocked(
+                                            communityId,
+                                            chatId,
+                                            if (scope == TombstoneScope.DM) "dm" else "group",
+                                            identity,
+                                            generation,
+                                            removeKey = true,
+                                        )
                                     }
                                 }
                             }
@@ -1822,12 +1961,6 @@ internal object AppContainer {
                     }
                     val stored = configStore.loadStored(initial.communityId) ?: return@ChatDeletionRetryQueue "community unavailable"
                     val communityKey = loadRosterCommunityKey(stored) ?: return@ChatDeletionRetryQueue "community key unavailable"
-                    val publishKey =
-                        if (initial.scope == ChatDeletionEntity.SCOPE_DM) {
-                            crypto.chatKeyStore(context).load(initial.chatId) ?: return@ChatDeletionRetryQueue "DM key unavailable"
-                        } else {
-                            communityKey
-                        }
                     val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
                     val transport = TransportFactory.create(stored.config)
                     val reader = CommunityGovernanceReader(transport, envelopes)
@@ -1840,6 +1973,26 @@ internal object AppContainer {
                         }
                     val store = MessageStore(database.messageDao(), database.syncCursorDao(), initial.communityId)
                     var row = store.chatDeletion(initial.chatId) ?: return@ChatDeletionRetryQueue "graveyard row missing"
+                    val retryIdentity = runtimeGraph()?.identity ?: identityFactory.identityStore(context).loadOrCreate()
+                    val purged =
+                        AccountMutationBarrier.process.withStableAccount {
+                            generation == AccountMutationBarrier.process.replacementGeneration() &&
+                                purgeDeletedChatStateLocked(
+                                    row.communityId,
+                                    row.chatId,
+                                    if (row.scope == ChatDeletionEntity.SCOPE_DM) "dm" else "group",
+                                    retryIdentity,
+                                    generation,
+                                    removeKey =
+                                        row.scope == ChatDeletionEntity.SCOPE_GROUP ||
+                                            row.phase != ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
+                                )
+                        }
+                    if (!purged) return@ChatDeletionRetryQueue "local deletion purge pending"
+                    val publishKey =
+                        ChatDeletionRetryKey.select(row.scope, row.phase, communityKey) {
+                            crypto.chatKeyStore(context).load(row.chatId)
+                        } ?: return@ChatDeletionRetryQueue "DM key unavailable"
 
                     suspend fun advance(
                         expected: String,
@@ -1888,6 +2041,12 @@ internal object AppContainer {
                         row = row.copy(phase = ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED)
                     }
                     if (row.phase == ChatDeletionEntity.PHASE_TOMBSTONE_PUBLISHED) {
+                        if (row.scope == ChatDeletionEntity.SCOPE_DM) {
+                            val removed = runCatching { crypto.chatKeyStore(context).removeStrict(row.chatId) }.isSuccess
+                            if (!removed || generation != AccountMutationBarrier.process.replacementGeneration()) {
+                                return@ChatDeletionRetryQueue "DM key cleanup pending"
+                            }
+                        }
                         if (!advance(row.phase, ChatDeletionEntity.PHASE_CLEANUP_PENDING)) {
                             return@ChatDeletionRetryQueue "cleanup phase changed"
                         }
@@ -1960,7 +2119,9 @@ internal object AppContainer {
                     CommunityGroupOriginScanner.Result.Empty ->
                         record.originMode == TombstoneOriginMode.LEGACY_CHAT_ID &&
                             CommunityTombstoneAuthorization.group(record, null, null, trust) != null
-                    else -> false
+                    CommunityGroupOriginScanner.Result.Conflict ->
+                        CommunityTombstoneAuthorization.groupUnderOriginConflict(record, trust) != null
+                    CommunityGroupOriginScanner.Result.Unavailable -> false
                 }
             }
             TombstoneScope.DM -> {
@@ -2039,6 +2200,7 @@ internal object AppContainer {
         config: ConnectionConfig,
         communityKey: ChatKey,
     ): Boolean {
+        val generation = AccountMutationBarrier.process.replacementGeneration()
         val trustStore = CommunityTrustStore(requireContext())
         val trust = trustStore.get(communityId) ?: return true
         val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
@@ -2051,7 +2213,19 @@ internal object AppContainer {
                 trust.hostSigningPublicKey,
                 trust.highestPolicyRevision > 0,
                 identityFactory.identityCrypto(),
-                { revision, hash -> trustStore.acceptPolicyRevision(communityId, revision, hash) },
+                { revision, hash ->
+                    acceptPolicyRevisionForCurrentContext(
+                        communityId,
+                        config,
+                        trust,
+                        generation,
+                        null,
+                        trustStore,
+                        { configStore.loadStored(communityId)?.config == config },
+                        revision,
+                        hash,
+                    )
+                },
             ).read()
         if (policy !is CommunityCreationPolicyService.Result.Policy || policy.value.allowPublic) {
             return CommunityCreationPolicyRules.allowsDiscoveredPublic(policy, null)

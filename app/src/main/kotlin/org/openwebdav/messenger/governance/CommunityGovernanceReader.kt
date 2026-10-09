@@ -29,7 +29,7 @@ internal class CommunityGovernanceReader(
     ): WebDavResult<ByteArray> {
         if (!CommunityGovernancePaths.isValidContentHash(contentHash)) return WebDavResult.InvalidPath("invalid governance hash")
         val path = CommunityGovernancePaths.objectPath(kind, contentHash)
-        return when (val result = transport.readRaw(path)) {
+        return when (val result = transport.readRawBounded(path, MAX_GOVERNANCE_FILE_BYTES)) {
             is WebDavResult.Success ->
                 if (envelopes.contentHash(result.value) == contentHash) {
                     result
@@ -63,10 +63,13 @@ internal class CommunityGovernanceReader(
                     WebDavResult.Success(hashes)
                 }
             }
+            is WebDavResult.TransportError ->
+                if (result.code == 404) WebDavResult.Success(emptyList()) else governanceFailure(result)
             else -> governanceFailure(result)
         }
 
     private companion object {
+        const val MAX_GOVERNANCE_FILE_BYTES = 64 * 1024
         const val MAX_LIST_ENTRIES = 1000
         const val MAX_LIST_RESPONSE_BYTES = 256 * 1024
     }

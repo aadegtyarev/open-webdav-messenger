@@ -17,7 +17,7 @@ internal object CommunityCreationPolicyTestSupport {
         key: ChatKey,
         host: Identity,
         crypto: IdentityCrypto,
-        accept: (Long, String) -> PolicyRevisionDecision,
+        accept: suspend (Long, String) -> PolicyRevisionDecision,
     ) = CommunityCreationPolicyAdministration(
         reader, writer, "community-1", key, host.copySignPublic(), host.copySignSecret(), 0, null, crypto, accept,
     )

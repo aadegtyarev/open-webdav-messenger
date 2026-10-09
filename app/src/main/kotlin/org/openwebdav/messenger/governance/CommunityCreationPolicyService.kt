@@ -11,7 +11,7 @@ internal class CommunityCreationPolicyService(
     private val hostSigningKey: ByteArray,
     private val hadTrustedPolicy: Boolean,
     private val crypto: IdentityCrypto,
-    private val acceptRevision: (Long, String) -> PolicyRevisionDecision,
+    private val acceptRevision: suspend (Long, String) -> PolicyRevisionDecision,
 ) {
     suspend fun read(): Result {
         val listing = reader.listHashes(GovernanceObjectKind.POLICY)

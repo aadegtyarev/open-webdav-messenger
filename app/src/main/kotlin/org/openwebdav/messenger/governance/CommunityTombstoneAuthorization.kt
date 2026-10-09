@@ -1,6 +1,16 @@
 package org.openwebdav.messenger.governance
 
 internal object CommunityTombstoneAuthorization {
+    fun groupUnderOriginConflict(
+        tombstone: CommunityTombstone,
+        hostPin: CommunityTrustRecord?,
+    ): AuthorizedCommunityTombstone? {
+        if (tombstone.originMode != TombstoneOriginMode.LEGACY_CHAT_ID || tombstone.signerRole != TombstoneSignerRole.PINNED_HOST) {
+            return null
+        }
+        return group(tombstone, null, null, hostPin)
+    }
+
     fun group(
         tombstone: CommunityTombstone,
         origin: CommunityGroupOrigin?,

@@ -33,11 +33,11 @@ class CommunityDmOriginServiceTest {
                                 MockResponse().setResponseCode(201)
                             }
                             "PROPFIND" -> {
-                                val files = storedHash.get()?.let { arrayOf(it to "etag") } ?: emptyArray()
+                                val hash = storedHash.get() ?: return MockResponse().setResponseCode(404)
                                 MockResponse()
                                     .setResponseCode(207)
                                     .setHeader("Content-Type", "application/xml; charset=utf-8")
-                                    .setBody(TestSupport.multistatus("governance/origins/dm", *files))
+                                    .setBody(TestSupport.multistatus("governance/origins/dm", hash to "etag"))
                             }
                             "GET" -> MockResponse().setResponseCode(200).setBody(okio.Buffer().write(storedBytes.get()))
                             else -> MockResponse().setResponseCode(404)

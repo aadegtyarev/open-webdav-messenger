@@ -81,14 +81,11 @@ class CommunityTombstoneServiceTest {
                     hash.set(request.requestUrl!!.encodedPathSegments.last())
                     MockResponse().setResponseCode(201)
                 }
-                "PROPFIND" ->
+                "PROPFIND" -> {
+                    val listedHash = hash.get() ?: return MockResponse().setResponseCode(404)
                     MockResponse().setResponseCode(207).setHeader("Content-Type", "application/xml; charset=utf-8")
-                        .setBody(
-                            TestSupport.multistatus(
-                                "governance/tombstones/group",
-                                * (hash.get()?.let { arrayOf(it to "e") } ?: emptyArray()),
-                            ),
-                        )
+                        .setBody(TestSupport.multistatus("governance/tombstones/group", listedHash to "e"))
+                }
                 "GET" -> MockResponse().setResponseCode(200).setBody(okio.Buffer().write(bytes.get()))
                 else -> MockResponse().setResponseCode(404)
             }

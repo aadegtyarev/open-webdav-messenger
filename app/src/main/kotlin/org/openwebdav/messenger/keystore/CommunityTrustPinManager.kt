@@ -12,34 +12,37 @@ internal class CommunityTrustPinManager(
         genesisBytes: ByteArray,
         crypto: IdentityCrypto,
         source: TrustPinSource,
-    ): TrustPinResult {
-        val genesis = CommunityGenesisCodec.verify(genesisBytes, communityId, crypto) ?: return TrustPinResult.INVALID_GENESIS
-        val candidate =
-            CommunityTrustRecord(
-                communityId,
-                CommunityGenesisCodec.contentAddress(genesisBytes),
-                genesisBytes.copyOf(),
-                genesis.hostSigningPublicKey,
-                genesis.hostBoxPublicKey,
-                source != TrustPinSource.OBSERVED,
-                0,
-                null,
-            )
-        val records = persistence.load().toMutableList()
-        val old = records.singleOrNull { it.communityId == communityId }
-        if (old != null && !samePin(old, candidate)) return TrustPinResult.CONFLICT
-        if (old == null) {
-            records.add(candidate)
-            persistence.save(records)
-            return TrustPinResult.PINNED
+    ): TrustPinResult =
+        CommunityTrustTransactions.withLock {
+            val genesis =
+                CommunityGenesisCodec.verify(genesisBytes, communityId, crypto)
+                    ?: return@withLock TrustPinResult.INVALID_GENESIS
+            val candidate =
+                CommunityTrustRecord(
+                    communityId,
+                    CommunityGenesisCodec.contentAddress(genesisBytes),
+                    genesisBytes.copyOf(),
+                    genesis.hostSigningPublicKey,
+                    genesis.hostBoxPublicKey,
+                    source != TrustPinSource.OBSERVED,
+                    0,
+                    null,
+                )
+            val records = persistence.load().toMutableList()
+            val old = records.singleOrNull { it.communityId == communityId }
+            if (old != null && !samePin(old, candidate)) return@withLock TrustPinResult.CONFLICT
+            if (old == null) {
+                records.add(candidate)
+                persistence.save(records)
+                return@withLock TrustPinResult.PINNED
+            }
+            if (!old.fingerprintVerified && candidate.fingerprintVerified) {
+                records[records.indexOf(old)] = old.copy(fingerprintVerified = true)
+                persistence.save(records)
+                return@withLock TrustPinResult.PINNED
+            }
+            TrustPinResult.ALREADY_PINNED
         }
-        if (!old.fingerprintVerified && candidate.fingerprintVerified) {
-            records[records.indexOf(old)] = old.copy(fingerprintVerified = true)
-            persistence.save(records)
-            return TrustPinResult.PINNED
-        }
-        return TrustPinResult.ALREADY_PINNED
-    }
 
     private fun samePin(
         left: CommunityTrustRecord,

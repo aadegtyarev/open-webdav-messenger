@@ -3,6 +3,7 @@ package org.openwebdav.messenger.transport
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import okio.Buffer
 import org.openwebdav.messenger.protocol.Envelope
 import org.openwebdav.messenger.protocol.MessageId
 
@@ -92,25 +93,26 @@ internal class WebDavTransport(
      * message reads where 404 is not-ready) so the caller can distinguish "file missing" from
      * "file empty/corrupt".
      */
-    suspend fun readRaw(path: String): WebDavResult<ByteArray> {
+    suspend fun readRaw(path: String): WebDavResult<ByteArray> = readRawBounded(path, MAX_METADATA_FILE_BYTES.toInt())
+
+    /** Streaming raw GET with a hard byte cap; excess content is rejected before whole-body allocation. */
+    suspend fun readRawBounded(
+        path: String,
+        maxBytes: Int,
+    ): WebDavResult<ByteArray> {
+        require(maxBytes > 0)
         gate(path)?.let { return it }
         return executor.execute(requests.get(path)) { response ->
-            if (response.code == HTTP_NOT_FOUND) {
-                WebDavResult.TransportError(code = 404, message = "not found: $path")
-            } else if (!response.isSuccessful) {
-                httpError(response)
-            } else {
-                val bytes = response.body?.bytes()
-                if (bytes == null || bytes.isEmpty()) {
-                    WebDavResult.TransportError(code = null, message = "empty body: $path")
-                } else if (bytes.size > MAX_METADATA_FILE_BYTES) {
-                    WebDavResult.TransportError(
-                        code = null,
-                        message = "oversize metadata: $path (${bytes.size} > $MAX_METADATA_FILE_BYTES)",
-                    )
-                } else {
-                    WebDavResult.Success(bytes)
-                }
+            when {
+                response.code == HTTP_NOT_FOUND -> WebDavResult.TransportError(code = 404, message = "not found: $path")
+                !response.isSuccessful -> httpError(response)
+                else ->
+                    when (val read = readCapped(response, maxBytes.toLong())) {
+                        is CappedRead.Bytes -> WebDavResult.Success(read.value)
+                        CappedRead.Empty -> WebDavResult.TransportError(code = null, message = "empty body: $path")
+                        CappedRead.Oversize ->
+                            WebDavResult.TransportError(code = null, message = "oversize raw body: $path (>$maxBytes bytes)")
+                    }
             }
         }
     }
@@ -300,12 +302,15 @@ internal class WebDavTransport(
         maxBytes: Long = MAX_MESSAGE_FILE_BYTES,
     ): CappedRead {
         val source = response.body?.source() ?: return CappedRead.Empty
-        // request() reads only cap+1 bytes; a lying server cannot make this unbounded.
+        val bytes = Buffer()
         val limit = maxBytes + 1
-        source.request(limit)
-        if (source.buffer.size > maxBytes) return CappedRead.Oversize
-        val bytes = source.readByteArray()
-        return if (bytes.isEmpty()) CappedRead.Empty else CappedRead.Bytes(bytes)
+        while (bytes.size < limit) {
+            val read = source.read(bytes, minOf(8192L, limit - bytes.size))
+            if (read == -1L) break
+        }
+        if (bytes.size > maxBytes) return CappedRead.Oversize
+        if (bytes.size == 0L) return CappedRead.Empty
+        return CappedRead.Bytes(bytes.readByteArray())
     }
 
     private fun <T> httpError(response: Response): WebDavResult<T> =

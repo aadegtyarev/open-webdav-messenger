@@ -61,6 +61,17 @@ internal class PrivateClaimRetryCursorStore(context: Context) {
         chatId: String,
     ) = update(communityId, identity) { it.copy(freshChatId = chatId) }
 
+    fun removeChat(
+        communityId: String,
+        identity: Identity,
+        chatId: String,
+    ) = update(communityId, identity) {
+        it.copy(
+            pendingChatId = it.pendingChatId.takeUnless { current -> current == chatId },
+            freshChatId = it.freshChatId.takeUnless { current -> current == chatId },
+        )
+    }
+
     @Synchronized
     private fun update(
         communityId: String,

@@ -179,8 +179,14 @@ internal class ChatFeedViewModel(
         viewModelScope.launch {
             val delivered =
                 try {
-                    AppContainer.retryPendingChatDeletions()
-                    sendService.retry(messageId)
+                    if (reconcileTombstone() != TombstoneReconciler.Result.NoTombstone ||
+                        graph.isDeletionFenced() || graph.store.isChatDeleted(graph.chatId)
+                    ) {
+                        false
+                    } else {
+                        AppContainer.retryPendingChatDeletions()
+                        sendService.retry(messageId)
+                    }
                 } catch (_: Exception) {
                     false
                 }

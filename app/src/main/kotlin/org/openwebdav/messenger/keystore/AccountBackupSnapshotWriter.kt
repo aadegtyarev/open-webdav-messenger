@@ -14,9 +14,9 @@ internal class AccountBackupSnapshotWriter(
     private val chatRegistry: ChatRegistry,
     private val activeStore: ActiveCommunityStore,
     private val identityCrypto: IdentityCrypto? = null,
+    private val trustStore: CommunityTrustBackupStore = CommunityTrustStore(context),
 ) {
     private val deletionState = AccountBackupDeletionState(context)
-    private val trustStore = CommunityTrustStore(context)
 
     fun clear(extraIds: Set<String>) {
         val ids = (communityRegistry.all().map { it.id } + extraIds + ConnectionConfigStore.DEFAULT_COMMUNITY_ID).distinct()
@@ -31,7 +31,8 @@ internal class AccountBackupSnapshotWriter(
     }
 
     fun write(backup: AccountBackup) {
-        val previousIds = (communityRegistry.all().map { it.id } + ConnectionConfigStore.DEFAULT_COMMUNITY_ID).toSet()
+        val existingCommunityIds = (communityRegistry.all().map { it.id } + configStore.listCommunityIds()).toSet()
+        val previousIds = existingCommunityIds + ConnectionConfigStore.DEFAULT_COMMUNITY_ID
         val replacementIds = backup.communities.mapTo(mutableSetOf()) { it.id }
         (previousIds + replacementIds).forEach(UserSettings::clearCommunitySettingsStrict)
         (previousIds - replacementIds).forEach(configStore::clear)
@@ -49,7 +50,7 @@ internal class AccountBackupSnapshotWriter(
             )
             val genesis = community.genesisRecordBase64
             if (genesis == null) {
-                trustStore.remove(community.id)
+                if (community.id !in existingCommunityIds) trustStore.remove(community.id)
             } else {
                 trustStore.restoreRecord(
                     community.id,

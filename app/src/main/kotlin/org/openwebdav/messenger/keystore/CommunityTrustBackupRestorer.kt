@@ -14,7 +14,7 @@ internal class CommunityTrustBackupRestorer(
         policyRevision: Long,
         policyHash: String?,
         crypto: IdentityCrypto,
-    ) {
+    ) = CommunityTrustTransactions.withLock {
         require(policyRevision >= 0 && ((policyRevision == 0L) == (policyHash == null)))
         require(policyHash == null || HASH.matches(policyHash))
         val genesis = CommunityGenesisCodec.verify(genesisBytes, communityId, crypto) ?: error("Invalid backed-up genesis")
@@ -48,11 +48,13 @@ internal class CommunityTrustBackupRestorer(
         persistence.save(records)
     }
 
-    fun remove(communityId: String) {
-        val records = persistence.load()
-        if (records.none { it.communityId == communityId }) return
-        persistence.save(records.filterNot { it.communityId == communityId })
-    }
+    fun remove(communityId: String) =
+        CommunityTrustTransactions.withLock {
+            val records = persistence.load()
+            if (records.any { it.communityId == communityId }) {
+                persistence.save(records.filterNot { it.communityId == communityId })
+            }
+        }
 
     private fun samePin(
         left: CommunityTrustRecord,
