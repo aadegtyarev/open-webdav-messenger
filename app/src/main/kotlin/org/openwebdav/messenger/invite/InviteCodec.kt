@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.chatdirectory.ChatAccess
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.IdentityCrypto
 import java.io.ByteArrayOutputStream
 import java.util.Base64
@@ -47,8 +48,14 @@ internal class InviteCodec(
         signingSecret: ByteArray,
     ): InviteToken {
         require(token.access == ChatAccess.PUBLIC || token.access == ChatAccess.PRIVATE)
+        require(CommunityGenesisCodec.verify(token.genesisRecord, token.communityId, identityCrypto) != null)
         val unsigned = token.copy(signature = ByteArray(InviteToken.SIGNATURE_BYTES))
         return unsigned.copy(signature = identityCrypto.sign(signatureInput(unsigned), signingSecret))
+    }
+
+    fun isHostSignedInvite(token: InviteToken): Boolean {
+        val genesis = CommunityGenesisCodec.verify(token.genesisRecord, token.communityId, identityCrypto) ?: return false
+        return genesis.hostSigningPublicKey.contentEquals(token.signingPublicKey) && isAuthenticated(token)
     }
 
     /** Decode an `owdm1:` [text] back to an [InviteToken], or a typed [Result.Rejected], off the UI thread. */
@@ -65,7 +72,7 @@ internal class InviteCodec(
         val gzipped = decodeBase64Url(payload) ?: return Result.Rejected
         val json = gunzip(gzipped) ?: return Result.Rejected
         val fields = FlatJson.decode(json.toString(Charsets.UTF_8)) ?: return Result.Rejected
-        if (fields[KEY_VERSION] == LEGACY_FORMAT_VERSION) return Result.Legacy
+        if (fields[KEY_VERSION] in LEGACY_FORMAT_VERSIONS) return Result.Legacy
         val token = fromFields(fields) ?: return Result.Rejected
         if (!isAuthenticated(token)) {
             token.chatKey.fill(0)
@@ -89,6 +96,8 @@ internal class InviteCodec(
             KEY_APP_PASSWORD to token.appPassword,
             KEY_CHAT_ROOT to token.chatRoot,
             KEY_CHAT_ID to token.chatId,
+            KEY_COMMUNITY_ID to token.communityId,
+            KEY_GENESIS to base64Url.encodeToString(token.genesisRecord),
             KEY_CHAT_KEY to base64Url.encodeToString(token.chatKey),
             KEY_COMMUNITY to token.communityName,
             KEY_ACCESS to accessName(token.access),
@@ -100,18 +109,22 @@ internal class InviteCodec(
 
     private fun isAuthenticated(token: InviteToken): Boolean =
         (token.access == ChatAccess.PUBLIC || token.access == ChatAccess.PRIVATE) &&
+            CommunityGenesisCodec.verify(token.genesisRecord, token.communityId, identityCrypto) != null &&
             identityCrypto.verify(token.signature, signatureInput(token), token.signingPublicKey)
 
     private fun fromFields(fields: Map<String, String>): InviteToken? {
         if (fields[KEY_VERSION] != FORMAT_VERSION || fields.keys != CURRENT_FIELDS) return null
         val access = parseAccess(fields[KEY_ACCESS] ?: return null) ?: return null
         val rawKey = decodeBase64Url(fields[KEY_CHAT_KEY] ?: return null) ?: return null
+        val communityId = fields[KEY_COMMUNITY_ID] ?: return null
+        val genesis = decodeBase64Url(fields[KEY_GENESIS] ?: return null) ?: return null
         val signer = decodeBase64Url(fields[KEY_SIGNER] ?: return null) ?: return null
         val signature = decodeBase64Url(fields[KEY_SIGNATURE] ?: return null) ?: return null
         if (rawKey.size != InviteToken.CHAT_KEY_BYTES || signer.size != InviteToken.SIGNING_KEY_BYTES ||
-            signature.size != InviteToken.SIGNATURE_BYTES
+            signature.size != InviteToken.SIGNATURE_BYTES || genesis.size !in 1..MAX_GENESIS_BYTES
         ) {
             rawKey.fill(0)
+            genesis.fill(0)
             return null
         }
         return InviteToken(
@@ -120,6 +133,8 @@ internal class InviteCodec(
             appPassword = fields[KEY_APP_PASSWORD] ?: return null,
             chatRoot = fields[KEY_CHAT_ROOT] ?: return null,
             chatId = fields[KEY_CHAT_ID] ?: return null,
+            communityId = communityId,
+            genesisRecord = genesis,
             chatKey = rawKey,
             communityName = fields[KEY_COMMUNITY] ?: return null,
             access = access,
@@ -183,7 +198,7 @@ internal class InviteCodec(
     sealed interface Result {
         data class Decoded(val token: InviteToken) : Result
 
-        /** Old v1 invite lacks authenticated access metadata; callers must reject and request a fresh token. */
+        /** Old invite formats lack the signed genesis binding; callers must request a fresh token. */
         data object Legacy : Result
 
         data object Rejected : Result
@@ -201,11 +216,12 @@ internal class InviteCodec(
 
         /** The read-buffer size for the bounded inflate loop. */
         private const val INFLATE_BUFFER_BYTES = 4096
+        private const val MAX_GENESIS_BYTES = 512
 
-        /** Version 2 adds signed access metadata; v1 is identified only to produce fresh-invite guidance. */
-        private const val FORMAT_VERSION = "2"
-        private const val LEGACY_FORMAT_VERSION = "1"
-        private const val SIGNATURE_DOMAIN = "owdm/invite/access/v2"
+        /** Version 3 binds the signed access metadata to the community's host genesis record. */
+        private const val FORMAT_VERSION = "3"
+        private val LEGACY_FORMAT_VERSIONS = setOf("1", "2")
+        private const val SIGNATURE_DOMAIN = "owdm/invite/access/v3"
 
         private const val KEY_VERSION = "v"
         private const val KEY_BASE_URL = "u"
@@ -213,6 +229,8 @@ internal class InviteCodec(
         private const val KEY_APP_PASSWORD = "p"
         private const val KEY_CHAT_ROOT = "r"
         private const val KEY_CHAT_ID = "c"
+        private const val KEY_COMMUNITY_ID = "d"
+        private const val KEY_GENESIS = "x"
         private const val KEY_CHAT_KEY = "k"
         private const val KEY_COMMUNITY = "m"
         private const val KEY_ACCESS = "a"
@@ -226,6 +244,8 @@ internal class InviteCodec(
                 KEY_APP_PASSWORD,
                 KEY_CHAT_ROOT,
                 KEY_CHAT_ID,
+                KEY_COMMUNITY_ID,
+                KEY_GENESIS,
                 KEY_CHAT_KEY,
                 KEY_COMMUNITY,
                 KEY_ACCESS,

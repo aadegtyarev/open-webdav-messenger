@@ -71,6 +71,10 @@ internal class OnboardingService(
                 }
                 val identity = deps.ensureIdentity()
                 val chatId = deps.newChatId()
+                val genesis = deps.createHostGenesis(chatId, identity) ?: return@withContext CreateResult.GenesisTrustFailure
+                if (!deps.pinCreatedCommunityGenesis(chatId, genesis)) {
+                    return@withContext CreateResult.GenesisTrustFailure
+                }
                 val chatKey = deps.keySources().newRandomKey()
                 persistAndReconfigure(
                     config,
@@ -112,6 +116,9 @@ internal class OnboardingService(
             )
         // A member's invite must still carry an HTTPS disk; a cleartext URL inside the token is refused.
         if (!isHttps(config.baseUrl)) return JoinResult.Invalid
+        if (!deps.pinCommunityGenesis(token.communityId, token.genesisRecord, codec?.isHostSignedInvite(token) == true)) {
+            return JoinResult.Invalid
+        }
         val identity = deps.ensureIdentity()
         val rawKey = token.chatKey
         val chatKey =
@@ -178,6 +185,22 @@ internal class OnboardingService(
 
         suspend fun ensureIdentity(): Identity
 
+        fun createHostGenesis(
+            communityId: String,
+            identity: Identity,
+        ): ByteArray? = null
+
+        fun pinCommunityGenesis(
+            communityId: String,
+            genesisRecord: ByteArray,
+            verified: Boolean,
+        ): Boolean = true
+
+        fun pinCreatedCommunityGenesis(
+            communityId: String,
+            genesisRecord: ByteArray,
+        ): Boolean = pinCommunityGenesis(communityId, genesisRecord, verified = true)
+
         fun newChatId(): String
 
         /** Install the local runtime only; do not start network work while replacement is gated. */
@@ -230,6 +253,9 @@ internal class OnboardingService(
 
         /** Cannot access or create the folder on the disk (network, permissions, etc.). */
         data class FolderError(val message: String) : CreateResult
+
+        /** The signed genesis record could not be durably pinned before account creation. */
+        data object GenesisTrustFailure : CreateResult
     }
 
     /** Member join outcome — carries NO disk credentials (Must not break: member never sees them). */

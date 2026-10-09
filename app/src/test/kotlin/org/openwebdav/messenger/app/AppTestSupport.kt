@@ -12,6 +12,7 @@ import org.openwebdav.messenger.crypto.LazySodiumCrypto
 import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.data.MessengerDatabase
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityTestSupport
@@ -186,6 +187,20 @@ internal object AppTestSupport {
         val idCrypto = IdentityTestSupport.identityCrypto()
         val identity = idCrypto.generateIdentity()
         val codec = InviteCodec(idCrypto)
+        val genesisSecret = identity.copySignSecret()
+        val genesis =
+            try {
+                CommunityGenesisCodec.sign(
+                    chatId,
+                    identity.copySignPublic(),
+                    identity.copyBoxPublic(),
+                    ByteArray(32),
+                    genesisSecret,
+                    idCrypto,
+                )
+            } finally {
+                genesisSecret.fill(0)
+            }
         val token =
             InviteToken(
                 baseUrl = config.baseUrl,
@@ -193,6 +208,8 @@ internal object AppTestSupport {
                 appPassword = config.appPassword,
                 chatRoot = config.chatRoot,
                 chatId = chatId,
+                communityId = chatId,
+                genesisRecord = genesis,
                 chatKey = chatKey.export(),
                 communityName = communityName,
                 access = access,
@@ -247,6 +264,28 @@ internal class RecordingOnboardingDeps(
     }
 
     override suspend fun ensureIdentity(): Identity = identity
+
+    override fun createHostGenesis(
+        communityId: String,
+        identity: Identity,
+    ): ByteArray {
+        val crypto = AppTestSupport.identityCrypto()
+        val secret = identity.copySignSecret()
+        val nonce = ByteArray(32) { 1 }
+        return try {
+            CommunityGenesisCodec.sign(
+                communityId,
+                identity.copySignPublic(),
+                identity.copyBoxPublic(),
+                nonce,
+                secret,
+                crypto,
+            )
+        } finally {
+            nonce.fill(0)
+            secret.fill(0)
+        }
+    }
 
     override fun newChatId(): String = chatIdToMint
 

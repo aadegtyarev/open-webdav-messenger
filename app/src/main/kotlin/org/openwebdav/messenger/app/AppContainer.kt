@@ -27,6 +27,7 @@ import org.openwebdav.messenger.directory.DirectoryEntry
 import org.openwebdav.messenger.directory.DirectoryFactory
 import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.directory.RemoteChatProvisioner
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityFactory
 import org.openwebdav.messenger.invite.InviteCodec
@@ -36,8 +37,11 @@ import org.openwebdav.messenger.keystore.ChatKeyStorePort
 import org.openwebdav.messenger.keystore.ChatRegistry
 import org.openwebdav.messenger.keystore.CommunityKeyStore
 import org.openwebdav.messenger.keystore.CommunityRegistry
+import org.openwebdav.messenger.keystore.CommunityTrustStore
 import org.openwebdav.messenger.keystore.ConnectionConfigStore
 import org.openwebdav.messenger.keystore.StoredConnection
+import org.openwebdav.messenger.keystore.TrustPinResult
+import org.openwebdav.messenger.keystore.TrustPinSource
 import org.openwebdav.messenger.membership.PendingPrivateClaimStore
 import org.openwebdav.messenger.membership.PrivateClaimRetryCandidate
 import org.openwebdav.messenger.membership.PrivateClaimRetryCursorStore
@@ -1762,6 +1766,9 @@ internal object AppContainer {
      */
     suspend fun buildInvite(graph: RuntimeGraph): String {
         val access = resolveInviteAccess(graph) ?: error("Chat access is unresolved; refresh before inviting")
+        val genesisRecord =
+            CommunityTrustStore(requireContext()).get(graph.communityId)?.genesisRecord
+                ?: error("Community host genesis is unavailable; request a fresh governance invite")
         val raw = graph.chatKey.export()
         val secret = graph.identity.copySignSecret()
         val codec = InviteCodec(identityFactory.identityCrypto())
@@ -1773,6 +1780,8 @@ internal object AppContainer {
                     appPassword = graph.config.appPassword,
                     chatRoot = graph.config.chatRoot,
                     chatId = graph.chatId,
+                    communityId = graph.communityId,
+                    genesisRecord = genesisRecord,
                     chatKey = raw,
                     communityName = graph.communityName,
                     access = access,
@@ -1940,6 +1949,52 @@ internal object AppContainer {
             }
 
             override suspend fun ensureIdentity(): Identity = identityFactory.identityStore(requireContext()).loadOrCreate()
+
+            override fun createHostGenesis(
+                communityId: String,
+                identity: Identity,
+            ): ByteArray {
+                val nonce = ByteArray(32).also(SecureRandom()::nextBytes)
+                val secret = identity.copySignSecret()
+                return try {
+                    CommunityGenesisCodec.sign(
+                        communityId,
+                        identity.copySignPublic(),
+                        identity.copyBoxPublic(),
+                        nonce,
+                        secret,
+                        identityFactory.identityCrypto(),
+                    )
+                } finally {
+                    nonce.fill(0)
+                    secret.fill(0)
+                }
+            }
+
+            override fun pinCommunityGenesis(
+                communityId: String,
+                genesisRecord: ByteArray,
+                verified: Boolean,
+            ): Boolean {
+                val source = if (verified) TrustPinSource.GOVERNANCE_INVITE else TrustPinSource.OBSERVED
+                return CommunityTrustStore(requireContext()).pinGenesis(
+                    communityId,
+                    genesisRecord,
+                    identityFactory.identityCrypto(),
+                    source,
+                ) in setOf(TrustPinResult.PINNED, TrustPinResult.ALREADY_PINNED)
+            }
+
+            override fun pinCreatedCommunityGenesis(
+                communityId: String,
+                genesisRecord: ByteArray,
+            ): Boolean =
+                CommunityTrustStore(requireContext()).pinGenesis(
+                    communityId,
+                    genesisRecord,
+                    identityFactory.identityCrypto(),
+                    TrustPinSource.OWNER_CREATED,
+                ) in setOf(TrustPinResult.PINNED, TrustPinResult.ALREADY_PINNED)
 
             override fun newChatId(): String = randomChatId()
 

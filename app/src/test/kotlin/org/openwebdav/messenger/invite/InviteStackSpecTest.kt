@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.openwebdav.messenger.chatdirectory.ChatAccess
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.IdentityTestSupport
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -44,6 +45,20 @@ class InviteStackSpecTest {
             val identityCrypto = IdentityTestSupport.identityCrypto()
             val identity = identityCrypto.generateIdentity()
             val codec = InviteCodec(identityCrypto, ioDispatcher = tracker)
+            val genesisSecret = identity.copySignSecret()
+            val genesis =
+                try {
+                    CommunityGenesisCodec.sign(
+                        "c",
+                        identity.copySignPublic(),
+                        identity.copyBoxPublic(),
+                        ByteArray(32),
+                        genesisSecret,
+                        identityCrypto,
+                    )
+                } finally {
+                    genesisSecret.fill(0)
+                }
             val unsigned =
                 InviteToken(
                     baseUrl = "https://disk.example.test",
@@ -51,6 +66,8 @@ class InviteStackSpecTest {
                     appPassword = "fake-pw-not-real",
                     chatRoot = "r",
                     chatId = "c",
+                    communityId = "c",
+                    genesisRecord = genesis,
                     chatKey = ByteArray(InviteToken.CHAT_KEY_BYTES) { 3 },
                     communityName = "n",
                     access = ChatAccess.PRIVATE,

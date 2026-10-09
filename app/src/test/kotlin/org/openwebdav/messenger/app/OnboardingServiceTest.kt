@@ -11,6 +11,7 @@ import org.junit.Test
 import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.transport.ConnectionConfig
@@ -36,6 +37,8 @@ class OnboardingServiceTest {
         var reconfiguredChatId: String? = null
         var reconfiguredKey: ChatKey? = null
         var generationAtReconfigure: Long? = null
+        var pinnedGenesis: ByteArray? = null
+        var pinGenesisSucceeds = true
 
         override fun keySources(): KeySources = AppTestSupport.keySources()
 
@@ -61,6 +64,34 @@ class OnboardingServiceTest {
         }
 
         override suspend fun ensureIdentity(): Identity = identity
+
+        override fun createHostGenesis(
+            communityId: String,
+            identity: Identity,
+        ): ByteArray {
+            val crypto = AppTestSupport.identityCrypto()
+            val secret = identity.copySignSecret()
+            return try {
+                CommunityGenesisCodec.sign(
+                    communityId,
+                    identity.copySignPublic(),
+                    identity.copyBoxPublic(),
+                    ByteArray(32) { 1 },
+                    secret,
+                    crypto,
+                )
+            } finally {
+                secret.fill(0)
+            }
+        }
+
+        override fun pinCreatedCommunityGenesis(
+            communityId: String,
+            genesisRecord: ByteArray,
+        ): Boolean {
+            pinnedGenesis = genesisRecord.copyOf()
+            return pinGenesisSucceeds
+        }
 
         override fun newChatId(): String = chatIdToMint
 
@@ -113,9 +144,31 @@ class OnboardingServiceTest {
             assertEquals("https://disk.example.test", deps.savedConfig!!.baseUrl)
             assertEquals(deps.chatIdToMint, deps.savedChatId)
             assertTrue(deps.chatKeyStore.has(deps.chatIdToMint))
+            assertNotNull(deps.pinnedGenesis)
+            assertTrue(CommunityGenesisCodec.verify(deps.pinnedGenesis!!, deps.chatIdToMint, AppTestSupport.identityCrypto()) != null)
             // The engine was reconfigured for that chat with the same key.
             assertEquals(deps.chatIdToMint, deps.reconfiguredChatId)
             assertNotNull(deps.reconfiguredKey)
+        }
+
+    @Test
+    fun owner_create_aborts_before_account_mutation_when_genesis_pin_fails() =
+        runTest {
+            val deps = RecordingDeps(AppTestSupport.newIdentity()).also { it.pinGenesisSucceeds = false }
+            val result =
+                service(deps).createCommunity(
+                    "https://disk.example.test",
+                    "owner",
+                    "fake-app-password-not-real",
+                    "",
+                    "My Community",
+                )
+
+            assertEquals(OnboardingService.CreateResult.GenesisTrustFailure, result)
+            assertNotNull(deps.pinnedGenesis)
+            assertNull(deps.savedConfig)
+            assertNull(deps.reconfiguredChatId)
+            assertFalse(deps.chatKeyStore.has(deps.chatIdToMint))
         }
 
     /** owner_connect_cleartext_url_is_refused — an http:// URL is refused, NOTHING is persisted (SC13). */
