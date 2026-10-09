@@ -1009,10 +1009,7 @@ internal object AppContainer {
         chatId: String,
     ): ChatRegistry.Entry? = chatRegistry.all(communityId).singleOrNull { it.id == chatId }
 
-    fun observeHiddenDmKeys(): Flow<Set<Pair<String, String>>> =
-        MessengerDatabase.get(requireContext()).messageDao().observeHiddenDms().map { rows ->
-            rows.mapTo(mutableSetOf()) { it.communityId to it.chatId }
-        }
+    fun observeHiddenDmKeys(): Flow<Set<Pair<String, String>>> = runtimeGraph()?.store?.observeHiddenDmKeys() ?: flowOf(emptySet())
 
     /** A unified view of all chats across all communities — for the unified chat list. */
     data class UnifiedChat(

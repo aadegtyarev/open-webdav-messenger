@@ -2,6 +2,7 @@ package org.openwebdav.messenger.data
 
 import androidx.paging.PagingSource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import org.openwebdav.messenger.message.Message
 import org.openwebdav.messenger.message.ReactionMessage
 import org.openwebdav.messenger.message.TextMessage
@@ -98,6 +99,9 @@ class MessageStore(
     suspend fun recoverInterruptedOutgoing(communityId: String) {
         messageDao.recoverInterruptedOutgoing(communityId)
     }
+
+    fun observeHiddenDmKeys(): Flow<Set<Pair<String, String>>> =
+        messageDao.observeHiddenDms().map { rows -> rows.mapTo(mutableSetOf()) { it.communityId to it.chatId } }
 
     /** Mark all messages in [chatId] up to [orderToken] as READ (for received messages viewed by the user). */
     suspend fun markMessagesReadUpTo(

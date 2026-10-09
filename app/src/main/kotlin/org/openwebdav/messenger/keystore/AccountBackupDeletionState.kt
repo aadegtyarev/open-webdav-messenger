@@ -13,6 +13,7 @@ internal data class DmDeletionSnapshot(
 
 internal class AccountBackupDeletionState(private val context: Context) {
     fun snapshot(communityId: String): DmDeletionSnapshot {
+        if (!databaseFileExists()) return DmDeletionSnapshot(emptyList(), emptyMap())
         val db = MessengerDatabase.get(context)
         return runBlocking {
             db.withTransaction {
@@ -31,6 +32,7 @@ internal class AccountBackupDeletionState(private val context: Context) {
         hiddenChatIds: List<String>,
         suppressedMessageIds: Map<String, List<String>>,
     ) {
+        if (!databaseFileExists() && hiddenChatIds.isEmpty() && suppressedMessageIds.isEmpty()) return
         val db = MessengerDatabase.get(context)
         runBlocking {
             db.messageDao().replaceDmDeletionState(
@@ -44,6 +46,7 @@ internal class AccountBackupDeletionState(private val context: Context) {
     }
 
     fun clear(communityIds: Set<String>) {
+        if (communityIds.isEmpty() || !databaseFileExists()) return
         val db = MessengerDatabase.get(context)
         runBlocking {
             db.withTransaction {
@@ -54,4 +57,6 @@ internal class AccountBackupDeletionState(private val context: Context) {
             }
         }
     }
+
+    private fun databaseFileExists(): Boolean = context.getDatabasePath(MessengerDatabase.DB_NAME).exists()
 }
