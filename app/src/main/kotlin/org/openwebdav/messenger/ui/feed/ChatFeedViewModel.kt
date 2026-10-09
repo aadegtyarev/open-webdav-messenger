@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.ChatDeletionStatus
 import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
@@ -112,6 +113,13 @@ internal class ChatFeedViewModel(
             } finally {
                 reservedSendRevisions.remove(sendDraftRevision)
             }
+        }
+    }
+
+    fun deleteGroupForAll(onResult: (ChatDeletionStatus) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching { AppContainer.deleteGroupForAll(graph) }.getOrDefault(ChatDeletionStatus.CONFLICT)
+            onResult(result)
         }
     }
 

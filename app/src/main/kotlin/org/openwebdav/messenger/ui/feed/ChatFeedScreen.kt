@@ -68,6 +68,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.R
+import org.openwebdav.messenger.app.ChatDeletionStatus
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageEntity
@@ -88,8 +89,10 @@ internal fun ChatFeedScreen(
     onShowParticipants: () -> Unit = {},
     onBack: () -> Unit = {},
     canDeleteLocalDm: Boolean = false,
+    canDeleteForAll: Boolean = false,
     chatTitle: String = "",
     onLocalDmDeleted: () -> Unit = {},
+    onChatDeleted: (ChatDeletionStatus) -> Unit = {},
     viewModel: ChatFeedViewModel =
         viewModel(
             key = runtimeScopeKey("feed"),
@@ -111,7 +114,59 @@ internal fun ChatFeedScreen(
     val rosterLoadingLabel = stringResource(R.string.roster_loading_accessibility)
     val rosterLoadingExplanation = stringResource(R.string.roster_loading_explanation)
     var showDeleteDmConfirmation by remember { mutableStateOf(false) }
+    var showDeleteChatConfirmation by remember { mutableStateOf(false) }
     var typedDeleteTitle by remember { mutableStateOf("") }
+    var deletingChat by remember { mutableStateOf(false) }
+
+    if (showDeleteChatConfirmation) {
+        AlertDialog(
+            onDismissRequest = { if (!deletingChat) showDeleteChatConfirmation = false },
+            title = { Text(stringResource(R.string.chat_delete_all_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.chat_delete_all_confirmation, chatTitle))
+                    OutlinedTextField(
+                        value = typedDeleteTitle,
+                        onValueChange = { typedDeleteTitle = it },
+                        label = { Text(stringResource(R.string.dm_delete_type_title)) },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !deletingChat && typedDeleteTitle == chatTitle,
+                    onClick = {
+                        deletingChat = true
+                        viewModel.deleteGroupForAll { result ->
+                            deletingChat = false
+                            showDeleteChatConfirmation = false
+                            typedDeleteTitle = ""
+                            if (result in
+                                setOf(
+                                    ChatDeletionStatus.LOCAL_COMMITTED,
+                                    ChatDeletionStatus.TOMBSTONE_PUBLISHED,
+                                    ChatDeletionStatus.CLEANUP_PENDING,
+                                    ChatDeletionStatus.COMPLETE,
+                                )
+                            ) {
+                                onChatDeleted(result)
+                            } else {
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar(context.getString(R.string.chat_delete_failure))
+                                }
+                            }
+                        }
+                    },
+                ) { Text(stringResource(R.string.chat_delete_all_action)) }
+            },
+            dismissButton = {
+                TextButton(enabled = !deletingChat, onClick = { showDeleteChatConfirmation = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     if (showDeleteDmConfirmation) {
         AlertDialog(
@@ -300,6 +355,14 @@ internal fun ChatFeedScreen(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                     ) {
                         Icon(Icons.Filled.People, contentDescription = stringResource(R.string.participants_action))
+                    }
+                    if (canDeleteForAll) {
+                        IconButton(
+                            onClick = { showDeleteChatConfirmation = true },
+                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.chat_delete_all_action))
+                        }
                     }
                     if (canDeleteLocalDm) {
                         IconButton(

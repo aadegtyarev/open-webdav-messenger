@@ -24,7 +24,9 @@ class CommunityGroupOriginCodecTest {
             )
         val bytes = CommunityGroupOriginCodec.sign(origin, creator.copySignSecret(), crypto)
         val verified = CommunityGroupOriginCodec.verify(bytes, origin.communityId, origin.chatId, crypto)
+        val contextFreeVerified = CommunityGroupOriginCodec.verify(bytes, null, null, crypto)
 
+        assertEquals(origin.chatId, contextFreeVerified?.chatId)
         assertEquals(ChatAccess.PRIVATE, verified?.access)
         assertTrue(verified!!.creatorSigningPublicKey.contentEquals(origin.creatorSigningPublicKey))
         assertNull(CommunityGroupOriginCodec.verify(bytes, "other-community", origin.chatId, crypto))

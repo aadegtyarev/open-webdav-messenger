@@ -23,18 +23,20 @@ internal object CommunityGroupOriginCodec {
 
     fun verify(
         bytes: ByteArray,
-        communityId: String,
-        chatId: String,
+        communityId: String?,
+        chatId: String?,
         crypto: IdentityCrypto,
     ): CommunityGroupOrigin? {
-        if (bytes.size !in MIN_BYTES..MAX_BYTES || !GovernanceRecordSupport.isValidCommunityId(communityId) || !ORIGIN_ID.matches(chatId)) {
+        if (bytes.size !in MIN_BYTES..MAX_BYTES || (communityId != null && !GovernanceRecordSupport.isValidCommunityId(communityId)) ||
+            (chatId != null && !ORIGIN_ID.matches(chatId))
+        ) {
             return null
         }
         return runCatching {
             DataInputStream(bytes.inputStream()).use { input ->
                 require(GovernanceRecordSupport.readExactly(input, MAGIC.size).contentEquals(MAGIC) && input.readUnsignedByte() == VERSION)
-                val id = readText(input).also { require(it == communityId) }
-                val idChat = readText(input).also { require(it == chatId) }
+                val id = readText(input).also { require(communityId == null || it == communityId) }
+                val idChat = readText(input).also { require(chatId == null || it == chatId) }
                 val access =
                     when (input.readUnsignedByte()) {
                         0 -> ChatAccess.PUBLIC

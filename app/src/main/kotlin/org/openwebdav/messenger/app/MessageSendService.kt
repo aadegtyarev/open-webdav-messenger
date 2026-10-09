@@ -53,7 +53,7 @@ internal class MessageSendService(
         text: String,
         onRecoverablyPersisted: suspend () -> Unit,
     ): SendResult {
-        check(isCurrent()) { "Account changed before send" }
+        check(isCurrent() && !graph.isDeletionFenced()) { "Chat or account changed before send" }
         val recipients =
             (graph.recipientSnapshot() as? RecipientReadiness.Ready)?.members
                 ?: error("Verified recipients are not ready")
@@ -98,6 +98,7 @@ internal class MessageSendService(
                     PreparedSend(orderToken, messageId, envelopeBytes, recipients)
                 }
             onRecoverablyPersisted()
+            check(isCurrent() && !graph.isDeletionFenced()) { "Chat or account changed before delivery" }
             return withContext(ioDispatcher) {
                 val outcome =
                     try {
@@ -139,7 +140,7 @@ internal class MessageSendService(
 
     override suspend fun retry(messageId: String): Boolean =
         AccountMutationBarrier.process.withExclusive {
-            if (!isCurrent()) return@withExclusive false
+            if (!isCurrent() || graph.isDeletionFenced()) return@withExclusive false
             withContext(ioDispatcher) {
                 graph.engine.retryOutgoing(messageId, graph.communityId, graph.senderIdentifier)
             }
