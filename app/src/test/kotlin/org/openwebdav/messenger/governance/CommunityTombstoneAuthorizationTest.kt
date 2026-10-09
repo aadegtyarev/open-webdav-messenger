@@ -38,7 +38,7 @@ class CommunityTombstoneAuthorizationTest {
     fun dm_delete_requires_the_initiator_and_exact_participant_pair() {
         val initiator = crypto.generateIdentity()
         val peer = crypto.generateIdentity()
-        val participants = listOf(participant(initiator), participant(peer))
+        val participants = CommunityDmOriginKeyOrder.sort(listOf(participant(initiator), participant(peer)))
         val origin = CommunityDmOrigin("community-1", CHAT_ID, participants, initiator.copySignPublic(), ByteArray(32))
         val tombstone =
             record(TombstoneSignerRole.DM_INITIATOR, initiator.copySignPublic(), TombstoneScope.DM, participants, "c".repeat(32))
@@ -46,7 +46,7 @@ class CommunityTombstoneAuthorizationTest {
         assertTrue(CommunityTombstoneAuthorization.dm(tombstone, origin, "c".repeat(32)))
         assertFalse(CommunityTombstoneAuthorization.dm(tombstone, origin, "d".repeat(32)))
         val other = crypto.generateIdentity()
-        val changed = origin.copy(participants = listOf(participant(initiator), participant(other)))
+        val changed = origin.copy(participants = CommunityDmOriginKeyOrder.sort(listOf(participant(initiator), participant(other))))
         assertFalse(CommunityTombstoneAuthorization.dm(tombstone, changed, "c".repeat(32)))
     }
 

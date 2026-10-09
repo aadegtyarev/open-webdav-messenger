@@ -23,12 +23,22 @@ internal object CommunityTombstoneCodec {
         scope: TombstoneScope,
         crypto: IdentityCrypto,
     ): CommunityTombstone? {
+        val record = verifyAny(bytes, crypto) ?: return null
+        return record.takeIf {
+            it.communityId == communityId && it.chatId == chatId && it.originHash == originHash && it.scope == scope
+        }
+    }
+
+    fun verifyAny(
+        bytes: ByteArray,
+        crypto: IdentityCrypto,
+    ): CommunityTombstone? {
         val decoded = CommunityTombstoneWire.decode(bytes) ?: return null
         val record = decoded.record
-        if (record.communityId != communityId || record.chatId != chatId || record.originHash != originHash || record.scope != scope) {
-            return null
-        }
-        if (!validRecord(record) || !crypto.verify(decoded.signature, signatureInput(scope, decoded.body), record.signerSigningPublicKey)) {
+        val signatureInput = signatureInput(record.scope, decoded.body)
+        if (!validRecord(record) ||
+            !crypto.verify(decoded.signature, signatureInput, record.signerSigningPublicKey)
+        ) {
             return null
         }
         return record
