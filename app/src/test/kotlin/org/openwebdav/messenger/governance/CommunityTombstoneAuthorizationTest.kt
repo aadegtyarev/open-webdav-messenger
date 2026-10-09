@@ -1,7 +1,7 @@
 package org.openwebdav.messenger.governance
 
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.openwebdav.messenger.identity.IdentityTestSupport
 
@@ -23,15 +23,15 @@ class CommunityTombstoneAuthorizationTest {
         val hash = "a".repeat(32)
         val creatorDelete = record(TombstoneSignerRole.GROUP_CREATOR, creator.copySignPublic(), TombstoneScope.GROUP, emptyList(), hash)
 
-        assertTrue(CommunityTombstoneAuthorization.group(creatorDelete, origin, hash, null))
-        assertFalse(CommunityTombstoneAuthorization.group(creatorDelete, null, null, null))
-        assertFalse(CommunityTombstoneAuthorization.group(creatorDelete, origin, "b".repeat(32), null))
+        assertNotNull(CommunityTombstoneAuthorization.group(creatorDelete, origin, hash, null))
+        assertNull(CommunityTombstoneAuthorization.group(creatorDelete, null, null, null))
+        assertNull(CommunityTombstoneAuthorization.group(creatorDelete, origin, "b".repeat(32), null))
 
         val host = crypto.generateIdentity()
         val hostDelete = record(TombstoneSignerRole.PINNED_HOST, host.copySignPublic(), TombstoneScope.GROUP, emptyList(), hash)
         val pin = CommunityTrustRecord("community-1", hash, byteArrayOf(), host.copySignPublic(), host.copyBoxPublic(), true, 0, null)
-        assertTrue(CommunityTombstoneAuthorization.group(hostDelete, null, null, pin))
-        assertFalse(CommunityTombstoneAuthorization.group(hostDelete, null, null, pin.copy(fingerprintVerified = false)))
+        assertNotNull(CommunityTombstoneAuthorization.group(hostDelete, null, null, pin))
+        assertNull(CommunityTombstoneAuthorization.group(hostDelete, null, null, pin.copy(fingerprintVerified = false)))
     }
 
     @Test
@@ -43,11 +43,11 @@ class CommunityTombstoneAuthorizationTest {
         val tombstone =
             record(TombstoneSignerRole.DM_INITIATOR, initiator.copySignPublic(), TombstoneScope.DM, participants, "c".repeat(32))
 
-        assertTrue(CommunityTombstoneAuthorization.dm(tombstone, origin, "c".repeat(32)))
-        assertFalse(CommunityTombstoneAuthorization.dm(tombstone, origin, "d".repeat(32)))
+        assertNotNull(CommunityTombstoneAuthorization.dm(tombstone, origin, "c".repeat(32)))
+        assertNull(CommunityTombstoneAuthorization.dm(tombstone, origin, "d".repeat(32)))
         val other = crypto.generateIdentity()
         val changed = origin.copy(participants = CommunityDmOriginKeyOrder.sort(listOf(participant(initiator), participant(other))))
-        assertFalse(CommunityTombstoneAuthorization.dm(tombstone, changed, "c".repeat(32)))
+        assertNull(CommunityTombstoneAuthorization.dm(tombstone, changed, "c".repeat(32)))
     }
 
     private fun participant(identity: org.openwebdav.messenger.identity.Identity) =

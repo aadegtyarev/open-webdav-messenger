@@ -13,10 +13,11 @@ internal class CommunityTombstoneService(
     private val scanner = CommunityTombstoneScanner(reader, envelopes, crypto)
 
     suspend fun publish(
-        record: CommunityTombstone,
+        authorized: AuthorizedCommunityTombstone,
         signingSecret: ByteArray,
         key: ChatKey,
     ): Result {
+        val record = authorized.record
         val signedBytes =
             runCatching { CommunityTombstoneCodec.sign(record, signingSecret, crypto) }.getOrNull()
                 ?: return Result.Invalid

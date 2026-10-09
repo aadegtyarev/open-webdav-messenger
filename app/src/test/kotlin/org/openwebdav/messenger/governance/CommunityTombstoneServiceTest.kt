@@ -38,16 +38,28 @@ class CommunityTombstoneServiceTest {
                         "a".repeat(32),
                         TombstoneScope.GROUP,
                         1,
-                        TombstoneSignerRole.GROUP_CREATOR,
+                        TombstoneSignerRole.PINNED_HOST,
                         signer.copySignPublic(),
                         emptyList(),
                     )
                 val key = ChatKey.fromBytes(ByteArray(ChatKey.KEY_BYTES) { 6 })
+                val pin =
+                    CommunityTrustRecord(
+                        "community-1",
+                        "a".repeat(32),
+                        byteArrayOf(),
+                        signer.copySignPublic(),
+                        signer.copyBoxPublic(),
+                        true,
+                        0,
+                        null,
+                    )
+                val authorized = CommunityTombstoneAuthorization.group(record, null, null, pin)!!
                 val service = CommunityTombstoneService(reader, writer, envelope, crypto)
 
-                val published = service.publish(record, signer.copySignSecret(), key)
+                val published = service.publish(authorized, signer.copySignSecret(), key)
                 assertTrue(published is CommunityTombstoneService.Result.Published)
-                assertEquals(CommunityTombstoneService.Result.AlreadyPresent, service.publish(record, signer.copySignSecret(), key))
+                assertEquals(CommunityTombstoneService.Result.AlreadyPresent, service.publish(authorized, signer.copySignSecret(), key))
             } finally {
                 server.shutdown()
             }
