@@ -29,6 +29,8 @@ import org.openwebdav.messenger.directory.DirectoryFactory
 import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.directory.RemoteChatProvisioner
 import org.openwebdav.messenger.governance.CommunityCreationPolicyService
+import org.openwebdav.messenger.governance.CommunityDmOriginService
+import org.openwebdav.messenger.governance.CommunityDmParticipant
 import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.governance.CommunityGovernanceReader
@@ -1293,69 +1295,88 @@ internal object AppContainer {
      * Returns the DM chat-id on success, or `null` if the graph is absent / provision fails.
      */
     suspend fun startDm(peer: DirectoryEntry): String? {
-        val expectedRuntimeKey = runtimeGraph()?.communityRuntimeKey ?: return null
+        val generation = AccountMutationBarrier.process.replacementGeneration()
+        val prepared =
+            AccountMutationBarrier.process.withStableAccount {
+                if (generation != AccountMutationBarrier.process.replacementGeneration()) null else prepareDmStart(peer, generation)
+            } ?: return null
+        if (!prepared.existingDm && !prepared.skipGovernance && !ensureDmOrigin(prepared)) return null
         return AccountMutationBarrier.process.withStableAccount {
-            if (runtimeGraph()?.communityRuntimeKey != expectedRuntimeKey) null else startDmExclusive(peer)
+            if (prepared.generation != AccountMutationBarrier.process.replacementGeneration() ||
+                currentCommunityId != prepared.communityId || runtimeGraph() !== prepared.graph
+            ) {
+                null
+            } else {
+                finishDmStart(prepared)
+            }
         }
     }
 
-    private fun startDmExclusive(peer: DirectoryEntry): String? {
+    private fun prepareDmStart(
+        peer: DirectoryEntry,
+        generation: Long,
+    ): PreparedDmStart? {
         val graph = runtimeGraph() ?: return null
         val identity = graph.identity
-        val myBoxPub = identity.copyBoxPublic()
-        val peerBoxPub = peer.copyBoxPublicKey()
-        val chatId = ChatIds.dmChatId(crypto.nativeCrypto(), myBoxPub, peerBoxPub)
-
-        // Re-provisioning may replace a chat key, so invalidate before the key-store mutation.
+        val chatId = ChatIds.dmChatId(crypto.nativeCrypto(), identity.copyBoxPublic(), peer.copyBoxPublicKey())
+        val matchingEntries = chatRegistry.all(graph.communityId).filter { it.id == chatId }
+        if (matchingEntries.size > 1 || matchingEntries.any { it.kind != "dm" }) return null
+        val existingDm = matchingEntries.isNotEmpty()
         rosterCache.invalidate(graph.communityId, chatId)
         val testProvisioned = chatOpenTestSeam?.provisionDm?.invoke(identity, peer, chatId)
         if (testProvisioned == false) return null
         if (testProvisioned == null) {
             val provisioner =
-                RemoteChatProvisioner(
-                    identityCrypto = identityFactory.identityCrypto(),
-                    chatKeyStore = crypto.chatKeyStore(requireContext()),
-                )
+                RemoteChatProvisioner(identityFactory.identityCrypto(), crypto.chatKeyStore(requireContext()))
             when (provisioner.provision(identity, peer, chatId)) {
                 is org.openwebdav.messenger.directory.ProvisionOutcome.Failed -> return null
-                is org.openwebdav.messenger.directory.ProvisionOutcome.Provisioned -> { /* ok */ }
+                is org.openwebdav.messenger.directory.ProvisionOutcome.Provisioned -> Unit
             }
         }
+        return PreparedDmStart(graph, peer, chatId, graph.communityId, generation, existingDm, chatOpenTestSeam != null)
+    }
 
-        // Register the DM chat in the registry for this community.
-        chatRegistry.add(graph.communityId, ChatRegistry.Entry(chatId, peer.displayName, "dm", "private"))
-
-        // DM roster: just the two participants (self + peer). The peer's on-disk identifier
-        // is the hex of their Ed25519 signing public key.
-        val peerId = Hex.encode(peer.copySigningPublicKey())
-
-        val own = graph.identity.publicIdentity()
-        val verifiedEntries =
+    private suspend fun ensureDmOrigin(prepared: PreparedDmStart): Boolean {
+        val stored = configStore.loadStored(prepared.communityId) ?: return false
+        val key = crypto.chatKeyStore(requireContext()).load(prepared.chatId) ?: return false
+        val identity = prepared.graph.identity.publicIdentity()
+        val participants =
             listOf(
-                DirectoryEntry(UserSettings.displayName, own.copySignPub(), own.copyBoxPub()),
-                peer,
+                CommunityDmParticipant(identity.copySignPub(), identity.copyBoxPub()),
+                CommunityDmParticipant(prepared.peer.copySigningPublicKey(), prepared.peer.copyBoxPublicKey()),
             )
-        val initialReadiness =
+        val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+        val transport = TransportFactory.create(stored.config)
+        val service =
+            CommunityDmOriginService(
+                CommunityGovernanceReader(transport, envelopes),
+                CommunityGovernanceWriter(transport, envelopes),
+                envelopes,
+                identityFactory.identityCrypto(),
+            )
+        return service.ensureOrPublish(prepared.communityId, prepared.chatId, participants, prepared.graph.identity, key) is
+            CommunityDmOriginService.Result.Ready
+    }
+
+    private fun finishDmStart(prepared: PreparedDmStart): String? {
+        val graph = prepared.graph
+        val peer = prepared.peer
+        val chatId = prepared.chatId
+        chatRegistry.add(graph.communityId, ChatRegistry.Entry(chatId, peer.displayName, "dm", "private"))
+        val peerId = Hex.encode(peer.copySigningPublicKey())
+        val own = graph.identity.publicIdentity()
+        val verifiedEntries = listOf(DirectoryEntry(UserSettings.displayName, own.copySignPub(), own.copyBoxPub()), peer)
+        val readiness =
             RecipientReadiness.Ready(
                 members = verifiedEntries.map { Hex.encode(it.copySigningPublicKey()) },
                 participants = verifiedParticipants(verifiedEntries, graph.senderIdentifier, graph.identity.copySignPublic()),
             )
-
         val memberNames = verifiedEntries.associate { Hex.encode(it.copySigningPublicKey()) to it.displayName }
-        // Install the DM graph with its complete verified recipient snapshot in the first publication.
-        if (!switchToChat(graph, chatId, peer.displayName, peerId, memberNames, initialReadiness)) return null
+        if (!switchToChat(graph, chatId, peer.displayName, peerId, memberNames, readiness)) return null
         val dmGraph = runtimeGraph() ?: return null
-        val seam = chatOpenTestSeam
-        val stored = if (seam != null) seam.loadStored(graph.communityId) else configStore.loadStored(graph.communityId)
+        val stored = chatOpenTestSeam?.loadStored(graph.communityId) ?: configStore.loadStored(graph.communityId)
         val communityKey = stored?.let(::loadRosterCommunityKey) ?: return chatId
-        val provenance =
-            RosterCacheProvenance.digest(
-                graph.communityId,
-                chatId,
-                communityKey,
-                dmGraph.chatKey,
-                dmGraph.identity,
-            )
+        val provenance = RosterCacheProvenance.digest(graph.communityId, chatId, communityKey, dmGraph.chatKey, dmGraph.identity)
         rosterCache.commit(
             rosterCache.generation(),
             CachedVerifiedRoster(graph.communityId, chatId, provenance, verifiedEntries),

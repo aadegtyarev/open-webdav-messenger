@@ -14,19 +14,31 @@ internal class CommunityGovernanceReader(
         contentHash: String,
         key: ChatKey,
     ): WebDavResult<ByteArray> {
-        if (!GovernanceRecordSupport.isValidCommunityId(communityId) || !CommunityGovernancePaths.isValidContentHash(contentHash)) {
-            return WebDavResult.InvalidPath("invalid governance reference")
+        if (!GovernanceRecordSupport.isValidCommunityId(communityId)) return WebDavResult.InvalidPath("invalid community")
+        return when (val stored = readStoredBytes(kind, contentHash)) {
+            is WebDavResult.Success ->
+                envelopes.open(kind, communityId, key, stored.value)?.let { WebDavResult.Success(it) }
+                    ?: WebDavResult.TransportError(null, "governance authentication failed")
+            else -> governanceFailure(stored)
         }
+    }
+
+    suspend fun readStoredBytes(
+        kind: GovernanceObjectKind,
+        contentHash: String,
+    ): WebDavResult<ByteArray> {
+        if (!CommunityGovernancePaths.isValidContentHash(contentHash)) return WebDavResult.InvalidPath("invalid governance hash")
         val path = CommunityGovernancePaths.objectPath(kind, contentHash)
         return when (val result = transport.readRaw(path)) {
-            is WebDavResult.Success -> {
-                if (envelopes.contentHash(result.value) != contentHash) {
-                    WebDavResult.TransportError(null, "governance file hash mismatch")
+            is WebDavResult.Success ->
+                if (envelopes.contentHash(result.value) == contentHash) {
+                    result
                 } else {
-                    envelopes.open(kind, communityId, key, result.value)?.let { WebDavResult.Success(it) }
-                        ?: WebDavResult.TransportError(null, "governance authentication failed")
+                    WebDavResult.TransportError(
+                        null,
+                        "governance file hash mismatch",
+                    )
                 }
-            }
             else -> governanceFailure(result)
         }
     }
