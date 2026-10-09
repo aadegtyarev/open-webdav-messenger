@@ -66,6 +66,11 @@ class CommunityDmOriginServiceTest {
                 val existing = service.ensureOrPublish("community-1", "dm-chat-1", participants.reversed(), peer, key)
                 assertTrue(existing is CommunityDmOriginService.Result.Ready)
                 assertFalse((existing as CommunityDmOriginService.Result.Ready).published)
+                val scanned = CommunityDmOriginScanner(reader, envelopes, identityCrypto).inspectOrigin("community-1", "dm-chat-1", key)
+                assertTrue(
+                    scanned is CommunityDmOriginScanner.Result.Found &&
+                        scanned.origin.initiatorSigningPublicKey.contentEquals(initiator.copySignPublic()),
+                )
                 assertTrue(storedBytes.get().isNotEmpty())
                 val otherPeer = identityCrypto.generateIdentity()
                 val conflicting =

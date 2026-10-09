@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.ChatDeletionStatus
 import org.openwebdav.messenger.app.ChatMessageSender
@@ -118,7 +119,7 @@ internal class ChatFeedViewModel(
 
     fun deleteGroupForAll(onResult: (ChatDeletionStatus) -> Unit) {
         viewModelScope.launch {
-            val result = runCatching { AppContainer.deleteGroupForAll(graph) }.getOrDefault(ChatDeletionStatus.CONFLICT)
+            val result = runCatching { AppContainer.deleteForAll(graph) }.getOrDefault(ChatDeletionStatus.CONFLICT)
             onResult(result)
         }
     }
@@ -127,7 +128,9 @@ internal class ChatFeedViewModel(
         viewModelScope.launch {
             val result =
                 try {
-                    graph.store.hideAndPurgeDm(graph.chatId)
+                    AccountMutationBarrier.process.withExclusive {
+                        graph.store.hideAndPurgeDm(graph.chatId)
+                    }
                 } catch (_: Exception) {
                     DmLocalDeleteResult.StorageFailure
                 }

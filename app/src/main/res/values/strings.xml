@@ -28,7 +28,7 @@
     <string name="dm_delete_action">Delete locally</string>
     <string name="dm_delete_limit">This chat has too much history for safe local deletion. No data was changed.</string>
     <string name="dm_delete_failure">Could not safely delete this chat from this device. No success was reported.</string>
-    <string name="chat_delete_all_title">Delete this group for everyone?</string>
+    <string name="chat_delete_all_title">Delete this chat for everyone?</string>
     <string name="chat_delete_all_confirmation">Type “%1$s” to publish a permanent deletion tombstone. Remote content cleanup may remain pending.</string>
     <string name="chat_delete_all_action">Delete for everyone</string>
     <string name="chat_delete_failure">Deletion was not authorized or could not be safely started.</string>

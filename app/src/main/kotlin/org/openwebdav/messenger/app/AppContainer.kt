@@ -34,6 +34,7 @@ import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.directory.RemoteChatProvisioner
 import org.openwebdav.messenger.governance.ChatRemoteCleanup
 import org.openwebdav.messenger.governance.CommunityCreationPolicyService
+import org.openwebdav.messenger.governance.CommunityDmOriginScanner
 import org.openwebdav.messenger.governance.CommunityDmOriginService
 import org.openwebdav.messenger.governance.CommunityDmParticipant
 import org.openwebdav.messenger.governance.CommunityGenesisCodec
@@ -1114,6 +1115,129 @@ internal object AppContainer {
 
     fun observeDeletedChatKeys(): Flow<Set<Pair<String, String>>> = ChatDeletionStateStore.observeDeletedChatKeys(appContext)
 
+    suspend fun deleteForAll(graph: RuntimeGraph): ChatDeletionStatus =
+        when (chatFor(graph.communityId, graph.chatId)?.kind) {
+            "group" -> deleteGroupForAll(graph)
+            "dm" -> deleteDmForBoth(graph)
+            else -> ChatDeletionStatus.CONFLICT
+        }
+
+    private suspend fun deleteDmForBoth(graph: RuntimeGraph): ChatDeletionStatus {
+        if (runtimeGraph() !== graph || graph.isDeletionFenced()) return ChatDeletionStatus.STALE
+        val row = chatFor(graph.communityId, graph.chatId) ?: return ChatDeletionStatus.CONFLICT
+        if (row.kind != "dm") return ChatDeletionStatus.CONFLICT
+        val stored = configStore.loadStored(graph.communityId) ?: return ChatDeletionStatus.CONFLICT
+        val communityKey = loadRosterCommunityKey(stored) ?: return ChatDeletionStatus.CONFLICT
+        val generation = AccountMutationBarrier.process.replacementGeneration()
+        val selection = runtimeSelectionGuard.begin()
+        val current = {
+            runtimeGraph() === graph && currentCommunityId == graph.communityId &&
+                generation == AccountMutationBarrier.process.replacementGeneration() && runtimeSelectionGuard.isCurrent(selection)
+        }
+        val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
+        val reader = CommunityGovernanceReader(TransportFactory.create(stored.config), envelopes)
+        val originScan =
+            CommunityDmOriginScanner(reader, envelopes, identityFactory.identityCrypto())
+                .inspectOrigin(graph.communityId, graph.chatId, graph.chatKey)
+        val found = originScan as? CommunityDmOriginScanner.Result.Found ?: return ChatDeletionStatus.CONFLICT
+        val signer = graph.identity.copySignPublic()
+        if (!found.origin.initiatorSigningPublicKey.contentEquals(signer)) return ChatDeletionStatus.CONFLICT
+        val record =
+            CommunityTombstone(
+                graph.communityId, graph.chatId, found.recordHash, TombstoneScope.DM, 1,
+                TombstoneSignerRole.DM_INITIATOR, signer, found.origin.participants, TombstoneOriginMode.ORIGIN_HASH,
+            )
+        val authorized = CommunityTombstoneAuthorization.dm(record, found.origin, found.recordHash) ?: return ChatDeletionStatus.CONFLICT
+        val secret = graph.identity.copySignSecret()
+        val signed =
+            try {
+                CommunityTombstoneCodec.sign(authorized.record, secret, identityFactory.identityCrypto())
+            } finally {
+                secret.fill(0)
+            }
+        val writer = CommunityGovernanceWriter(TransportFactory.create(stored.config), envelopes)
+        val reference = writer.seal(GovernanceObjectKind.DM_TOMBSTONE, graph.communityId, graph.chatKey, signed)
+        val deletion =
+            ChatDeletionEntity(
+                graph.communityId, graph.chatId, ChatDeletionEntity.SCOPE_DM, TombstoneOriginMode.ORIGIN_HASH.name,
+                found.recordHash, CommunityTombstoneCodec.contentAddress(signed), reference.storedBytes,
+                ChatDeletionEntity.PHASE_LOCAL_COMMITTED, updatedAtMillis = System.currentTimeMillis(),
+            )
+        signed.fill(0)
+        val service = CommunityTombstoneService(reader, writer, envelopes, identityFactory.identityCrypto())
+        val status = executePreparedDeletion(graph, stored, communityKey, graph.chatKey, envelopes, service, deletion, current)
+        if (status in setOf(ChatDeletionStatus.TOMBSTONE_PUBLISHED, ChatDeletionStatus.CLEANUP_PENDING, ChatDeletionStatus.COMPLETE)) {
+            runCatching { crypto.chatKeyStore(requireContext()).removeStrict(graph.chatId) }
+        }
+        return status
+    }
+
+    private suspend fun executePreparedDeletion(
+        graph: RuntimeGraph,
+        stored: StoredConnection,
+        cleanupKey: ChatKey,
+        publishKey: ChatKey,
+        envelopes: CommunityGovernanceEnvelopeCodec,
+        service: CommunityTombstoneService,
+        deletion: ChatDeletionEntity,
+        current: () -> Boolean,
+    ): ChatDeletionStatus {
+        val objectKind =
+            if (deletion.scope == ChatDeletionEntity.SCOPE_GROUP) {
+                GovernanceObjectKind.GROUP_TOMBSTONE
+            } else {
+                GovernanceObjectKind.DM_TOMBSTONE
+            }
+        val coordinator =
+            ChatDeletionCoordinator(
+                commit = { row ->
+                    AccountMutationBarrier.process.withExclusive {
+                        AccountMutationBarrier.process.withStableAccount {
+                            if (!current()) {
+                                ChatDeletionCommitResult.Conflict
+                            } else {
+                                val existing = graph.store.chatDeletion(row.chatId)
+                                when {
+                                    existing == null -> graph.store.commitChatDeletion(row)
+                                    existing.tombstoneHash == row.tombstoneHash && existing.originHash == row.originHash &&
+                                        existing.scope == row.scope && existing.originMode == row.originMode ->
+                                        ChatDeletionCommitResult.AlreadyCommitted
+                                    else -> ChatDeletionCommitResult.Conflict
+                                }
+                            }
+                        }
+                    }
+                },
+                load = { graph.store.chatDeletion(it.chatId) },
+                transition = { row, from, to ->
+                    graph.store.transitionDeletionPhase(row.chatId, row.tombstoneHash, from, to, System.currentTimeMillis())
+                },
+                isCurrent = current,
+                fenceGraph = graph::fenceDeletedChat,
+                publish = publish@{ row ->
+                    val bytes =
+                        envelopes.open(objectKind, graph.communityId, publishKey, row.tombstoneStoredBytes)
+                            ?: return@publish false
+                    try {
+                        val record = CommunityTombstoneCodec.verifyAny(bytes, identityFactory.identityCrypto()) ?: return@publish false
+                        val result = service.publishStored(record, bytes, row.tombstoneStoredBytes, publishKey)
+                        result is CommunityTombstoneService.Result.Published || result == CommunityTombstoneService.Result.AlreadyPresent
+                    } finally {
+                        bytes.fill(0)
+                    }
+                },
+                cleanup = { row ->
+                    val cleanup =
+                        ChatRemoteCleanup(
+                            TransportFactory.create(stored.config),
+                            ChatDirectoryCrypto.create(crypto.messageCrypto(), identityFactory.identityCrypto()),
+                        )
+                    cleanup.clean(row.chatId, cleanupKey).complete
+                },
+            )
+        return coordinator.execute(deletion)
+    }
+
     suspend fun deleteGroupForAll(graph: RuntimeGraph): ChatDeletionStatus {
         if (runtimeGraph() !== graph || graph.chatId == communityRegistry.all().singleOrNull { it.id == graph.communityId }?.chatId) {
             return ChatDeletionStatus.STALE
@@ -1267,6 +1391,7 @@ internal object AppContainer {
                 for (entry in result.entries) {
                     if (entry.access != ChatAccess.PUBLIC) continue
                     val chatIdHex = Hex.encode(entry.chatId)
+                    if (isChatDeletionCommitted(community.id, chatIdHex)) continue
                     // Public groups use the community key; restore a missing key for existing rows too.
                     val keyStore = crypto.chatKeyStore(requireContext())
                     if (keyStore.load(chatIdHex) == null) keyStore.store(chatIdHex, communityKey)
