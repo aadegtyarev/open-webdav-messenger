@@ -10,6 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.openwebdav.messenger.account.AccountMutationBarrier
@@ -1002,6 +1003,16 @@ internal object AppContainer {
 
     /** All chats registered under [communityId]. */
     fun chatsForCommunity(communityId: String): List<ChatRegistry.Entry> = chatRegistry.all(communityId)
+
+    fun chatFor(
+        communityId: String,
+        chatId: String,
+    ): ChatRegistry.Entry? = chatRegistry.all(communityId).singleOrNull { it.id == chatId }
+
+    fun observeHiddenDmKeys(): Flow<Set<Pair<String, String>>> =
+        MessengerDatabase.get(requireContext()).messageDao().observeHiddenDms().map { rows ->
+            rows.mapTo(mutableSetOf()) { it.communityId to it.chatId }
+        }
 
     /** A unified view of all chats across all communities — for the unified chat list. */
     data class UnifiedChat(

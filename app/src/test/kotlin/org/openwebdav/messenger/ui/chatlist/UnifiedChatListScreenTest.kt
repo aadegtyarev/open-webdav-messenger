@@ -51,6 +51,28 @@ class UnifiedChatListScreenTest {
     }
 
     @Test
+    fun locally_hidden_dm_is_not_listed_but_other_chat_types_remain_visible() {
+        val chats =
+            listOf(
+                AppContainer.UnifiedChat("dm-id", "Peer", "dm", "community-a", "A"),
+                AppContainer.UnifiedChat("general-id", "General", "general", "community-a", "A"),
+            )
+        composeRule.setContent {
+            UnifiedChatListScreen(
+                onCreateCommunity = {},
+                onJoin = {},
+                onOpenFeed = {},
+                onSettings = {},
+                chatItems = chats,
+                hiddenDmKeys = setOf("community-a" to "dm-id"),
+                observeUnreadCount = { _, _ -> flowOf(0) },
+            )
+        }
+        composeRule.onNodeWithContentDescription("A · Peer").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("A · General").assertIsDisplayed()
+    }
+
+    @Test
     fun failed_group_open_keeps_general_available_in_the_chat_list() {
         val attempts = CopyOnWriteArrayList<String>()
         val feedOpens = AtomicInteger()

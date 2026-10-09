@@ -39,6 +39,7 @@ internal object AccountBackupCodec {
                         out.writeUTF(chat.access)
                         if (bytes.size() > MAX_BYTES) throw PayloadTooLargeException()
                     }
+                    AccountBackupDeletionCodec.write(out, community)
                     if (bytes.size() > MAX_BYTES) throw PayloadTooLargeException()
                 }
             }
@@ -75,16 +76,35 @@ internal object AccountBackupCodec {
                                 require(access in ACCESS_VALUES)
                                 ChatBackup(chatId, chatName, kind, access)
                             }
-                        CommunityBackup(id, name, anchor, config, chats, communityKey, isHost, pollFloor, retentionDays)
+                        val deletion =
+                            if (version >= DELETION_STATE_VERSION) {
+                                AccountBackupDeletionCodec.read(input)
+                            } else {
+                                LocalDeletionBackup(emptyList(), emptyMap())
+                            }
+                        CommunityBackup(
+                            id = id,
+                            name = name,
+                            anchorChatId = anchor,
+                            config = config,
+                            chats = chats,
+                            communityKeyBase64 = communityKey,
+                            isHost = isHost,
+                            pollFloorSeconds = pollFloor,
+                            retentionWindowDays = retentionDays,
+                            hiddenDmChatIds = deletion.hiddenDmChatIds,
+                            suppressedDmMessageIds = deletion.suppressedDmMessageIds,
+                        )
                     }
                 require(input.available() == 0 && communities.any { it.id == activeId })
                 AccountBackup(activeId, communities)
             }
         }.getOrNull()
 
-    private const val VERSION = 3
+    private const val VERSION = 4
     private const val LEGACY_VERSION = 1
     private const val ACCESS_VERSION = 2
+    private const val DELETION_STATE_VERSION = 4
     private val ACCESS_VALUES = setOf("public", "private", "unknown")
 
     private fun legacyAccess(): String = "unknown"

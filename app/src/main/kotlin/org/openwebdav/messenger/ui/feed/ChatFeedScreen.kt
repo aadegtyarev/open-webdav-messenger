@@ -22,11 +22,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -67,6 +69,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.RecipientReadiness
+import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
 import org.openwebdav.messenger.ui.FeedViewModelFactory
@@ -84,6 +87,9 @@ internal fun ChatFeedScreen(
     onShowInvite: () -> Unit,
     onShowParticipants: () -> Unit = {},
     onBack: () -> Unit = {},
+    canDeleteLocalDm: Boolean = false,
+    chatTitle: String = "",
+    onLocalDmDeleted: () -> Unit = {},
     viewModel: ChatFeedViewModel =
         viewModel(
             key = runtimeScopeKey("feed"),
@@ -104,6 +110,53 @@ internal fun ChatFeedScreen(
     val context = LocalContext.current
     val rosterLoadingLabel = stringResource(R.string.roster_loading_accessibility)
     val rosterLoadingExplanation = stringResource(R.string.roster_loading_explanation)
+    var showDeleteDmConfirmation by remember { mutableStateOf(false) }
+    var typedDeleteTitle by remember { mutableStateOf("") }
+
+    if (showDeleteDmConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDmConfirmation = false },
+            title = { Text(stringResource(R.string.dm_delete_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.dm_delete_confirmation, chatTitle))
+                    OutlinedTextField(
+                        value = typedDeleteTitle,
+                        onValueChange = { typedDeleteTitle = it },
+                        label = { Text(stringResource(R.string.dm_delete_type_title)) },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = typedDeleteTitle == chatTitle,
+                    onClick = {
+                        showDeleteDmConfirmation = false
+                        typedDeleteTitle = ""
+                        viewModel.deleteLocalDm { result ->
+                            when (result) {
+                                DmLocalDeleteResult.Deleted, DmLocalDeleteResult.AlreadyHidden -> onLocalDmDeleted()
+                                DmLocalDeleteResult.SuppressionLimitReached ->
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.dm_delete_limit))
+                                    }
+                                DmLocalDeleteResult.StorageFailure ->
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.dm_delete_failure))
+                                    }
+                            }
+                        }
+                    },
+                ) { Text(stringResource(R.string.dm_delete_action)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDmConfirmation = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     // Show member-names error as a one-shot snackbar, then clear.
     LaunchedEffect(memberNamesError) {
@@ -247,6 +300,14 @@ internal fun ChatFeedScreen(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                     ) {
                         Icon(Icons.Filled.People, contentDescription = stringResource(R.string.participants_action))
+                    }
+                    if (canDeleteLocalDm) {
+                        IconButton(
+                            onClick = { showDeleteDmConfirmation = true },
+                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.dm_delete_action))
+                        }
                     }
                     IconButton(onClick = onShowInvite) {
                         Icon(Icons.Filled.PersonAdd, contentDescription = "Invite someone")

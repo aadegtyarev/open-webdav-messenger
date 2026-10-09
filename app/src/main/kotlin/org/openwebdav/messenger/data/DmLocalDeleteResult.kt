@@ -6,4 +6,6 @@ sealed interface DmLocalDeleteResult {
     data object AlreadyHidden : DmLocalDeleteResult
 
     data object SuppressionLimitReached : DmLocalDeleteResult
+
+    data object StorageFailure : DmLocalDeleteResult
 }

@@ -248,6 +248,7 @@ class RestoreManager(
                     AccountIdentifier.isValid(community.anchorChatId) &&
                     community.anchorChatId in community.chats.map { it.id } &&
                     community.chats.isNotEmpty() && community.chats.map { it.id }.distinct().size == community.chats.size &&
+                    AccountBackupDeletionValidation.isValid(community) &&
                     community.chats.all {
                         AccountIdentifier.isValid(it.id) && it.name.isNotBlank() && it.kind in setOf("general", "group", "dm") &&
                             it.id in chatKeys

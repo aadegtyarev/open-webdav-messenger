@@ -40,6 +40,7 @@ import org.openwebdav.messenger.app.VerifiedRosterCachePersistence
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
+import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.DirectoryEntry
@@ -149,6 +150,42 @@ class ChatFeedScreenTest {
         val orderToken = OrderToken.build(1_717_000_000_000L, Hex.encode(identity.copySignPublic()), seq)
         val messageId = MessageId.messageId(orderToken, body.toByteArray() + seq.toByte())
         store.persist(messageId, orderToken, msg, seq)
+    }
+
+    @Test
+    fun local_dm_delete_requires_exact_title_and_fences_old_message_replay() {
+        runBlocking {
+            store.persist("old-message", "0001", TextMessage(chatId, identity.publicIdentity(), null, "old", 1L), 1L)
+            store.advanceCursor(chatId, "0001")
+        }
+        val deletionResult = java.util.concurrent.atomic.AtomicReference<DmLocalDeleteResult?>(null)
+        val viewModel = ChatFeedViewModel(graph())
+        composeRule.setContent {
+            ChatFeedScreen(
+                onShowInvite = {},
+                canDeleteLocalDm = true,
+                chatTitle = "Peer",
+                onLocalDmDeleted = { deletionResult.set(DmLocalDeleteResult.Deleted) },
+                viewModel = viewModel,
+            )
+        }
+
+        composeRule.onNodeWithContentDescription("Delete locally").assertWidthIsAtLeast(48.dp).performClick()
+        composeRule.onNodeWithText("Type the chat title").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete locally").assertIsNotEnabled()
+        composeRule.onNodeWithText("Type the chat title").performTextInput("Peer")
+        composeRule.onNodeWithText("Delete locally").assertIsEnabled().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Type the chat title").assertDoesNotExist()
+        composeRule.waitUntil(5_000) { deletionResult.get() != null }
+        assertEquals(DmLocalDeleteResult.Deleted, deletionResult.get())
+
+        runBlocking {
+            assertTrue(store.isDmHidden(chatId))
+            assertTrue(store.messagesForChat(chatId).isEmpty())
+            assertEquals("", store.cursorFor(chatId))
+            assertFalse(store.persist("old-message", "0001", TextMessage(chatId, identity.publicIdentity(), null, "replay", 2L), 2L))
+        }
     }
 
     /** An empty chat shows the empty-state prompt and the disabled-until-typed Send action. */

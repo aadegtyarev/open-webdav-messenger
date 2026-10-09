@@ -131,13 +131,16 @@ internal fun AppNav(initialScreen: Screen? = null) {
             )
         }
 
-        Screen.CommunityList ->
+        Screen.CommunityList -> {
+            val hiddenDmKeys by AppContainer.observeHiddenDmKeys().collectAsStateWithLifecycle(emptySet())
             UnifiedChatListScreen(
                 onOpenFeed = { screen = Screen.Feed },
                 onCreateCommunity = { screen = Screen.CreateCommunity },
                 onJoin = { screen = Screen.Join },
                 onSettings = { screen = Screen.Settings },
+                hiddenDmKeys = hiddenDmKeys,
             )
+        }
 
         Screen.Settings -> {
             val communityId = AppContainer.activeCommunityId
@@ -186,15 +189,20 @@ internal fun AppNav(initialScreen: Screen? = null) {
                 onBack = { screen = if (hasCommunities) Screen.CommunityList else Screen.Start },
             )
 
-        Screen.Feed ->
+        Screen.Feed -> {
+            val activeChat = currentGraph?.let { AppContainer.chatFor(it.communityId, it.chatId) }
             ChatFeedScreen(
                 onShowInvite = { screen = Screen.Invite },
+                canDeleteLocalDm = activeChat?.kind == "dm",
+                chatTitle = activeChat?.name.orEmpty(),
+                onLocalDmDeleted = { screen = Screen.CommunityList },
                 onShowParticipants = {
                     participantsGraphScope = currentGraph?.scopeKey
                     if (participantsGraphScope != null) screen = Screen.Participants
                 },
                 onBack = { screen = Screen.CommunityList },
             )
+        }
 
         Screen.Participants -> {
             val graph = currentGraph

@@ -34,6 +34,36 @@ interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putHiddenDm(hidden: HiddenDmEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putHiddenDms(hidden: List<HiddenDmEntity>)
+
+    @Query("SELECT * FROM hidden_dms")
+    fun observeHiddenDms(): Flow<List<HiddenDmEntity>>
+
+    @Query("SELECT * FROM hidden_dms WHERE communityId = :communityId")
+    suspend fun hiddenDmsForCommunity(communityId: String): List<HiddenDmEntity>
+
+    @Query("SELECT * FROM suppressed_dm_messages WHERE communityId = :communityId")
+    suspend fun suppressedDmMessagesForCommunity(communityId: String): List<SuppressedDmMessageEntity>
+
+    @Query("DELETE FROM hidden_dms WHERE communityId = :communityId")
+    suspend fun deleteHiddenDmsForCommunity(communityId: String)
+
+    @Query("DELETE FROM suppressed_dm_messages WHERE communityId = :communityId")
+    suspend fun deleteSuppressedDmsForCommunity(communityId: String)
+
+    @Transaction
+    suspend fun replaceDmDeletionState(
+        communityId: String,
+        hiddenChatIds: List<String>,
+        suppressedIds: List<SuppressedDmMessageEntity>,
+    ) {
+        deleteHiddenDmsForCommunity(communityId)
+        deleteSuppressedDmsForCommunity(communityId)
+        if (hiddenChatIds.isNotEmpty()) putHiddenDms(hiddenChatIds.map { HiddenDmEntity(communityId, it) })
+        if (suppressedIds.isNotEmpty()) insertSuppressed(suppressedIds)
+    }
+
     @Query("SELECT EXISTS(SELECT 1 FROM hidden_dms WHERE communityId = :communityId AND chatId = :chatId)")
     suspend fun isDmHidden(
         communityId: String,

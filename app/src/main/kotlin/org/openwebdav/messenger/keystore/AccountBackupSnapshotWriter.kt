@@ -1,20 +1,25 @@
 package org.openwebdav.messenger.keystore
 
+import android.content.Context
 import org.openwebdav.messenger.export.AccountBackup
 import org.openwebdav.messenger.ui.settings.UserSettings
 
 /** Applies account-backup snapshots to the existing stores. */
 internal class AccountBackupSnapshotWriter(
+    private val context: Context,
     private val configStore: AccountBackupConfigStore,
     private val communityRegistry: CommunityRegistry,
     private val chatRegistry: ChatRegistry,
     private val activeStore: ActiveCommunityStore,
 ) {
+    private val deletionState = AccountBackupDeletionState(context)
+
     fun clear(extraIds: Set<String>) {
         val ids = (communityRegistry.all().map { it.id } + extraIds + ConnectionConfigStore.DEFAULT_COMMUNITY_ID).distinct()
         ids.forEach(configStore::clear)
         ids.forEach(chatRegistry::clear)
         ids.forEach(UserSettings::clearCommunitySettingsStrict)
+        deletionState.clear(ids.toSet())
         communityRegistry.replace(emptyList())
         activeStore.clear()
         UserSettings.selectCommunity("default")
@@ -26,9 +31,11 @@ internal class AccountBackupSnapshotWriter(
         (previousIds + replacementIds).forEach(UserSettings::clearCommunitySettingsStrict)
         (previousIds - replacementIds).forEach(configStore::clear)
         (previousIds - replacementIds).forEach(chatRegistry::clear)
+        deletionState.clear(previousIds - replacementIds)
         backup.communities.forEach { community ->
             configStore.save(community.config, community.anchorChatId, community.name, community.id)
             chatRegistry.replace(community.id, community.chats.map { ChatRegistry.Entry(it.id, it.name, it.kind, it.access) })
+            deletionState.replace(community.id, community.hiddenDmChatIds, community.suppressedDmMessageIds)
         }
         communityRegistry.replace(backup.communities.map { CommunityRegistry.Entry(it.id, it.name, it.anchorChatId) })
         activeStore.selectStrict(backup.activeCommunityId)

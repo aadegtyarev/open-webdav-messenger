@@ -16,7 +16,8 @@ internal class AccountBackupStore(
     private val chatRegistry = ChatRegistry(context)
     private val activeStore = ActiveCommunityStore(context)
     private val communityKeyStore = CommunityKeyStore(context)
-    private val snapshotWriter = AccountBackupSnapshotWriter(configStore, communityRegistry, chatRegistry, activeStore)
+    private val deletionState = AccountBackupDeletionState(context)
+    private val snapshotWriter = AccountBackupSnapshotWriter(context, configStore, communityRegistry, chatRegistry, activeStore)
 
     override fun hasMembershipState(): Boolean = hasRegistryState() || configStore.hasAny()
 
@@ -45,6 +46,7 @@ internal class AccountBackupStore(
                 val rawCommunityKey = communityKey?.export()
                 val encodedCommunityKey = rawCommunityKey?.let(java.util.Base64.getEncoder()::encodeToString)
                 rawCommunityKey?.fill(0)
+                val deletion = deletionState.snapshot(entry.id)
                 CommunityBackup(
                     entry.id,
                     entry.name,
@@ -55,6 +57,8 @@ internal class AccountBackupStore(
                     UserSettings.isHostFor(entry.id),
                     UserSettings.pollFloorFor(entry.id),
                     UserSettings.retentionDaysFor(entry.id),
+                    deletion.hiddenChatIds,
+                    deletion.suppressedMessageIds,
                 )
             }
         if (communities.isEmpty()) return null

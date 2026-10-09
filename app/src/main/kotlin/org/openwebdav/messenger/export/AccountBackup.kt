@@ -18,6 +18,8 @@ data class CommunityBackup(
     val isHost: Boolean = false,
     val pollFloorSeconds: Int = 60,
     val retentionWindowDays: Int = 14,
+    val hiddenDmChatIds: List<String> = emptyList(),
+    val suppressedDmMessageIds: Map<String, List<String>> = emptyMap(),
 )
 
 data class ChatBackup(

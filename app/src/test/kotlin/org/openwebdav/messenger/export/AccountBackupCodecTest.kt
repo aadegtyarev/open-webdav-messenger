@@ -10,7 +10,7 @@ import java.util.Base64
 
 class AccountBackupCodecTest {
     @Test
-    fun version_three_round_trips_exact_access_metadata() {
+    fun version_four_round_trips_exact_access_and_dm_deletion_metadata() {
         val backup =
             AccountBackup(
                 activeCommunityId = "community-b",
@@ -26,7 +26,13 @@ class AccountBackupCodecTest {
                         ),
                         community("community-b", "General", "Private chat").copy(
                             anchorChatId = "anchor-b",
-                            chats = listOf(ChatBackup("anchor-b", "General", "general", "unknown")),
+                            chats =
+                                listOf(
+                                    ChatBackup("anchor-b", "General", "general", "unknown"),
+                                    ChatBackup("dm-b", "Peer", "dm", "private"),
+                                ),
+                            hiddenDmChatIds = listOf("dm-b"),
+                            suppressedDmMessageIds = mapOf("dm-b" to listOf("old-1", "old-2")),
                         ),
                     ),
             )
@@ -34,7 +40,7 @@ class AccountBackupCodecTest {
         val restored = ExportPayload.fromJson(json)
         assertNotNull(restored)
         val bytes = Base64.getDecoder().decode(restored!!.accountBackupBase64)
-        assertEquals(3, java.nio.ByteBuffer.wrap(bytes).int)
+        assertEquals(4, java.nio.ByteBuffer.wrap(bytes).int)
         assertEquals(backup, AccountBackupCodec.decode(bytes))
     }
 
@@ -54,7 +60,9 @@ class AccountBackupCodecTest {
                     ),
                 ),
             )
-        val bytes = AccountBackupCodec.encode(backup).also { java.nio.ByteBuffer.wrap(it).putInt(2) }
+        val bytes =
+            AccountBackupCodec.encode(backup).copyOf(AccountBackupCodec.encode(backup).size - 8)
+                .also { java.nio.ByteBuffer.wrap(it).putInt(2) }
 
         assertEquals(backup, AccountBackupCodec.decode(bytes))
     }
@@ -62,24 +70,30 @@ class AccountBackupCodecTest {
     @Test
     fun unsupported_account_backup_versions_are_rejected() {
         val bytes = AccountBackupCodec.encode(AccountBackup("community-a", listOf(community("community-a", "General"))))
-        java.nio.ByteBuffer.wrap(bytes).putInt(4)
+        java.nio.ByteBuffer.wrap(bytes).putInt(5)
 
         assertNull(AccountBackupCodec.decode(bytes))
     }
 
     @Test
-    fun outer_backup_payload_v2_migrates_and_v3_is_current() {
+    fun outer_backup_payload_v2_and_v3_migrate_and_v4_is_current() {
         val backup = AccountBackup("community-a", listOf(community("community-a", "General")))
         val current = payload(backup)
-        val v3Json = ExportPayload.toJson(current)
-        val v2Bytes = AccountBackupCodec.encode(backup).also { java.nio.ByteBuffer.wrap(it).putInt(2) }
+        val v3Bytes =
+            AccountBackupCodec.encode(backup).copyOf(AccountBackupCodec.encode(backup).size - 8)
+                .also { java.nio.ByteBuffer.wrap(it).putInt(3) }
+        val v3Payload = current.copy(accountBackupBase64 = Base64.getEncoder().encodeToString(v3Bytes))
+        val v3Json = ExportPayload.toJson(v3Payload).replace("\"v\":4", "\"v\":3")
+        val v2Bytes = v3Bytes.copyOf().also { java.nio.ByteBuffer.wrap(it).putInt(2) }
         val v2Payload = current.copy(accountBackupBase64 = Base64.getEncoder().encodeToString(v2Bytes))
-        val v2Json = ExportPayload.toJson(v2Payload).replace("\"v\":3", "\"v\":2")
+        val v2Json = ExportPayload.toJson(v2Payload).replace("\"v\":4", "\"v\":2")
+        val v4Json = ExportPayload.toJson(current)
 
-        assertTrue(v3Json.contains("\"v\":3"))
+        assertTrue(v4Json.contains("\"v\":4"))
+        assertNotNull(ExportPayload.fromJson(v4Json))
         assertNotNull(ExportPayload.fromJson(v3Json))
         assertNotNull(ExportPayload.fromJson(v2Json))
-        assertNull(ExportPayload.fromJson(v3Json.replace("\"v\":3", "\"v\":4")))
+        assertNull(ExportPayload.fromJson(v4Json.replace("\"v\":4", "\"v\":3")))
         assertNull(ExportPayload.fromJson(v2Json.replace("\"v\":2", "\"v\":3")))
     }
 

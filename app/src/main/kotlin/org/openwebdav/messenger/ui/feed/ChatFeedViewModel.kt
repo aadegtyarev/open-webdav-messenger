@@ -14,6 +14,7 @@ import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
+import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
 import org.openwebdav.messenger.transport.TransportFactory
@@ -111,6 +112,18 @@ internal class ChatFeedViewModel(
             } finally {
                 reservedSendRevisions.remove(sendDraftRevision)
             }
+        }
+    }
+
+    fun deleteLocalDm(onResult: (DmLocalDeleteResult) -> Unit) {
+        viewModelScope.launch {
+            val result =
+                try {
+                    graph.store.hideAndPurgeDm(graph.chatId)
+                } catch (_: Exception) {
+                    DmLocalDeleteResult.StorageFailure
+                }
+            onResult(result)
         }
     }
 
