@@ -1,13 +1,14 @@
 package org.openwebdav.messenger.keystore
 
 import android.content.Context
-import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.governance.CommunityTrustRecord
 import org.openwebdav.messenger.governance.PolicyRevisionDecision
 import org.openwebdav.messenger.identity.IdentityCrypto
 
 internal class CommunityTrustStore(context: Context) {
     private val persistence = EncryptedCommunityTrustStorage(context)
+    private val backupRestorer = CommunityTrustBackupRestorer(persistence)
+    private val pinManager = CommunityTrustPinManager(persistence)
 
     @Synchronized
     fun get(communityId: String): CommunityTrustRecord? = persistence.load().singleOrNull { it.communityId == communityId }
@@ -18,33 +19,20 @@ internal class CommunityTrustStore(context: Context) {
         genesisBytes: ByteArray,
         crypto: IdentityCrypto,
         source: TrustPinSource,
-    ): TrustPinResult {
-        val genesis = CommunityGenesisCodec.verify(genesisBytes, communityId, crypto) ?: return TrustPinResult.INVALID_GENESIS
-        val candidate =
-            CommunityTrustRecord(
-                communityId,
-                CommunityGenesisCodec.contentAddress(genesisBytes),
-                genesis.hostSigningPublicKey,
-                genesis.hostBoxPublicKey,
-                source != TrustPinSource.OBSERVED,
-                0,
-                null,
-            )
-        val records = persistence.load().toMutableList()
-        val old = records.singleOrNull { it.communityId == communityId }
-        if (old != null && !samePin(old, candidate)) return TrustPinResult.CONFLICT
-        if (old == null) {
-            records.add(candidate)
-            persistence.save(records)
-            return TrustPinResult.PINNED
-        }
-        if (!old.fingerprintVerified && candidate.fingerprintVerified) {
-            records[records.indexOf(old)] = old.copy(fingerprintVerified = true)
-            persistence.save(records)
-            return TrustPinResult.PINNED
-        }
-        return TrustPinResult.ALREADY_PINNED
-    }
+    ): TrustPinResult = pinManager.pin(communityId, genesisBytes, crypto, source)
+
+    @Synchronized
+    fun restoreRecord(
+        communityId: String,
+        genesisBytes: ByteArray,
+        fingerprintVerified: Boolean,
+        policyRevision: Long,
+        policyHash: String?,
+        crypto: IdentityCrypto,
+    ) = backupRestorer.restore(communityId, genesisBytes, fingerprintVerified, policyRevision, policyHash, crypto)
+
+    @Synchronized
+    fun remove(communityId: String) = backupRestorer.remove(communityId)
 
     @Synchronized
     fun verifyFingerprint(
@@ -80,13 +68,6 @@ internal class CommunityTrustStore(context: Context) {
         persistence.save(records)
         return PolicyRevisionDecision.Accepted
     }
-
-    private fun samePin(
-        left: CommunityTrustRecord,
-        right: CommunityTrustRecord,
-    ): Boolean =
-        left.genesisHash == right.genesisHash && left.hostSigningPublicKey.contentEquals(right.hostSigningPublicKey) &&
-            left.hostBoxPublicKey.contentEquals(right.hostBoxPublicKey)
 
     private companion object {
         val HASH = Regex("[a-z2-7]{32}")

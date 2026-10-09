@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.keystore
 
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.governance.CommunityTrustRecord
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -16,6 +17,8 @@ internal object CommunityTrustStoreCodec {
             output.writeInt(records.size)
             records.sortedBy { it.communityId }.forEach { record ->
                 require(isValidId(record.communityId) && HASH.matches(record.genesisHash))
+                require(record.genesisRecord.size in 1..MAX_GENESIS_BYTES)
+                require(CommunityGenesisCodec.contentAddress(record.genesisRecord) == record.genesisHash)
                 require(
                     record.hostSigningPublicKey.size == KEY_BYTES && record.hostBoxPublicKey.size == KEY_BYTES,
                 )
@@ -29,6 +32,8 @@ internal object CommunityTrustStoreCodec {
                 require(validPolicyHash)
                 output.writeUTF(record.communityId)
                 output.writeUTF(record.genesisHash)
+                output.writeShort(record.genesisRecord.size)
+                output.write(record.genesisRecord)
                 output.write(record.hostSigningPublicKey)
                 output.write(record.hostBoxPublicKey)
                 output.writeBoolean(record.fingerprintVerified)
@@ -51,13 +56,16 @@ internal object CommunityTrustStoreCodec {
                     List(count) {
                         val id = input.readUTF().also { require(isValidId(it)) }
                         val genesisHash = input.readUTF().also { require(HASH.matches(it)) }
+                        val genesisSize = input.readUnsignedShort().also { require(it in 1..MAX_GENESIS_BYTES) }
+                        val genesis = input.readNBytes(genesisSize).also { require(it.size == genesisSize) }
+                        require(CommunityGenesisCodec.contentAddress(genesis) == genesisHash)
                         val signKey = input.readNBytes(KEY_BYTES).also { require(it.size == KEY_BYTES) }
                         val boxKey = input.readNBytes(KEY_BYTES).also { require(it.size == KEY_BYTES) }
                         val verified = input.readBoolean()
                         val revision = input.readLong().also { require(it >= 0) }
                         val policyHash = if (input.readBoolean()) input.readUTF().also { require(HASH.matches(it)) } else null
                         require((revision == 0L) == (policyHash == null))
-                        CommunityTrustRecord(id, genesisHash, signKey, boxKey, verified, revision, policyHash)
+                        CommunityTrustRecord(id, genesisHash, genesis, signKey, boxKey, verified, revision, policyHash)
                     }
                 require(records.map { it.communityId }.distinct().size == records.size && input.available() == 0)
                 records
@@ -68,8 +76,9 @@ internal object CommunityTrustStoreCodec {
 
     private val MAGIC = "OWCT".toByteArray(Charsets.US_ASCII)
     private val HASH = Regex("[a-z2-7]{32}")
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val KEY_BYTES = 32
+    private const val MAX_GENESIS_BYTES = 512
     private const val MAX_RECORDS = 100
     private const val MAX_BYTES = 64 * 1024
 }

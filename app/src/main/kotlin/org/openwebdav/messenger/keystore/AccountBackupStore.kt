@@ -5,19 +5,23 @@ import org.openwebdav.messenger.export.AccountBackup
 import org.openwebdav.messenger.export.ChatBackup
 import org.openwebdav.messenger.export.CommunityBackup
 import org.openwebdav.messenger.export.ExportableAccountBackupStore
+import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.ui.settings.UserSettings
 
 /** Bridges the encrypted account backup to the existing per-community secure and registry stores. */
 internal class AccountBackupStore(
     private val context: Context,
     private val configStore: AccountBackupConfigStore = ConnectionConfigStore(context),
+    private val identityCrypto: IdentityCrypto? = null,
 ) : ExportableAccountBackupStore {
     private val communityRegistry = CommunityRegistry(context)
     private val chatRegistry = ChatRegistry(context)
     private val activeStore = ActiveCommunityStore(context)
     private val communityKeyStore = CommunityKeyStore(context)
     private val deletionState = AccountBackupDeletionState(context)
-    private val snapshotWriter = AccountBackupSnapshotWriter(context, configStore, communityRegistry, chatRegistry, activeStore)
+    private val trustStore = CommunityTrustStore(context)
+    private val snapshotWriter =
+        AccountBackupSnapshotWriter(context, configStore, communityRegistry, chatRegistry, activeStore, identityCrypto)
 
     override fun hasMembershipState(): Boolean = hasRegistryState() || configStore.hasAny()
 
@@ -47,6 +51,7 @@ internal class AccountBackupStore(
                 val encodedCommunityKey = rawCommunityKey?.let(java.util.Base64.getEncoder()::encodeToString)
                 rawCommunityKey?.fill(0)
                 val deletion = deletionState.snapshot(entry.id)
+                val trust = trustStore.get(entry.id)
                 CommunityBackup(
                     entry.id,
                     entry.name,
@@ -59,6 +64,10 @@ internal class AccountBackupStore(
                     UserSettings.retentionDaysFor(entry.id),
                     deletion.hiddenChatIds,
                     deletion.suppressedMessageIds,
+                    trust?.genesisRecord?.let(java.util.Base64.getEncoder()::encodeToString),
+                    trust?.fingerprintVerified ?: false,
+                    trust?.highestPolicyRevision ?: 0,
+                    trust?.highestPolicyHash,
                 )
             }
         if (communities.isEmpty()) return null

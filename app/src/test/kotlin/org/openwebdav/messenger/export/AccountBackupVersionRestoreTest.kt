@@ -34,7 +34,7 @@ class AccountBackupVersionRestoreTest {
                 )
             for (version in listOf(2, 3)) {
                 val currentBytes = AccountBackupCodec.encode(backup)
-                val encoded = currentBytes.copyOf(currentBytes.size - 8).also { ByteBuffer.wrap(it).putInt(version) }
+                val encoded = currentBytes.copyOf(currentBytes.size - 19).also { ByteBuffer.wrap(it).putInt(version) }
                 val payload =
                     ExportPayload(
                         null,
@@ -46,7 +46,7 @@ class AccountBackupVersionRestoreTest {
                         Base64.getEncoder().encodeToString(Identity.serialize(identity)),
                         Base64.getEncoder().encodeToString(encoded),
                     )
-                val json = ExportPayload.toJson(payload).replace("\"v\":4", "\"v\":$version")
+                val json = ExportPayload.toJson(payload).replace("\"v\":5", "\"v\":$version")
                 val blob = encryptedPayload(native, json, "restore-password")
                 val account = ExportTestSupport.InMemoryAccountBackupStore()
                 val generationBeforeRestore = AccountMutationBarrier.process.replacementGeneration()

@@ -4,10 +4,10 @@ import android.content.Context
 import java.io.File
 import java.io.IOException
 
-internal class EncryptedCommunityTrustStorage(context: Context) {
+internal class EncryptedCommunityTrustStorage(context: Context) : CommunityTrustPersistence {
     private val wrapper = KeystoreWrapper(ALIAS, File(context.filesDir, FILE_NAME))
 
-    fun load(): List<org.openwebdav.messenger.governance.CommunityTrustRecord> =
+    override fun load(): List<org.openwebdav.messenger.governance.CommunityTrustRecord> =
         when (val unwrapped = wrapper.unwrap()) {
             UnwrapResult.None -> emptyList()
             is UnwrapResult.Unrecoverable -> throw IOException("Community trust store unavailable: ${unwrapped.reason}")
@@ -20,7 +20,7 @@ internal class EncryptedCommunityTrustStorage(context: Context) {
                 }
         }
 
-    fun save(records: List<org.openwebdav.messenger.governance.CommunityTrustRecord>) {
+    override fun save(records: List<org.openwebdav.messenger.governance.CommunityTrustRecord>) {
         val plain = CommunityTrustStoreCodec.encode(records)
         try {
             wrapper.wrapStrictAtomic(plain)
