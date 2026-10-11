@@ -16,6 +16,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.data.MessengerDatabase
+import org.openwebdav.messenger.keystore.ChatRegistry
+import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.protocol.ChatPaths
 import org.openwebdav.messenger.sync.FakeDisk
 import org.openwebdav.messenger.sync.SyncTestSupport
@@ -88,6 +90,8 @@ class ProductionGeneralRetryIntegrationTest {
                 assertTrue(disk.fileNames(ChatPaths.logDir(other)).isEmpty())
             } finally {
                 AppContainer.clearChatOpenTestSeam()
+                CommunityRegistry(context).remove(communityId)
+                ChatRegistry(context).clear(communityId)
                 Dispatchers.resetMain()
             }
         }

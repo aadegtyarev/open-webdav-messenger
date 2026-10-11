@@ -221,6 +221,7 @@ internal object AppContainer {
         val beforeGeneralRosterPreparation: (() -> Unit)? = null,
         val chatDeleted: ((String, String) -> Boolean)? = null,
         val dmHidden: ((String, String) -> Boolean)? = null,
+        val remoteTombstoneResult: ((String, String) -> TombstoneReconciler.Result)? = null,
     )
 
     private val groupChatOpenCoordinator by lazy {
@@ -1801,6 +1802,7 @@ internal object AppContainer {
         keyOverride: ChatKey? = null,
         expectedGraph: RuntimeGraph? = null,
     ): TombstoneReconciler.Result {
+        chatOpenTestSeam?.remoteTombstoneResult?.invoke(communityId, chatId)?.let { return it }
         val generation = AccountMutationBarrier.process.replacementGeneration()
         val entry = chatFor(communityId, chatId)
         val kind = entry?.kind ?: kindOverride

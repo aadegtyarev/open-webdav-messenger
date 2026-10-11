@@ -256,6 +256,9 @@ class ChatFeedScreenTest {
                 loadStored = { stored },
                 readDirectory = { CompletableDeferred<DirectoryReadResult>().also(reads::put).await() },
                 onRosterEnrichmentCompleted = { enrichmentCompletions.poll()?.complete(Unit) },
+                remoteTombstoneResult = { _, _ ->
+                    org.openwebdav.messenger.app.TombstoneReconciler.Result.NoTombstone
+                },
             ),
         )
         seedHistory(groupId, "group history")
