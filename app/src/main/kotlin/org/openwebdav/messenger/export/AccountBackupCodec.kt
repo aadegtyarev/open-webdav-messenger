@@ -79,7 +79,11 @@ internal object AccountBackupCodec {
                             }
                         val deletion =
                             if (version >= DELETION_STATE_VERSION) {
-                                AccountBackupDeletionCodec.read(input, version >= CHAT_DELETION_STATE_VERSION)
+                                AccountBackupDeletionCodec.read(
+                                    input,
+                                    version >= CHAT_DELETION_STATE_VERSION,
+                                    version >= GRAVEYARD_EVIDENCE_VERSION,
+                                )
                             } else {
                                 LocalDeletionBackup(emptyList(), emptyMap(), emptyList())
                             }
@@ -113,12 +117,13 @@ internal object AccountBackupCodec {
             }
         }.getOrNull()
 
-    private const val VERSION = 6
+    private const val VERSION = 7
     private const val LEGACY_VERSION = 1
     private const val ACCESS_VERSION = 2
     private const val DELETION_STATE_VERSION = 4
     private const val TRUST_STATE_VERSION = 5
     private const val CHAT_DELETION_STATE_VERSION = 6
+    private const val GRAVEYARD_EVIDENCE_VERSION = 7
     private val ACCESS_VALUES = setOf("public", "private", "unknown")
 
     private fun legacyAccess(): String = "unknown"

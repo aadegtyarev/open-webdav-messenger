@@ -12,4 +12,6 @@ data class ChatDeletionBackup(
     val nextAttemptAtMillis: Long?,
     val lastError: String?,
     val updatedAtMillis: Long,
+    val tombstonePlaintextBytesBase64: String? = null,
+    val originPlaintextBytesBase64: String? = null,
 )

@@ -148,7 +148,7 @@ internal data class ExportPayload(
             }
         }
 
-        private const val ACCOUNT_BACKUP_VERSION = 6
+        private const val ACCOUNT_BACKUP_VERSION = 7
 
         private fun matchesBackupVersion(
             payloadVersion: Int,
@@ -163,6 +163,7 @@ internal data class ExportPayload(
                 4 -> backupVersion == 4
                 5 -> backupVersion == 5
                 6 -> backupVersion == 6
+                7 -> backupVersion == 7
                 else -> false
             }
         }

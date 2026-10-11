@@ -1,6 +1,8 @@
 package org.openwebdav.messenger.export
 
 import org.openwebdav.messenger.crypto.ChatKey
+import org.openwebdav.messenger.governance.CommunityDmOriginCodec
+import org.openwebdav.messenger.governance.CommunityDmOriginParticipants
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.governance.CommunityTombstoneCodec
 import org.openwebdav.messenger.governance.GovernanceObjectKind
@@ -23,6 +25,13 @@ internal object AccountBackupGraveyardValidation {
         val bytes = java.util.Base64.getDecoder().decode(deletion.tombstoneStoredBytesBase64)
         require(bytes.isNotEmpty() && bytes.size <= MAX_TOMBSTONE_BYTES)
         require(java.util.Base64.getEncoder().encodeToString(bytes) == deletion.tombstoneStoredBytesBase64)
+        listOf(deletion.tombstonePlaintextBytesBase64, deletion.originPlaintextBytesBase64).forEach { encoded ->
+            if (encoded != null) {
+                val evidence = java.util.Base64.getDecoder().decode(encoded)
+                require(evidence.isNotEmpty() && evidence.size <= MAX_TOMBSTONE_BYTES)
+                require(java.util.Base64.getEncoder().encodeToString(evidence) == encoded)
+            }
+        }
     }
 
     fun hasAuthenticatedTombstones(
@@ -31,28 +40,56 @@ internal object AccountBackupGraveyardValidation {
         deletions: List<ChatDeletionBackup>,
         envelopes: CommunityGovernanceEnvelopeCodec,
         identityCrypto: IdentityCrypto,
+        expectedSignerPublicKey: ByteArray? = null,
     ): Boolean =
         runCatching {
             if (deletions.isNotEmpty()) {
-                val key = requireNotNull(communityKey)
                 deletions.forEach { deletion ->
-                    val stored = java.util.Base64.getDecoder().decode(deletion.tombstoneStoredBytesBase64)
                     val scope = TombstoneScope.valueOf(deletion.scope)
-                    val objectKind =
-                        if (scope == TombstoneScope.GROUP) {
-                            GovernanceObjectKind.GROUP_TOMBSTONE
+                    val signed =
+                        if (scope == TombstoneScope.DM) {
+                            val encoded = requireNotNull(deletion.tombstonePlaintextBytesBase64)
+                            java.util.Base64.getDecoder().decode(encoded)
                         } else {
-                            GovernanceObjectKind.DM_TOMBSTONE
+                            val key = requireNotNull(communityKey)
+                            val stored = java.util.Base64.getDecoder().decode(deletion.tombstoneStoredBytesBase64)
+                            requireNotNull(
+                                envelopes.open(GovernanceObjectKind.GROUP_TOMBSTONE, communityId, key, stored),
+                            )
                         }
-                    val plaintext = requireNotNull(envelopes.open(objectKind, communityId, key, stored))
                     try {
-                        val record = requireNotNull(CommunityTombstoneCodec.verifyAny(plaintext, identityCrypto))
+                        val record = requireNotNull(CommunityTombstoneCodec.verifyAny(signed, identityCrypto))
                         require(record.communityId == communityId && record.chatId == deletion.chatId)
                         require(record.scope == scope && record.originMode == TombstoneOriginMode.valueOf(deletion.originMode))
                         require(record.originHash == deletion.originHash)
-                        require(CommunityTombstoneCodec.contentAddress(plaintext) == deletion.tombstoneHash)
+                        require(CommunityTombstoneCodec.contentAddress(signed) == deletion.tombstoneHash)
+                        if (scope == TombstoneScope.DM) {
+                            val originBytes =
+                                java.util.Base64.getDecoder().decode(requireNotNull(deletion.originPlaintextBytesBase64))
+                            try {
+                                val origin =
+                                    requireNotNull(
+                                        CommunityDmOriginCodec.verify(
+                                            originBytes,
+                                            communityId,
+                                            deletion.chatId,
+                                            identityCrypto,
+                                        ),
+                                    )
+                                require(CommunityDmOriginCodec.contentAddress(originBytes) == deletion.originHash)
+                                require(record.signerRole.name == "DM_INITIATOR")
+                                require(record.originMode == TombstoneOriginMode.ORIGIN_HASH)
+                                require(record.signerSigningPublicKey.contentEquals(origin.initiatorSigningPublicKey))
+                                require(CommunityDmOriginParticipants.matches(record.participants, origin.participants))
+                                expectedSignerPublicKey?.let {
+                                    require(it.contentEquals(origin.initiatorSigningPublicKey))
+                                }
+                            } finally {
+                                originBytes.fill(0)
+                            }
+                        }
                     } finally {
-                        plaintext.fill(0)
+                        signed.fill(0)
                     }
                 }
             }

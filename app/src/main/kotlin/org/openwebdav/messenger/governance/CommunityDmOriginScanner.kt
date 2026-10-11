@@ -27,6 +27,7 @@ internal class CommunityDmOriginScanner(
         var objectHash: String? = null
         var recordHash: String? = null
         var foundOrigin: CommunityDmOrigin? = null
+        var foundSignedBytes: ByteArray? = null
         for (hash in listing.value) {
             val stored = reader.readStoredBytes(GovernanceObjectKind.DM_ORIGIN, hash)
             if (stored !is WebDavResult.Success) return Result.Unavailable
@@ -42,16 +43,24 @@ internal class CommunityDmOriginScanner(
                     recordHash = candidateHash
                     objectHash = hash
                     foundOrigin = origin
+                    foundSignedBytes = plaintext.copyOf()
                 }
             } finally {
                 plaintext.fill(0)
             }
         }
-        return objectHash?.let { Result.Found(it, checkNotNull(recordHash), checkNotNull(foundOrigin)) } ?: Result.Empty
+        return objectHash?.let {
+            Result.Found(it, checkNotNull(recordHash), checkNotNull(foundOrigin), checkNotNull(foundSignedBytes))
+        } ?: Result.Empty
     }
 
     sealed interface Result {
-        data class Found(val objectHash: String, val recordHash: String, val origin: CommunityDmOrigin) : Result
+        data class Found(
+            val objectHash: String,
+            val recordHash: String,
+            val origin: CommunityDmOrigin,
+            val signedBytes: ByteArray,
+        ) : Result
 
         data object Empty : Result
 

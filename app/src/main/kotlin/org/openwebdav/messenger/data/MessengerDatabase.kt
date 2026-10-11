@@ -38,7 +38,7 @@ import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
         SuppressedDmMessageEntity::class,
         ChatDeletionEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class MessengerDatabase : RoomDatabase() {
@@ -156,6 +156,14 @@ abstract class MessengerDatabase : RoomDatabase() {
                 }
             }
 
+        val MIGRATION_9_10 =
+            object : Migration(9, 10) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE chat_deletions ADD COLUMN tombstonePlaintextBytes BLOB")
+                    db.execSQL("ALTER TABLE chat_deletions ADD COLUMN originPlaintextBytes BLOB")
+                }
+            }
+
         const val LEGACY_UNSCOPED_COMMUNITY_ID = "__legacy_unscoped__"
 
         @Volatile
@@ -189,6 +197,7 @@ abstract class MessengerDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
+                        MIGRATION_9_10,
                     )
                     .addCallback(legacyHistoryRepairCallback(context))
                     // No allowMainThreadQueries() — DAOs are suspend/Flow (stack-notes Room).

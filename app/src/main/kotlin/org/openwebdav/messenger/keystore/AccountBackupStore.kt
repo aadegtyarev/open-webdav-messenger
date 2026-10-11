@@ -12,6 +12,8 @@ import org.openwebdav.messenger.export.CommunityBackup
 import org.openwebdav.messenger.export.ExportableAccountBackupStore
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.identity.IdentityCrypto
+import org.openwebdav.messenger.identity.IdentityLoadResult
+import org.openwebdav.messenger.identity.IdentityStore
 import org.openwebdav.messenger.ui.settings.UserSettings
 import java.util.Base64
 
@@ -89,6 +91,8 @@ internal class AccountBackupStore(
                             row.nextAttemptAtMillis,
                             row.lastError,
                             row.updatedAtMillis,
+                            row.tombstonePlaintextBytes?.let(Base64.getEncoder()::encodeToString),
+                            row.originPlaintextBytes?.let(Base64.getEncoder()::encodeToString),
                         )
                     },
                 )
@@ -97,22 +101,41 @@ internal class AccountBackupStore(
             if (community.chatDeletions.isNotEmpty()) {
                 val native = checkNotNull(nativeCrypto) { "Cannot export unauthenticated chat-deletion state" }
                 val verifier = checkNotNull(identityCrypto) { "Cannot export unauthenticated chat-deletion state" }
-                val keyBytes = Base64.getDecoder().decode(checkNotNull(community.communityKeyBase64))
                 val key =
-                    try {
-                        ChatKey.fromBytes(keyBytes)
-                    } finally {
-                        keyBytes.fill(0)
+                    community.communityKeyBase64?.let { encoded ->
+                        val keyBytes = Base64.getDecoder().decode(encoded)
+                        try {
+                            ChatKey.fromBytes(keyBytes)
+                        } finally {
+                            keyBytes.fill(0)
+                        }
                     }
-                check(
-                    AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
-                        community.id,
-                        key,
-                        community.chatDeletions,
-                        CommunityGovernanceEnvelopeCodec(Aead(native)),
-                        verifier,
-                    ),
-                ) { "Cannot export invalid chat-deletion state" }
+                check(community.chatDeletions.none { it.scope == "GROUP" } || key != null) {
+                    "Cannot export unauthenticated group deletion state"
+                }
+                val expectedSigner =
+                    if (community.chatDeletions.any { it.scope == "DM" }) {
+                        val identity =
+                            (IdentityStore(context, verifier).load() as? IdentityLoadResult.Loaded)?.identity
+                                ?: error("Cannot export unauthenticated DM deletion state")
+                        identity.copySignPublic()
+                    } else {
+                        null
+                    }
+                try {
+                    check(
+                        AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
+                            community.id,
+                            key,
+                            community.chatDeletions,
+                            CommunityGovernanceEnvelopeCodec(Aead(native)),
+                            verifier,
+                            expectedSigner,
+                        ),
+                    ) { "Cannot export invalid chat-deletion state" }
+                } finally {
+                    expectedSigner?.fill(0)
+                }
             }
         }
         if (communities.isEmpty()) return null

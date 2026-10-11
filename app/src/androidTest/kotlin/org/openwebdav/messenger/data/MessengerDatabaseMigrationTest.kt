@@ -459,6 +459,25 @@ class MessengerDatabaseMigrationTest {
         ConnectionConfigStore(context).clear("community-a")
     }
 
+    @Test
+    fun version9AddsNullableAuthenticatedTombstoneEvidence() {
+        helper.createDatabase(TEST_DB, 9).apply {
+            execSQL(
+                "INSERT INTO chat_deletions (communityId, chatId, scope, originMode, originHash, tombstoneHash, " +
+                    "tombstoneStoredBytes, phase, cleanupAttempts, updatedAtMillis) " +
+                    "VALUES ('community-a', 'dm-a', 'DM', 'ORIGIN_HASH', 'origin', 'tombstone', X'01', 'COMPLETE', 0, 1)",
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 10, true, MessengerDatabase.MIGRATION_9_10).use { migrated ->
+            migrated.query("SELECT tombstonePlaintextBytes, originPlaintextBytes FROM chat_deletions WHERE chatId = 'dm-a'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(true, row.isNull(0))
+                assertEquals(true, row.isNull(1))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DB = "migration-test.db"
         const val REAL_DB = "open-real-test.db"

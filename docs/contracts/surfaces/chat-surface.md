@@ -253,7 +253,10 @@ current. The active group/DM remains intact.
   history; the suppressed pre-delete IDs do not return. One valid tombstone
   permanently closes its origin, and reconciliation purges history, keys,
   caches, cursors, pending state, and outbox before exposing a remotely deleted
-  chat.
+  chat. The local graveyard retains public signed tombstone and immutable DM-origin
+  evidence alongside sealed publication bytes, so encrypted account backups can
+  validate DM deletion after the derived key has been removed; missing or mismatched
+  evidence fails closed.
 - Tombstone publication is not proof of peer observation. After publication the
   chat is hidden, sends are rejected, and subscriptions, outbox, and in-flight
   claims are fenced. Cleanup selectively deletes mutable descriptors, logs,

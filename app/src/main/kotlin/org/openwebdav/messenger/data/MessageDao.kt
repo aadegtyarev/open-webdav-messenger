@@ -121,7 +121,18 @@ interface MessageDao {
         if (hiddenChatIds.isNotEmpty()) putHiddenDms(hiddenChatIds.map { HiddenDmEntity(communityId, it) })
         if (suppressedIds.isNotEmpty()) insertSuppressed(suppressedIds)
         chatDeletions.filter { it.communityId == communityId }.forEach { incoming ->
-            if (chatDeletion(communityId, incoming.chatId) == null) insertChatDeletion(incoming)
+            val existing = chatDeletion(communityId, incoming.chatId)
+            if (existing == null) {
+                insertChatDeletion(incoming)
+            } else if (existing.tombstoneHash == incoming.tombstoneHash && existing.originHash == incoming.originHash) {
+                updateChatDeletionEvidence(
+                    communityId,
+                    incoming.chatId,
+                    incoming.tombstoneHash,
+                    incoming.tombstonePlaintextBytes,
+                    incoming.originPlaintextBytes,
+                )
+            }
         }
         chatDeletionsForCommunity(communityId).forEach { deletion ->
             deleteMessagesForChat(communityId, deletion.chatId)
@@ -130,6 +141,19 @@ interface MessageDao {
             deleteSuppressedForChat(communityId, deletion.chatId)
         }
     }
+
+    @Query(
+        "UPDATE chat_deletions SET tombstonePlaintextBytes = COALESCE(tombstonePlaintextBytes, :tombstoneEvidence), " +
+            "originPlaintextBytes = COALESCE(originPlaintextBytes, :originEvidence) " +
+            "WHERE communityId = :communityId AND chatId = :chatId AND tombstoneHash = :tombstoneHash",
+    )
+    suspend fun updateChatDeletionEvidence(
+        communityId: String,
+        chatId: String,
+        tombstoneHash: String,
+        tombstoneEvidence: ByteArray?,
+        originEvidence: ByteArray?,
+    )
 
     @Query("SELECT EXISTS(SELECT 1 FROM hidden_dms WHERE communityId = :communityId AND chatId = :chatId)")
     suspend fun isDmHidden(

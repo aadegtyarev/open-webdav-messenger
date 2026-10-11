@@ -22,6 +22,8 @@ data class ChatDeletionEntity(
     val nextAttemptAtMillis: Long? = null,
     val lastError: String? = null,
     val updatedAtMillis: Long,
+    val tombstonePlaintextBytes: ByteArray? = null,
+    val originPlaintextBytes: ByteArray? = null,
 ) {
     companion object {
         const val SCOPE_GROUP = "GROUP"

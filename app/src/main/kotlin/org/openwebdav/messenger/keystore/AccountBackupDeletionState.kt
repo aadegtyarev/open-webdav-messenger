@@ -59,6 +59,8 @@ internal class AccountBackupDeletionState(private val context: Context) {
                         nextAttemptAtMillis = deletion.nextAttemptAtMillis,
                         lastError = deletion.lastError,
                         updatedAtMillis = deletion.updatedAtMillis,
+                        tombstonePlaintextBytes = deletion.tombstonePlaintextBytesBase64?.let(java.util.Base64.getDecoder()::decode),
+                        originPlaintextBytes = deletion.originPlaintextBytesBase64?.let(java.util.Base64.getDecoder()::decode),
                     )
                 },
             )

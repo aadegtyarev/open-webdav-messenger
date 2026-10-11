@@ -195,7 +195,7 @@ class RestoreManager(
                         raw.fill(0)
                     }
                 } ?: legacyBackup(payload.connectionConfig, communityKey, chatKeys) ?: return null
-            if (!validateBackup(backup, chatKeys)) return null
+            if (!validateBackup(backup, chatKeys, identity)) return null
             val accountCommunityKeys = mutableMapOf<String, ChatKey>()
             backup.communities.forEach { community ->
                 community.communityKeyBase64?.let { encoded ->
@@ -241,6 +241,7 @@ class RestoreManager(
     private fun validateBackup(
         backup: AccountBackup,
         chatKeys: Map<String, ChatKey>,
+        identity: Identity,
     ): Boolean =
         chatKeys.keys.all(AccountIdentifier::isValid) &&
             backup.communities.map { it.id }.distinct().size == backup.communities.size &&
@@ -252,23 +253,33 @@ class RestoreManager(
                     community.anchorChatId in community.chats.map { it.id } &&
                     community.chats.isNotEmpty() && community.chats.map { it.id }.distinct().size == community.chats.size &&
                     AccountBackupDeletionValidation.isValid(community) &&
-                    validateGraveyard(community) &&
+                    validateGraveyard(community, identity) &&
                     community.chats.all {
                         AccountIdentifier.isValid(it.id) && it.name.isNotBlank() && it.kind in setOf("general", "group", "dm") &&
                             it.id in chatKeys
                     }
             }
 
-    private fun validateGraveyard(community: CommunityBackup): Boolean {
+    private fun validateGraveyard(
+        community: CommunityBackup,
+        identity: Identity,
+    ): Boolean {
         if (community.chatDeletions.isEmpty()) return true
-        val key = community.communityKeyBase64?.let(::decodeKey) ?: return false
-        return AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
-            community.id,
-            key,
-            community.chatDeletions,
-            CommunityGovernanceEnvelopeCodec(Aead(native)),
-            IdentityCrypto(native),
-        )
+        val key = community.communityKeyBase64?.let(::decodeKey)
+        if (community.chatDeletions.any { it.scope == "GROUP" } && key == null) return false
+        val signer = identity.copySignPublic()
+        return try {
+            AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
+                community.id,
+                key,
+                community.chatDeletions,
+                CommunityGovernanceEnvelopeCodec(Aead(native)),
+                IdentityCrypto(native),
+                signer,
+            )
+        } finally {
+            signer.fill(0)
+        }
     }
 
     private fun decodeKey(encoded: String): ChatKey? {

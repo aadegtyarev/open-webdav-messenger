@@ -3,12 +3,16 @@ package org.openwebdav.messenger.export
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoTestSupport
+import org.openwebdav.messenger.governance.CommunityDmOrigin
+import org.openwebdav.messenger.governance.CommunityDmOriginCodec
+import org.openwebdav.messenger.governance.CommunityDmParticipant
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.governance.CommunityTombstone
 import org.openwebdav.messenger.governance.CommunityTombstoneCodec
 import org.openwebdav.messenger.governance.GovernanceObjectKind
 import org.openwebdav.messenger.governance.TombstoneScope
 import org.openwebdav.messenger.governance.TombstoneSignerRole
+import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.transport.ConnectionConfig
 import java.util.Base64
@@ -22,13 +26,16 @@ internal class AccountBackupGraveyardFixture {
     fun isAuthenticated(
         deletion: ChatDeletionBackup,
         communityId: String = "community-a",
+        communityKey: ChatKey? = key,
+        expectedSigner: ByteArray? = null,
     ): Boolean =
         AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
             communityId,
-            key,
+            communityKey,
             listOf(deletion),
             envelopes,
             crypto,
+            expectedSigner,
         )
 
     fun tamperCiphertext(deletion: ChatDeletionBackup): ChatDeletionBackup {
@@ -72,6 +79,83 @@ internal class AccountBackupGraveyardFixture {
             null,
             null,
             123L,
+        )
+    }
+
+    fun dmDeletion(
+        identity: Identity,
+        wrongPeer: Boolean = false,
+    ): ChatDeletionBackup {
+        val signer = identity.copySignPublic()
+        val signerBox = identity.copyBoxPublic()
+        val peer = crypto.generateIdentity()
+        val otherPeer = crypto.generateIdentity()
+        val participants =
+            listOf(
+                CommunityDmParticipant(signer, signerBox),
+                CommunityDmParticipant(peer.copySignPublic(), peer.copyBoxPublic()),
+            )
+        val secret = identity.copySignSecret()
+        val originBytes =
+            try {
+                CommunityDmOriginCodec.sign(
+                    CommunityDmOrigin(
+                        "community-a",
+                        "deleted-dm",
+                        participants,
+                        signer,
+                        ByteArray(32) { 9 },
+                    ),
+                    secret,
+                    crypto,
+                )
+            } finally {
+                secret.fill(0)
+            }
+        val tombstoneParticipants =
+            if (wrongPeer) {
+                listOf(
+                    participants.first(),
+                    CommunityDmParticipant(otherPeer.copySignPublic(), otherPeer.copyBoxPublic()),
+                )
+            } else {
+                participants
+            }
+        val tombstoneSecret = identity.copySignSecret()
+        val signed =
+            try {
+                CommunityTombstoneCodec.sign(
+                    CommunityTombstone(
+                        "community-a",
+                        "deleted-dm",
+                        CommunityDmOriginCodec.contentAddress(originBytes),
+                        TombstoneScope.DM,
+                        1,
+                        TombstoneSignerRole.DM_INITIATOR,
+                        signer,
+                        tombstoneParticipants,
+                    ),
+                    tombstoneSecret,
+                    crypto,
+                )
+            } finally {
+                tombstoneSecret.fill(0)
+            }
+        val sealed = envelopes.seal(GovernanceObjectKind.DM_TOMBSTONE, "community-a", key, signed)
+        return ChatDeletionBackup(
+            "deleted-dm",
+            "DM",
+            "ORIGIN_HASH",
+            CommunityDmOriginCodec.contentAddress(originBytes),
+            CommunityTombstoneCodec.contentAddress(signed),
+            Base64.getEncoder().encodeToString(sealed),
+            "COMPLETE",
+            0,
+            null,
+            null,
+            123L,
+            Base64.getEncoder().encodeToString(signed),
+            Base64.getEncoder().encodeToString(originBytes),
         )
     }
 

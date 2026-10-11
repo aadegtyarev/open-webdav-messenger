@@ -1473,8 +1473,11 @@ internal object AppContainer {
                 graph.communityId, graph.chatId, ChatDeletionEntity.SCOPE_DM, TombstoneOriginMode.ORIGIN_HASH.name,
                 found.recordHash, CommunityTombstoneCodec.contentAddress(signed), reference.storedBytes,
                 ChatDeletionEntity.PHASE_LOCAL_COMMITTED, updatedAtMillis = System.currentTimeMillis(),
+                tombstonePlaintextBytes = signed.copyOf(),
+                originPlaintextBytes = found.signedBytes.copyOf(),
             )
         signed.fill(0)
+        found.signedBytes.fill(0)
         val service = CommunityTombstoneService(reader, writer, envelopes, identityFactory.identityCrypto())
         return executePreparedDeletion(graph, stored, communityKey, graph.chatKey, envelopes, service, deletion, generation, current)
     }
@@ -1830,6 +1833,7 @@ internal object AppContainer {
         val envelopes = CommunityGovernanceEnvelopeCodec(Aead(crypto.nativeCrypto()))
         val reader = CommunityGovernanceReader(TransportFactory.create(stored.config), envelopes)
         val scanner = CommunityTombstoneChatScanner(reader, envelopes, identityFactory.identityCrypto())
+        var dmOriginEvidence: ByteArray? = null
         val service =
             TombstoneReconciler(
                 isCurrent = {
@@ -1866,8 +1870,19 @@ internal object AppContainer {
                             val origin =
                                 CommunityDmOriginScanner(reader, envelopes, identityFactory.identityCrypto())
                                     .inspectOrigin(communityId, chatId, objectKey)
-                            origin is CommunityDmOriginScanner.Result.Found && origin.recordHash == candidate.record.originHash &&
-                                CommunityTombstoneAuthorization.dm(candidate.record, origin.origin, origin.recordHash) != null
+                            if (origin is CommunityDmOriginScanner.Result.Found) {
+                                val authorized =
+                                    origin.recordHash == candidate.record.originHash &&
+                                        CommunityTombstoneAuthorization.dm(candidate.record, origin.origin, origin.recordHash) != null
+                                if (authorized) {
+                                    dmOriginEvidence?.fill(0)
+                                    dmOriginEvidence = origin.signedBytes.copyOf()
+                                }
+                                origin.signedBytes.fill(0)
+                                authorized
+                            } else {
+                                false
+                            }
                         }
                     }
                 },
@@ -1884,6 +1899,8 @@ internal object AppContainer {
                             originHash = candidate.record.originHash,
                             tombstoneHash = candidate.recordHash,
                             tombstoneStoredBytes = candidate.storedBytes.copyOf(),
+                            tombstonePlaintextBytes = candidate.signedBytes.copyOf(),
+                            originPlaintextBytes = dmOriginEvidence?.copyOf(),
                             phase = ChatDeletionEntity.PHASE_LOCAL_COMMITTED,
                             updatedAtMillis = System.currentTimeMillis(),
                         )

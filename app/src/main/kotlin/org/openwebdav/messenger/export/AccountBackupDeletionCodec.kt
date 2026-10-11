@@ -37,6 +37,7 @@ internal object AccountBackupDeletionCodec {
     fun read(
         input: DataInput,
         includeChatDeletions: Boolean,
+        includeGraveyardEvidence: Boolean,
     ): LocalDeletionBackup {
         val hiddenCount = input.readInt().also { require(it in 0..MAX_CHATS) }
         val hidden = List(hiddenCount) { input.readUTF() }
@@ -50,7 +51,12 @@ internal object AccountBackupDeletionCodec {
             require(ids.size < MAX_IDS_PER_CHAT && messageId !in ids)
             ids.add(messageId)
         }
-        val deletions = if (includeChatDeletions) AccountBackupGraveyardCodec.read(input) else emptyList()
+        val deletions =
+            if (includeChatDeletions) {
+                AccountBackupGraveyardCodec.read(input, includeGraveyardEvidence)
+            } else {
+                emptyList()
+            }
         return LocalDeletionBackup(hidden, suppressed.mapValues { it.value.toList() }, deletions)
     }
 
