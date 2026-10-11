@@ -1,7 +1,12 @@
 package org.openwebdav.messenger.export
 
-import org.openwebdav.messenger.protocol.Base32
-import java.security.MessageDigest
+import org.openwebdav.messenger.crypto.ChatKey
+import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
+import org.openwebdav.messenger.governance.CommunityTombstoneCodec
+import org.openwebdav.messenger.governance.GovernanceObjectKind
+import org.openwebdav.messenger.governance.TombstoneOriginMode
+import org.openwebdav.messenger.governance.TombstoneScope
+import org.openwebdav.messenger.identity.IdentityCrypto
 
 internal object AccountBackupGraveyardValidation {
     fun isValid(deletions: List<ChatDeletionBackup>): Boolean =
@@ -18,9 +23,40 @@ internal object AccountBackupGraveyardValidation {
         val bytes = java.util.Base64.getDecoder().decode(deletion.tombstoneStoredBytesBase64)
         require(bytes.isNotEmpty() && bytes.size <= MAX_TOMBSTONE_BYTES)
         require(java.util.Base64.getEncoder().encodeToString(bytes) == deletion.tombstoneStoredBytesBase64)
-        val hash = Base32.encodeBase32Lower(MessageDigest.getInstance("SHA-256").digest(bytes)).take(HASH_CHARS)
-        require(hash == deletion.tombstoneHash)
     }
+
+    fun hasAuthenticatedTombstones(
+        communityId: String,
+        communityKey: ChatKey?,
+        deletions: List<ChatDeletionBackup>,
+        envelopes: CommunityGovernanceEnvelopeCodec,
+        identityCrypto: IdentityCrypto,
+    ): Boolean =
+        runCatching {
+            if (deletions.isNotEmpty()) {
+                val key = requireNotNull(communityKey)
+                deletions.forEach { deletion ->
+                    val stored = java.util.Base64.getDecoder().decode(deletion.tombstoneStoredBytesBase64)
+                    val scope = TombstoneScope.valueOf(deletion.scope)
+                    val objectKind =
+                        if (scope == TombstoneScope.GROUP) {
+                            GovernanceObjectKind.GROUP_TOMBSTONE
+                        } else {
+                            GovernanceObjectKind.DM_TOMBSTONE
+                        }
+                    val plaintext = requireNotNull(envelopes.open(objectKind, communityId, key, stored))
+                    try {
+                        val record = requireNotNull(CommunityTombstoneCodec.verifyAny(plaintext, identityCrypto))
+                        require(record.communityId == communityId && record.chatId == deletion.chatId)
+                        require(record.scope == scope && record.originMode == TombstoneOriginMode.valueOf(deletion.originMode))
+                        require(record.originHash == deletion.originHash)
+                        require(CommunityTombstoneCodec.contentAddress(plaintext) == deletion.tombstoneHash)
+                    } finally {
+                        plaintext.fill(0)
+                    }
+                }
+            }
+        }.isSuccess
 
     const val MAX_CHATS = 1000
     const val MAX_TOMBSTONE_BYTES = 64 * 1024
@@ -32,5 +68,4 @@ internal object AccountBackupGraveyardValidation {
     val PHASES = setOf("LOCAL_COMMITTED", "TOMBSTONE_PUBLISHED", "CLEANUP_PENDING", "COMPLETE")
     const val MAX_ATTEMPTS = 1_000_000
     const val MAX_ERROR_CHARS = 1024
-    private const val HASH_CHARS = 32
 }

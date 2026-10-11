@@ -113,7 +113,7 @@ class ExportRestoreActivity : Activity() {
         communityKeyStore = CommunityKeyStore(applicationContext)
         chatKeyStore = ChatKeyStore(applicationContext, native)
         identityStore = IdentityStore(applicationContext, IdentityCrypto(native))
-        val accountBackupStore = AccountBackupStore(applicationContext, identityCrypto = IdentityCrypto(native))
+        val accountBackupStore = AccountBackupStore(applicationContext, identityCrypto = IdentityCrypto(native), nativeCrypto = native)
         exportManager =
             ExportManager(
                 native,

@@ -37,22 +37,27 @@ for persistence of community/chat data.
 ## Invite format
 
 **Token scheme (2-format):** Invite tokens use the `owdm1:` URI scheme with a
-`base64url(gzip(json($fields)))` payload. Format v2 has exactly the fields for
-version, WebDAV base URL, username, app password, chat root, chat ID, raw 32-byte
-chat key, community name, access, embedded Ed25519 signing public key, and
-signature. The signature covers deterministic flat-JSON encoding of all
-configuration fields including access, under `owdm/invite/access/v2`; it protects
-field integrity but adds no external trust anchor or community authority. These
-bearer-token secrets are plain encoded, not encrypted.
+`base64url(gzip(json($fields)))` payload. Format v3 has exactly the fields for
+version, WebDAV base URL, username, app password, chat root, chat ID, community
+ID, signed community genesis record, raw 32-byte chat key, community name,
+access, embedded Ed25519 signing public key, and signature. The signature covers
+deterministic flat-JSON encoding of all invite fields including access and
+community/genesis context, under `owdm/invite/access/v3`. The genesis record is
+authenticated against the invite's community ID; host-signed invite validation
+also requires the embedded signer to match the genesis host. These checks bind
+community authority and access metadata, unlike legacy v2's embedded-key
+self-signature. Bearer-token secrets remain plain encoded, not encrypted.
 
 **Reject-don't-guess (2-reject):** A wrong prefix (`http://`, a random QR code,
 noise), bad base64url, corrupt gzip, unknown/extra/missing fields, invalid
-signature, or invalid access produces a typed rejection — never a partial config,
-crash, or exception propagated to the UI layer. Legacy v1 decodes only to legacy
-status and is rejected by onboarding. New v2 tokens require signed strict
-`access=public|private`; legacy, missing, invalid, or tampered tokens are rejected
-before account mutation with localized guidance to request a fresh invite. Access
-selects roster behavior only and grants no community authority.
+signature or genesis record, or invalid access produces a typed rejection — never
+a partial config, crash, or exception propagated to the UI layer. Legacy v1
+returns legacy status. Legacy v2 is not upgraded into v3 trust: it lacks the
+community ID/genesis authority binding and is rejected by onboarding. New v3
+tokens require signed strict `access=public|private`; legacy, missing, invalid, or
+tampered tokens are rejected before account mutation with localized guidance to
+request a fresh invite. Access selects roster behavior only; community authority
+comes from the authenticated genesis record and its host signer.
 
 **Bearer token, not encrypted:** The token carries plain (not encrypted) fields.
 Whoever holds it can join — this is by design. The on-screen warning at token

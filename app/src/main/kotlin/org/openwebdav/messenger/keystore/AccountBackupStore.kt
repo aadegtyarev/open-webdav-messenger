@@ -1,19 +1,26 @@
 package org.openwebdav.messenger.keystore
 
 import android.content.Context
+import org.openwebdav.messenger.crypto.Aead
+import org.openwebdav.messenger.crypto.ChatKey
+import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.export.AccountBackup
+import org.openwebdav.messenger.export.AccountBackupGraveyardValidation
 import org.openwebdav.messenger.export.ChatBackup
 import org.openwebdav.messenger.export.ChatDeletionBackup
 import org.openwebdav.messenger.export.CommunityBackup
 import org.openwebdav.messenger.export.ExportableAccountBackupStore
+import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.ui.settings.UserSettings
+import java.util.Base64
 
 /** Bridges the encrypted account backup to the existing per-community secure and registry stores. */
 internal class AccountBackupStore(
     private val context: Context,
     private val configStore: AccountBackupConfigStore = ConnectionConfigStore(context),
     private val identityCrypto: IdentityCrypto? = null,
+    private val nativeCrypto: NativeCrypto? = null,
 ) : ExportableAccountBackupStore {
     private val communityRegistry = CommunityRegistry(context)
     private val chatRegistry = ChatRegistry(context)
@@ -86,6 +93,28 @@ internal class AccountBackupStore(
                     },
                 )
             }
+        communities.forEach { community ->
+            if (community.chatDeletions.isNotEmpty()) {
+                val native = checkNotNull(nativeCrypto) { "Cannot export unauthenticated chat-deletion state" }
+                val verifier = checkNotNull(identityCrypto) { "Cannot export unauthenticated chat-deletion state" }
+                val keyBytes = Base64.getDecoder().decode(checkNotNull(community.communityKeyBase64))
+                val key =
+                    try {
+                        ChatKey.fromBytes(keyBytes)
+                    } finally {
+                        keyBytes.fill(0)
+                    }
+                check(
+                    AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
+                        community.id,
+                        key,
+                        community.chatDeletions,
+                        CommunityGovernanceEnvelopeCodec(Aead(native)),
+                        verifier,
+                    ),
+                ) { "Cannot export invalid chat-deletion state" }
+            }
+        }
         if (communities.isEmpty()) return null
         val active = activeStore.load(communities.first().id)
         return AccountBackup(active.takeIf { id -> communities.any { it.id == id } } ?: communities.first().id, communities)
