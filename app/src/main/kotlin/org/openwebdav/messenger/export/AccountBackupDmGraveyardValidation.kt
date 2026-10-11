@@ -2,6 +2,7 @@ package org.openwebdav.messenger.export
 
 import org.openwebdav.messenger.governance.CommunityDmOriginCodec
 import org.openwebdav.messenger.governance.CommunityDmOriginParticipants
+import org.openwebdav.messenger.governance.CommunityDmParticipant
 import org.openwebdav.messenger.governance.CommunityTombstone
 import org.openwebdav.messenger.governance.TombstoneOriginMode
 import org.openwebdav.messenger.identity.IdentityCrypto
@@ -12,7 +13,7 @@ internal object AccountBackupDmGraveyardValidation {
         record: CommunityTombstone,
         communityId: String,
         identityCrypto: IdentityCrypto,
-        expectedSignerPublicKey: ByteArray?,
+        expectedOwner: CommunityDmParticipant?,
     ) {
         val originBytes =
             java.util.Base64.getDecoder().decode(requireNotNull(deletion.originPlaintextBytesBase64))
@@ -31,10 +32,11 @@ internal object AccountBackupDmGraveyardValidation {
             require(record.originMode == TombstoneOriginMode.ORIGIN_HASH)
             require(record.signerSigningPublicKey.contentEquals(origin.initiatorSigningPublicKey))
             require(CommunityDmOriginParticipants.matches(record.participants, origin.participants))
-            expectedSignerPublicKey?.let { expectedSigner ->
+            expectedOwner?.let { owner ->
                 require(
                     origin.participants.any { participant ->
-                        participant.signingPublicKey.contentEquals(expectedSigner)
+                        participant.signingPublicKey.contentEquals(owner.signingPublicKey) &&
+                            participant.boxPublicKey.contentEquals(owner.boxPublicKey)
                     },
                 )
             }

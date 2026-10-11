@@ -20,7 +20,9 @@ Users transferring an account to a replacement device; `ExportManager`, `Restore
   trust pins, verification flags, and accepted policy high-water marks. DM graveyard
   rows include public signed tombstone and immutable-origin evidence so restore can
   authenticate the author, exact peer set, scope, origin address, and tombstone
-  address after the per-DM key has been removed. v6 and older remain decodable, but
+  address after the per-DM key has been removed. The backup identity must match
+  either participant's exact signing/box public-key pair; the tombstone signer
+  remains the immutable origin initiator. v6 and older remain decodable, but
   a legacy DM graveyard row without this evidence is rejected during restore; group
   graveyards retain community-key validation. Restore may preserve an existing
   trust level but never marks an unverified host as verified; restoring data cannot

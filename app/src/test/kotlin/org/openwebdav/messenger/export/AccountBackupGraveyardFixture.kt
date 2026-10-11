@@ -23,7 +23,6 @@ internal class AccountBackupGraveyardFixture {
         deletion: ChatDeletionBackup,
         communityId: String = "community-a",
         communityKey: ChatKey? = key,
-        expectedSigner: ByteArray? = null,
     ): Boolean =
         AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
             communityId,
@@ -31,7 +30,6 @@ internal class AccountBackupGraveyardFixture {
             listOf(deletion),
             envelopes,
             crypto,
-            expectedSigner,
         )
 
     fun tamperCiphertext(deletion: ChatDeletionBackup): ChatDeletionBackup {

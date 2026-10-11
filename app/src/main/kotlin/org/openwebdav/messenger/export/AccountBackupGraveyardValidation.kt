@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.export
 
 import org.openwebdav.messenger.crypto.ChatKey
+import org.openwebdav.messenger.governance.CommunityDmParticipant
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.governance.CommunityTombstoneCodec
 import org.openwebdav.messenger.governance.GovernanceObjectKind
@@ -38,7 +39,7 @@ internal object AccountBackupGraveyardValidation {
         deletions: List<ChatDeletionBackup>,
         envelopes: CommunityGovernanceEnvelopeCodec,
         identityCrypto: IdentityCrypto,
-        expectedSignerPublicKey: ByteArray? = null,
+        expectedOwner: CommunityDmParticipant? = null,
     ): Boolean =
         runCatching {
             if (deletions.isNotEmpty()) {
@@ -67,7 +68,7 @@ internal object AccountBackupGraveyardValidation {
                                 record,
                                 communityId,
                                 identityCrypto,
-                                expectedSignerPublicKey,
+                                expectedOwner,
                             )
                         }
                     } finally {

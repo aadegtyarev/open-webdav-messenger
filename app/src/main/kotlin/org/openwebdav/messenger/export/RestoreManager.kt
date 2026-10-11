@@ -11,6 +11,7 @@ import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.NativeCrypto
+import org.openwebdav.messenger.governance.CommunityDmParticipant
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
@@ -267,7 +268,7 @@ class RestoreManager(
         if (community.chatDeletions.isEmpty()) return true
         val key = community.communityKeyBase64?.let(::decodeKey)
         if (community.chatDeletions.any { it.scope == "GROUP" } && key == null) return false
-        val signer = identity.copySignPublic()
+        val owner = CommunityDmParticipant(identity.copySignPublic(), identity.copyBoxPublic())
         return try {
             AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
                 community.id,
@@ -275,10 +276,11 @@ class RestoreManager(
                 community.chatDeletions,
                 CommunityGovernanceEnvelopeCodec(Aead(native)),
                 IdentityCrypto(native),
-                signer,
+                owner,
             )
         } finally {
-            signer.fill(0)
+            owner.signingPublicKey.fill(0)
+            owner.boxPublicKey.fill(0)
         }
     }
 

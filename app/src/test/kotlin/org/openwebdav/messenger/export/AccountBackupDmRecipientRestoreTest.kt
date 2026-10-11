@@ -3,6 +3,7 @@ package org.openwebdav.messenger.export
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.openwebdav.messenger.governance.CommunityDmParticipant
 import java.util.Base64
 
 class AccountBackupDmRecipientRestoreTest {
@@ -14,8 +15,15 @@ class AccountBackupDmRecipientRestoreTest {
             val initiator = ExportTestSupport.freshIdentity()
             val outsider = ExportTestSupport.freshIdentity()
             val deletion = fixture.deletion(recipient, initiator = initiator)
-            assertEquals(true, fixture.isAuthenticated(deletion, recipient.copySignPublic()))
-            assertEquals(false, fixture.isAuthenticated(deletion, outsider.copySignPublic()))
+            assertEquals(true, fixture.isAuthenticated(deletion, fixture.participant(recipient)))
+            assertEquals(false, fixture.isAuthenticated(deletion, fixture.participant(outsider)))
+            assertEquals(
+                false,
+                fixture.isAuthenticated(
+                    deletion,
+                    CommunityDmParticipant(recipient.copySignPublic(), outsider.copyBoxPublic()),
+                ),
+            )
 
             val native = ExportTestSupport.native()
             val backup = AccountBackup("community-a", listOf(community(fixture.key, deletion)))

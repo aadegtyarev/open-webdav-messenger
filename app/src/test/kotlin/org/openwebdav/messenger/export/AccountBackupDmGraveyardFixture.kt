@@ -24,7 +24,7 @@ internal class AccountBackupDmGraveyardFixture {
 
     fun isAuthenticated(
         deletion: ChatDeletionBackup,
-        expectedSigner: ByteArray? = null,
+        expectedOwner: CommunityDmParticipant? = null,
         communityId: String = "community-a",
     ): Boolean =
         AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
@@ -33,7 +33,7 @@ internal class AccountBackupDmGraveyardFixture {
             listOf(deletion),
             envelopes,
             crypto,
-            expectedSigner,
+            expectedOwner,
         )
 
     fun deletion(
@@ -83,7 +83,7 @@ internal class AccountBackupDmGraveyardFixture {
         )
     }
 
-    private fun participant(identity: Identity) = CommunityDmParticipant(identity.copySignPublic(), identity.copyBoxPublic())
+    fun participant(identity: Identity) = CommunityDmParticipant(identity.copySignPublic(), identity.copyBoxPublic())
 
     private fun sign(
         identity: Identity,

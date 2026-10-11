@@ -10,6 +10,7 @@ import org.openwebdav.messenger.export.ChatBackup
 import org.openwebdav.messenger.export.ChatDeletionBackup
 import org.openwebdav.messenger.export.CommunityBackup
 import org.openwebdav.messenger.export.ExportableAccountBackupStore
+import org.openwebdav.messenger.governance.CommunityDmParticipant
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityLoadResult
@@ -113,12 +114,12 @@ internal class AccountBackupStore(
                 check(community.chatDeletions.none { it.scope == "GROUP" } || key != null) {
                     "Cannot export unauthenticated group deletion state"
                 }
-                val expectedSigner =
+                val expectedOwner =
                     if (community.chatDeletions.any { it.scope == "DM" }) {
                         val identity =
                             (IdentityStore(context, verifier).load() as? IdentityLoadResult.Loaded)?.identity
                                 ?: error("Cannot export unauthenticated DM deletion state")
-                        identity.copySignPublic()
+                        CommunityDmParticipant(identity.copySignPublic(), identity.copyBoxPublic())
                     } else {
                         null
                     }
@@ -130,11 +131,12 @@ internal class AccountBackupStore(
                             community.chatDeletions,
                             CommunityGovernanceEnvelopeCodec(Aead(native)),
                             verifier,
-                            expectedSigner,
+                            expectedOwner,
                         ),
                     ) { "Cannot export invalid chat-deletion state" }
                 } finally {
-                    expectedSigner?.fill(0)
+                    expectedOwner?.signingPublicKey?.fill(0)
+                    expectedOwner?.boxPublicKey?.fill(0)
                 }
             }
         }
