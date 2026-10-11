@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.25.1] — 2026-10-12
+
+### Fixed
+
+- Composer clears only the locally persisted submitted draft; queued, sent, and
+  failed bubbles expose truthful accessible status and retry on the failed bubble.
+
 ## [0.25.0] — 2026-10-09
 
 ### Added
