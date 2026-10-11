@@ -102,3 +102,25 @@ Journeys 2 and 3 are the **two ways into Journey 1** — they differ only in how
 **Community settings:** Host role, retention, and community poll floor follow the selected community. A host policy change is considered committed only after WebDAV confirms the write; rejection is shown and the prior committed value remains. Personal theme/font/name and the member's preferred interval remain global.
 
 **Security limit:** The export includes credentials, identity, and encryption keys. Anyone with the blob and password can impersonate the user and access those disk shares. Protect both separately; neither is sent to logs.
+
+---
+
+## Journey 5: Community host — govern creation and delete a chat
+
+1. On an existing community, the host explicitly publishes genesis from Settings;
+   the app shows the host fingerprint for member verification. A member verifies
+   it out-of-band or imports a fresh governance invite. Until verified, host-only
+   delete and policy controls remain unavailable.
+2. A verified host changes public/private group-creation policy independently.
+   Disabling a type requires a complete verified scan; existing immutable origins
+   are grandfathered. If the scan or write is unavailable, the prior policy stays
+   active and Settings offers retry.
+3. A user sees remote delete only when verified origin/host authority permits it.
+   Confirmation names the chat. The app commits local delete-wins state first,
+   then publishes the tombstone; cleanup may remain pending and is retried. A DM
+   participant can always delete locally, while only the signed initiator may
+   delete-for-both. A host never controls a DM.
+
+**Limit:** WebDAV members can bypass cooperative creation policy with legacy
+clients or direct writes. Best-effort remote cleanup does not delete governance
+records and cannot erase peer exports or guarantee secure flash erasure.

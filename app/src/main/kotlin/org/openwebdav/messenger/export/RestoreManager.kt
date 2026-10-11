@@ -8,9 +8,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.account.AccountMutationBarrier
+import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.NativeCrypto
+import org.openwebdav.messenger.governance.CommunityDmParticipant
+import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityLoadResult
 import org.openwebdav.messenger.keystore.AccountIdentifier
 import org.openwebdav.messenger.transport.PathSafety
@@ -192,7 +196,7 @@ class RestoreManager(
                         raw.fill(0)
                     }
                 } ?: legacyBackup(payload.connectionConfig, communityKey, chatKeys) ?: return null
-            if (!validateBackup(backup, chatKeys)) return null
+            if (!validateBackup(backup, chatKeys, identity)) return null
             val accountCommunityKeys = mutableMapOf<String, ChatKey>()
             backup.communities.forEach { community ->
                 community.communityKeyBase64?.let { encoded ->
@@ -238,6 +242,7 @@ class RestoreManager(
     private fun validateBackup(
         backup: AccountBackup,
         chatKeys: Map<String, ChatKey>,
+        identity: Identity,
     ): Boolean =
         chatKeys.keys.all(AccountIdentifier::isValid) &&
             backup.communities.map { it.id }.distinct().size == backup.communities.size &&
@@ -248,11 +253,36 @@ class RestoreManager(
                     AccountIdentifier.isValid(community.anchorChatId) &&
                     community.anchorChatId in community.chats.map { it.id } &&
                     community.chats.isNotEmpty() && community.chats.map { it.id }.distinct().size == community.chats.size &&
+                    AccountBackupDeletionValidation.isValid(community) &&
+                    validateGraveyard(community, identity) &&
                     community.chats.all {
                         AccountIdentifier.isValid(it.id) && it.name.isNotBlank() && it.kind in setOf("general", "group", "dm") &&
                             it.id in chatKeys
                     }
             }
+
+    private fun validateGraveyard(
+        community: CommunityBackup,
+        identity: Identity,
+    ): Boolean {
+        if (community.chatDeletions.isEmpty()) return true
+        val key = community.communityKeyBase64?.let(::decodeKey)
+        if (community.chatDeletions.any { it.scope == "GROUP" } && key == null) return false
+        val owner = CommunityDmParticipant(identity.copySignPublic(), identity.copyBoxPublic())
+        return try {
+            AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
+                community.id,
+                key,
+                community.chatDeletions,
+                CommunityGovernanceEnvelopeCodec(Aead(native)),
+                IdentityCrypto(native),
+                owner,
+            )
+        } finally {
+            owner.signingPublicKey.fill(0)
+            owner.boxPublicKey.fill(0)
+        }
+    }
 
     private fun decodeKey(encoded: String): ChatKey? {
         val raw = ExportPayload.decodeBase64(encoded)

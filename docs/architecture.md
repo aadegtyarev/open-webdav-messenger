@@ -43,6 +43,7 @@ Authoritative byte/path layout: **`docs/protocol/webdav-layout.md`**. This secti
 - **Reaction enum:** 5 fixed reactions, index 0..4; glyphs are UI concern.
 - **Shared-log + per-member change-index** (gen 2): one `log/<id>` write + (M−1) tiny `changes/<member>/` writes. Change index = read-efficiency not access-control — rebuild by listing `log/` (SC11). `webdav-layout.md` §1–§3, §9.
 - **Private membership:** private groups use only per-chat-key-authenticated, identity-signed claims in the separate `private-membership/<chat-id>/` collection; claims are not host authority or community access grants. Public groups and DMs do not publish them. `webdav-layout.md` §12 and the chat-surface contract.
+- **Community governance (v0.25.0):** a verified pinned genesis key authorizes independent public/private group-creation policy and host group deletion; immutable signed origins authorize creator/DM-initiator actions. Updated clients reject prohibited post-policy origins not in the grandfather snapshot; existing chats stay open. Tombstones are append-only and delete-wins; local graveyard commits before best-effort cleanup. See `webdav-layout.md` §13 and the chat/community-settings contracts.
 - **Append-only, content-addressed:** file name = content hash; writer only PUTs new files; reader recomputes hash. `webdav-layout.md` §2–§3.
 - **Ordering & causal tolerance:** best-effort `order-token`; dedup by message-id; `reply-to` may precede target. `webdav-layout.md` §4.
 - **Reject-don't-guess + bounded decompression:** unknown version/kind/codec = typed rejection; decompressed size capped (zip-bomb guard, bound `[?]`).
@@ -92,8 +93,12 @@ One line per decision. Detail in git history. OPEN items are flagged for resolut
 11. **Chat directory substrate:** group-only (DMs hard-rejected); self-signed/community-key-sealed; superseded per chat-id.
 12. **Codec dedup:** shared parse cursor + shared community-directory engine + single-source constant homes.
 13. **Local history encryption (Implemented — 2026-06-14):** Room DB encrypted at rest via SQLCipher + Keystore-wrapped AES-256 key; unencrypted→encrypted migration on first upgrade (ATTACH + sqlcipher_export).
-14. **Account export/restore:** Current external payload and binary codec are v3; strict v2
-    decode preserves explicit chat access, while v1 access remains unknown. Password-
+14. **Account export/restore:** External JSON payload and inner binary codec are independently
+    versioned and currently v7; binary v2 added explicit chat access, v5 trust state, v6
+    complete per-chat graveyard state, and v7 signed tombstone plus DM-origin evidence.
+    Versions v1–v6 remain decodable, but DM graveyards without v7 evidence fail closed on
+    restore; authenticated DM participants may restore those records without the deleted
+    per-chat key. Older v1 formats retain unknown chat access. Password-
     encrypted backups include registered community configs, registries/keys, active
     selection, and identity keypair. Argon2id→XChaCha20-Poly1305 produces a
     base64 blob shareable through Android's Share sheet. Password is mandatory because

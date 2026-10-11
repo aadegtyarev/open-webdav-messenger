@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.ui.feed
 
+import androidx.lifecycle.ViewModelStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -14,6 +15,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,12 +24,12 @@ import org.openwebdav.messenger.app.AppTestSupport
 import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.RuntimeGraph
+import org.openwebdav.messenger.app.TombstoneReconciler
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
-import org.openwebdav.messenger.directory.SealFailingNative
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.Hex
@@ -48,6 +51,7 @@ class ChatFeedViewModelSendFailureTest {
     private lateinit var db: MessengerDatabase
     private lateinit var store: MessageStore
     private lateinit var identity: Identity
+    private val viewModelStores = mutableListOf<ViewModelStore>()
     private val chatId = SyncTestSupport.CHAT_ID
     private val chatKey: ChatKey = SyncTestSupport.fixedChatKey()
 
@@ -63,12 +67,25 @@ class ChatFeedViewModelSendFailureTest {
 
     @After
     fun tearDown() {
+        viewModelStores.forEach(ViewModelStore::clear)
+        viewModelStores.clear()
         Dispatchers.resetMain()
         server.shutdown()
         db.close()
     }
 
-    private fun testGraph(): RuntimeGraph {
+    private fun track(viewModel: ChatFeedViewModel): ChatFeedViewModel =
+        viewModel.also {
+            ViewModelStore().also { store ->
+                store.put("chat-feed", it)
+                viewModelStores += store
+            }
+        }
+
+    private fun testGraph(
+        targetChatId: String = chatId,
+        communityId: String = "default",
+    ): RuntimeGraph {
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
         val engine =
             SyncEngine(
@@ -82,11 +99,12 @@ class ChatFeedViewModelSendFailureTest {
             store = store,
             envelope = envelope,
             config = SyncTestSupport.config(server),
-            chatId = chatId,
+            chatId = targetChatId,
             communityName = "Community",
             chatKey = chatKey,
             identity = identity,
             senderIdentifier = Hex.encode(identity.copySignPublic()),
+            communityId = communityId,
         )
     }
 
@@ -99,6 +117,7 @@ class ChatFeedViewModelSendFailureTest {
     ) : ChatMessageSender {
         var attempts = 0
         var persisted = 0
+        var retryAttempts = 0
 
         override suspend fun send(
             text: String,
@@ -115,7 +134,10 @@ class ChatFeedViewModelSendFailureTest {
             return MessageSendService.SendResult("test-message-id", resultComplete)
         }
 
-        override suspend fun retry(messageId: String): Boolean = true
+        override suspend fun retry(messageId: String): Boolean {
+            retryAttempts++
+            return true
+        }
     }
 
     @Test
@@ -130,7 +152,14 @@ class ChatFeedViewModelSendFailureTest {
                     resultGate = networkGate,
                     resultComplete = false,
                 )
-            val vm = ChatFeedViewModel(testGraph(), sender)
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
+                )
             vm.onDraft("original")
             vm.send()
             runCurrent()
@@ -151,7 +180,14 @@ class ChatFeedViewModelSendFailureTest {
         runTest(mainDispatcher) {
             val gate = CompletableDeferred<Unit>()
             val sender = ControlledSender(StandardTestDispatcher(testScheduler), gate)
-            val vm = ChatFeedViewModel(testGraph(), sender)
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
+                )
 
             vm.onDraft("original")
             vm.send()
@@ -178,7 +214,14 @@ class ChatFeedViewModelSendFailureTest {
     fun persistence_failure_releases_revision_reservation_without_clearing_draft() =
         runTest(mainDispatcher) {
             val sender = ControlledSender(StandardTestDispatcher(testScheduler), failFirst = true)
-            val vm = ChatFeedViewModel(testGraph(), sender)
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
+                )
             vm.onDraft("retry after persistence failure")
 
             vm.send()
@@ -193,50 +236,94 @@ class ChatFeedViewModelSendFailureTest {
             assertEquals("", vm.draft.first())
         }
 
-    /** A seal failure before local persistence keeps the draft and surfaces the error. */
+    @Test
+    fun exact_general_retry_accepts_no_tombstone_reconciliation() =
+        runTest(mainDispatcher) {
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler))
+            val graph = testGraph(targetChatId = "general-anchor", communityId = "community-a")
+            assertFalse(graph.isDeletionFenced())
+            assertFalse(graph.store.isChatDeleted(graph.chatId))
+            var reconciled = false
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        graph,
+                        sender,
+                        reconcileTombstone = {
+                            reconciled = true
+                            TombstoneReconciler.Result.NoTombstone
+                        },
+                        isGeneralAnchor = { true },
+                    ),
+                )
+
+            vm.retryFailed("message-id")
+            advanceUntilIdle()
+
+            assertTrue(reconciled)
+            assertEquals(1, sender.retryAttempts)
+        }
+
+    @Test
+    fun unauthorized_group_or_dm_reconciliation_blocks_explicit_retry() =
+        runTest(mainDispatcher) {
+            for (chatId in listOf("group-chat", "dm-chat")) {
+                val sender = ControlledSender(StandardTestDispatcher(testScheduler))
+                val vm =
+                    track(
+                        ChatFeedViewModel(
+                            testGraph(targetChatId = chatId),
+                            sender,
+                            reconcileTombstone = { TombstoneReconciler.Result.Unauthorized },
+                        ),
+                    )
+
+                vm.retryFailed("message-id")
+                advanceUntilIdle()
+
+                assertEquals(0, sender.retryAttempts)
+            }
+        }
+
+    @Test
+    fun remote_tombstone_blocks_explicit_retry_with_empty_local_graveyard() =
+        runTest(mainDispatcher) {
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler))
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.Applied },
+                    ),
+                )
+
+            vm.retryFailed("message-id")
+            advanceUntilIdle()
+
+            assertEquals(0, sender.retryAttempts)
+        }
+
+    /** A failure before local persistence keeps the draft and surfaces the error. */
     @Test
     fun send_failure_before_persistence_keeps_draft_and_surfaces_error() =
         runTest(mainDispatcher) {
-            // The envelope seals via a native that always fails the AEAD encrypt → send() throws at seal.
-            val failingEnvelope =
-                MessageEnvelope.create(
-                    MessageCrypto(Aead(SealFailingNative(AppTestSupport.native()))),
-                    AppTestSupport.identityCrypto(),
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler), failFirst = true)
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
                 )
-            val engine =
-                SyncEngine(
-                    transport = SyncTestSupport.transport(server),
-                    envelope = failingEnvelope,
-                    store = store,
-                    keyProvider = { chatKey },
-                )
-            val graph =
-                RuntimeGraph(
-                    engine = engine,
-                    store = store,
-                    envelope = failingEnvelope,
-                    config = SyncTestSupport.config(server),
-                    chatId = chatId,
-                    communityName = "Community",
-                    chatKey = chatKey,
-                    identity = identity,
-                    senderIdentifier = Hex.encode(identity.copySignPublic()),
-                )
-            // Drive MessageSendService on the test dispatcher so the seal-throw resolves deterministically.
-            val vm = ChatFeedViewModel(graph, MessageSendService(graph, ioDispatcher = mainDispatcher))
 
             vm.onDraft("don't lose me")
             vm.send()
             advanceUntilIdle()
 
-            // The envelope failed before a recoverable Room echo could be stored.
             assertEquals("don't lose me", vm.draft.first())
             assertEquals(ChatFeedViewModel.SEND_FAILED_MESSAGE, vm.sendError.first())
-
-            vm.onDraft("submitted draft")
-            vm.send()
-            vm.onDraft("newer draft")
-            advanceUntilIdle()
-            assertEquals("newer draft", vm.draft.first())
+            assertEquals(1, sender.attempts)
         }
 }

@@ -2,6 +2,8 @@ package org.openwebdav.messenger.data
 
 import androidx.paging.PagingSource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import org.openwebdav.messenger.message.Message
 import org.openwebdav.messenger.message.ReactionMessage
 import org.openwebdav.messenger.message.TextMessage
@@ -33,8 +35,9 @@ class MessageStore(
         outboxEnvelope: ByteArray? = null,
         outboxRecipients: List<String> = emptyList(),
         outboxCommunityId: String? = null,
+        peerMessage: Boolean = true,
     ): Boolean =
-        messageDao.insertIgnore(
+        messageDao.insertUnlessSuppressed(
             toEntity(
                 messageId,
                 orderToken,
@@ -46,6 +49,7 @@ class MessageStore(
                 outboxCommunityId,
                 communityId,
             ),
+            peerMessage,
         ) != DEDUP_NO_ROW
 
     /** Mark a locally-sent message as fully delivered and discard its retry payload. */
@@ -97,6 +101,50 @@ class MessageStore(
         messageDao.recoverInterruptedOutgoing(communityId)
     }
 
+    fun observeDeletedChatKeys(): Flow<Set<Pair<String, String>>> =
+        combine(messageDao.observeHiddenDms(), messageDao.observeChatDeletions()) { hidden, deletions ->
+            (hidden.map { it.communityId to it.chatId } + deletions.map { it.communityId to it.chatId }).toSet()
+        }
+
+    suspend fun isChatDeleted(chatId: String): Boolean = messageDao.isChatDeleted(communityId, chatId)
+
+    suspend fun isOutgoingBlocked(chatId: String): Boolean = isChatDeleted(chatId) || messageDao.isDmHidden(communityId, chatId)
+
+    suspend fun chatDeletion(chatId: String): ChatDeletionEntity? = messageDao.chatDeletion(communityId, chatId)
+
+    suspend fun dueChatDeletions(
+        nowMillis: Long,
+        limit: Int,
+    ): List<ChatDeletionEntity> = messageDao.dueChatDeletions(nowMillis, limit)
+
+    suspend fun updateDeletionRetry(
+        deletion: ChatDeletionEntity,
+        attempts: Int,
+        nextAttemptAtMillis: Long,
+        lastError: String?,
+        updatedAtMillis: Long,
+    ): Boolean =
+        messageDao.updateDeletionRetry(
+            deletion.communityId,
+            deletion.chatId,
+            deletion.tombstoneHash,
+            attempts,
+            nextAttemptAtMillis,
+            lastError,
+            updatedAtMillis,
+        ) == 1
+
+    suspend fun commitChatDeletion(deletion: ChatDeletionEntity): ChatDeletionCommitResult =
+        if (deletion.communityId == communityId) messageDao.commitChatDeletion(deletion) else ChatDeletionCommitResult.Conflict
+
+    suspend fun transitionDeletionPhase(
+        chatId: String,
+        tombstoneHash: String,
+        expectedPhase: String,
+        nextPhase: String,
+        updatedAtMillis: Long,
+    ): Boolean = messageDao.transitionDeletionPhase(communityId, chatId, tombstoneHash, expectedPhase, nextPhase, updatedAtMillis) == 1
+
     /** Mark all messages in [chatId] up to [orderToken] as READ (for received messages viewed by the user). */
     suspend fun markMessagesReadUpTo(
         chatId: String,
@@ -121,6 +169,10 @@ class MessageStore(
         }
     }
 
+    suspend fun hideAndPurgeDm(chatId: String): DmLocalDeleteResult = messageDao.hideAndPurgeDm(communityId, chatId)
+
+    suspend fun isDmHidden(chatId: String): Boolean = messageDao.isDmHidden(communityId, chatId)
+
     /** Observable, ordered history for a chat (offline, off-main-thread, §6). */
     fun observeChat(chatId: String): Flow<List<MessageEntity>> = messageDao.observeChat(communityId, chatId)
 
@@ -129,6 +181,11 @@ class MessageStore(
 
     /** One-shot ordered read (tests / non-observable callers). */
     suspend fun messagesForChat(chatId: String): List<MessageEntity> = messageDao.messagesForChat(communityId, chatId)
+
+    suspend fun messageById(
+        messageId: String,
+        ownerCommunityId: String = communityId,
+    ): MessageEntity? = messageDao.messageById(ownerCommunityId, messageId)
 
     /** Observable count of unread messages (sendStatus = 'SENT') for a chat. */
     fun observeUnreadCount(chatId: String): Flow<Int> = messageDao.observeUnreadCount(communityId, chatId)

@@ -60,6 +60,8 @@ UI conventions for this project. Read by agents before planning or reviewing any
   management or alter background delivery.
 - **Notification permission:** On Android 13+, explain the message-alert benefit before an explicit permission request. After denial, show guidance and a system-settings link instead of repeatedly prompting. Older versions do not request runtime notification permission.
 - **Account recovery:** Restore is available from Start and Settings. Success returns to the Chats list only after usable runtime activation; validation/store failures must remain truthful and must not be reported as completed activation.
+- **Chat deletion:** Destructive actions use accessible title/typed confirmation. Local DM deletion remains available regardless of remote authority. Remote deletion is exposed only after verified authority projection; loading and unavailable states provide progress/retry without showing an unauthorized action. Show local committed, tombstone published, cleanup pending, and complete as distinct outcomes.
+- **Community governance:** Existing-community genesis migration and host creation-policy controls are explicit Settings actions. Display the host fingerprint and verification state; hide host-only controls until verified authority is established. Public/private creation toggles remain independent.
 
 ---
 

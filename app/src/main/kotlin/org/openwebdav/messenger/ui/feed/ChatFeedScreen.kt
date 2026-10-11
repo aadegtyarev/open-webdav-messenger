@@ -22,11 +22,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -66,7 +68,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.openwebdav.messenger.R
+import org.openwebdav.messenger.app.ChatDeleteCapability
+import org.openwebdav.messenger.app.ChatDeletionStatus
 import org.openwebdav.messenger.app.RecipientReadiness
+import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
 import org.openwebdav.messenger.ui.FeedViewModelFactory
@@ -84,6 +89,12 @@ internal fun ChatFeedScreen(
     onShowInvite: () -> Unit,
     onShowParticipants: () -> Unit = {},
     onBack: () -> Unit = {},
+    canDeleteLocalDm: Boolean = false,
+    canDeleteForAll: Boolean = false,
+    deleteCapabilityOverride: ChatDeleteCapability? = null,
+    chatTitle: String = "",
+    onLocalDmDeleted: () -> Unit = {},
+    onChatDeleted: (ChatDeletionStatus) -> Unit = {},
     viewModel: ChatFeedViewModel =
         viewModel(
             key = runtimeScopeKey("feed"),
@@ -98,12 +109,115 @@ internal fun ChatFeedScreen(
     val memberNamesError by viewModel.memberNamesError.collectAsStateWithLifecycle()
     val recipientReadiness by viewModel.recipientReadiness.collectAsStateWithLifecycle()
     val privateClaimStatus by viewModel.privateClaimStatus.collectAsStateWithLifecycle()
+    val projectedDeleteCapability by viewModel.deleteCapability.collectAsStateWithLifecycle()
+    val deleteCapability = deleteCapabilityOverride ?: projectedDeleteCapability
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val rosterLoadingLabel = stringResource(R.string.roster_loading_accessibility)
     val rosterLoadingExplanation = stringResource(R.string.roster_loading_explanation)
+    val deleteAuthorityLoadingLabel = stringResource(R.string.chat_delete_authority_loading)
+    val deleteAuthorityRetryLabel = stringResource(R.string.chat_delete_authority_retry)
+    var showDeleteDmConfirmation by remember { mutableStateOf(false) }
+    var showDeleteChatConfirmation by remember { mutableStateOf(false) }
+    var typedDeleteTitle by remember { mutableStateOf("") }
+    var deletingChat by remember { mutableStateOf(false) }
+
+    if (showDeleteChatConfirmation) {
+        AlertDialog(
+            onDismissRequest = { if (!deletingChat) showDeleteChatConfirmation = false },
+            title = { Text(stringResource(R.string.chat_delete_all_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.chat_delete_all_confirmation, chatTitle))
+                    OutlinedTextField(
+                        value = typedDeleteTitle,
+                        onValueChange = { typedDeleteTitle = it },
+                        label = { Text(stringResource(R.string.dm_delete_type_title)) },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !deletingChat && typedDeleteTitle == chatTitle,
+                    onClick = {
+                        deletingChat = true
+                        viewModel.deleteGroupForAll { result ->
+                            deletingChat = false
+                            showDeleteChatConfirmation = false
+                            typedDeleteTitle = ""
+                            if (result in
+                                setOf(
+                                    ChatDeletionStatus.LOCAL_COMMITTED,
+                                    ChatDeletionStatus.TOMBSTONE_PUBLISHED,
+                                    ChatDeletionStatus.CLEANUP_PENDING,
+                                    ChatDeletionStatus.COMPLETE,
+                                )
+                            ) {
+                                onChatDeleted(result)
+                            } else {
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar(context.getString(R.string.chat_delete_failure))
+                                }
+                            }
+                        }
+                    },
+                ) { Text(stringResource(R.string.chat_delete_all_action)) }
+            },
+            dismissButton = {
+                TextButton(enabled = !deletingChat, onClick = { showDeleteChatConfirmation = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (showDeleteDmConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDmConfirmation = false },
+            title = { Text(stringResource(R.string.dm_delete_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.dm_delete_confirmation, chatTitle))
+                    OutlinedTextField(
+                        value = typedDeleteTitle,
+                        onValueChange = { typedDeleteTitle = it },
+                        label = { Text(stringResource(R.string.dm_delete_type_title)) },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = typedDeleteTitle == chatTitle,
+                    onClick = {
+                        showDeleteDmConfirmation = false
+                        typedDeleteTitle = ""
+                        viewModel.deleteLocalDm { result ->
+                            when (result) {
+                                DmLocalDeleteResult.Deleted, DmLocalDeleteResult.AlreadyHidden -> onLocalDmDeleted()
+                                DmLocalDeleteResult.SuppressionLimitReached ->
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.dm_delete_limit))
+                                    }
+                                DmLocalDeleteResult.StorageFailure ->
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar(context.getString(R.string.dm_delete_failure))
+                                    }
+                            }
+                        }
+                    },
+                ) { Text(stringResource(R.string.dm_delete_action)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDmConfirmation = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     // Show member-names error as a one-shot snackbar, then clear.
     LaunchedEffect(memberNamesError) {
@@ -247,6 +361,39 @@ internal fun ChatFeedScreen(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                     ) {
                         Icon(Icons.Filled.People, contentDescription = stringResource(R.string.participants_action))
+                    }
+                    if (deleteCapability is ChatDeleteCapability.Loading) {
+                        CircularProgressIndicator(
+                            modifier =
+                                Modifier.size(24.dp).semantics {
+                                    contentDescription = deleteAuthorityLoadingLabel
+                                    progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+                                },
+                            strokeWidth = 2.dp,
+                        )
+                    } else if (deleteCapability is ChatDeleteCapability.Unavailable) {
+                        IconButton(
+                            onClick = viewModel::refreshDeleteCapability,
+                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                        ) {
+                            Icon(Icons.Filled.Refresh, contentDescription = deleteAuthorityRetryLabel)
+                        }
+                    }
+                    if (canDeleteForAll || deleteCapability is ChatDeleteCapability.Available) {
+                        IconButton(
+                            onClick = { showDeleteChatConfirmation = true },
+                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.chat_delete_all_action))
+                        }
+                    }
+                    if (canDeleteLocalDm) {
+                        IconButton(
+                            onClick = { showDeleteDmConfirmation = true },
+                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                        ) {
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.dm_delete_action))
+                        }
                     }
                     IconButton(onClick = onShowInvite) {
                         Icon(Icons.Filled.PersonAdd, contentDescription = "Invite someone")

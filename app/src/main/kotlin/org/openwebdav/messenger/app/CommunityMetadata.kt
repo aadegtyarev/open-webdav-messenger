@@ -63,6 +63,22 @@ internal data class CommunityMetadata(
          * The signature covers the raw JSON bytes BEFORE parsing, so the verify-before-parse order
          * prevents any JSON-parser-level attack from bypassing the signature check.
          */
+        suspend fun isSignedBy(
+            transport: WebDavTransport,
+            expectedHostSigningKey: ByteArray,
+            identityCrypto: IdentityCrypto,
+        ): Boolean {
+            val read = transport.readRaw(FILE_PATH)
+            if (read !is WebDavResult.Success) return false
+            val bytes = read.value
+            if (bytes.size < SIGNATURE_BYTES + HOST_KEY_BYTES) return false
+            val signature = bytes.copyOfRange(0, SIGNATURE_BYTES)
+            val hostKey = bytes.copyOfRange(bytes.size - HOST_KEY_BYTES, bytes.size)
+            val payload = bytes.copyOfRange(SIGNATURE_BYTES, bytes.size - HOST_KEY_BYTES)
+            return hostKey.contentEquals(expectedHostSigningKey) &&
+                identityCrypto.verify(signature, payload, hostKey) && parsePayload(payload) != null
+        }
+
         suspend fun read(
             transport: WebDavTransport,
             identityCrypto: IdentityCrypto,

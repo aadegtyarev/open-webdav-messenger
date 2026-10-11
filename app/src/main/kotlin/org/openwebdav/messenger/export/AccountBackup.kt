@@ -18,6 +18,20 @@ data class CommunityBackup(
     val isHost: Boolean = false,
     val pollFloorSeconds: Int = 60,
     val retentionWindowDays: Int = 14,
+    val hiddenDmChatIds: List<String> = emptyList(),
+    val suppressedDmMessageIds: Map<String, List<String>> = emptyMap(),
+    val genesisRecordBase64: String? = null,
+    val hostFingerprintVerified: Boolean = false,
+    val highestPolicyRevision: Long = 0,
+    val highestPolicyHash: String? = null,
+    val chatDeletions: List<ChatDeletionBackup> = emptyList(),
+)
+
+data class CommunityTrustBackup(
+    val genesisRecordBase64: String,
+    val fingerprintVerified: Boolean,
+    val highestPolicyRevision: Long,
+    val highestPolicyHash: String?,
 )
 
 data class ChatBackup(

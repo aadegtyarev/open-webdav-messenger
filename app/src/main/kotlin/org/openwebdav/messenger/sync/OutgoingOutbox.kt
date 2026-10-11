@@ -33,9 +33,15 @@ internal class OutgoingOutbox(
         communityId: String,
         senderIdentifier: String,
     ): SendOutcome? {
+        val outgoing = store.messageById(messageId, communityId) ?: return null
+        if (store.isOutgoingBlocked(outgoing.chatId)) return null
         val claimToken = UUID.randomUUID().toString()
         return try {
             val message = store.claimOutgoing(messageId, communityId, claimToken) ?: return null
+            if (store.isOutgoingBlocked(message.chatId)) {
+                store.failOutgoingClaim(message.messageId, communityId, claimToken)
+                return null
+            }
             val envelope = message.outboxEnvelope ?: return null
             val recipients = message.outboxRecipients?.split('\n')?.filter(String::isNotBlank).orEmpty()
             val outcome =

@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.app
 
+import android.content.Context
 import com.goterl.lazysodium.LazySodiumJava
 import com.goterl.lazysodium.SodiumJava
 import okhttp3.OkHttpClient
@@ -11,13 +12,17 @@ import org.openwebdav.messenger.crypto.KeySources
 import org.openwebdav.messenger.crypto.LazySodiumCrypto
 import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.crypto.NativeCrypto
+import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.identity.IdentityTestSupport
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.invite.InviteToken
 import org.openwebdav.messenger.keystore.ChatKeyStorePort
+import org.openwebdav.messenger.keystore.ChatRegistry
+import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.protocol.Hex
@@ -64,6 +69,54 @@ internal object AppTestSupport {
             identity, Hex.encode(identity.copySignPublic()), communityId = communityId,
             privateMembershipChat = privateMembershipChat,
             initialRecipientReadiness = readiness,
+        )
+    }
+
+    fun configureGeneralRetryStorage(
+        context: Context,
+        communityId: String,
+        anchorId: String,
+        otherChatId: String,
+        config: ConnectionConfig,
+        chatKey: ChatKey,
+    ) {
+        val communities = CommunityRegistry(context)
+        communities.replace(
+            communities.all().filterNot { it.id == communityId } + CommunityRegistry.Entry(communityId, "Community", anchorId),
+        )
+        ChatRegistry(context).replace(
+            communityId,
+            listOf(ChatRegistry.Entry(anchorId, "General", "general"), ChatRegistry.Entry(otherChatId, "Other", "general")),
+        )
+        AppContainer.configureChatOpenTestSeam(
+            communityId,
+            AppContainer.ChatOpenTestSeam(
+                loadChatKey = { chatKey },
+                loadStored = { requested -> StoredConnection(config, anchorId, "Community").takeIf { requested == communityId } },
+                readDirectory = { error("Unexpected directory read") },
+            ),
+        )
+    }
+
+    fun outgoingTestGraph(
+        server: MockWebServer,
+        store: MessageStore,
+        identity: Identity,
+        key: ChatKey,
+        chatId: String,
+        communityId: String,
+    ): RuntimeGraph {
+        val envelope = MessageEnvelope.create(MessageCrypto(Aead(native())), identityCrypto())
+        val engine =
+            SyncEngine(
+                transport = SyncTestSupport.transport(server),
+                envelope = envelope,
+                store = store,
+                keyProvider = { requested -> if (requested == chatId) key else null },
+            )
+        return RuntimeGraph(
+            engine, store, envelope, SyncTestSupport.config(server), chatId, "Community", key,
+            identity, Hex.encode(identity.copySignPublic()), communityId = communityId,
         )
     }
 
@@ -186,6 +239,20 @@ internal object AppTestSupport {
         val idCrypto = IdentityTestSupport.identityCrypto()
         val identity = idCrypto.generateIdentity()
         val codec = InviteCodec(idCrypto)
+        val genesisSecret = identity.copySignSecret()
+        val genesis =
+            try {
+                CommunityGenesisCodec.sign(
+                    chatId,
+                    identity.copySignPublic(),
+                    identity.copyBoxPublic(),
+                    ByteArray(32),
+                    genesisSecret,
+                    idCrypto,
+                )
+            } finally {
+                genesisSecret.fill(0)
+            }
         val token =
             InviteToken(
                 baseUrl = config.baseUrl,
@@ -193,6 +260,8 @@ internal object AppTestSupport {
                 appPassword = config.appPassword,
                 chatRoot = config.chatRoot,
                 chatId = chatId,
+                communityId = chatId,
+                genesisRecord = genesis,
                 chatKey = chatKey.export(),
                 communityName = communityName,
                 access = access,
@@ -247,6 +316,35 @@ internal class RecordingOnboardingDeps(
     }
 
     override suspend fun ensureIdentity(): Identity = identity
+
+    override fun createHostGenesis(
+        communityId: String,
+        identity: Identity,
+    ): ByteArray {
+        val crypto = AppTestSupport.identityCrypto()
+        val secret = identity.copySignSecret()
+        val nonce = ByteArray(32) { 1 }
+        return try {
+            CommunityGenesisCodec.sign(
+                communityId,
+                identity.copySignPublic(),
+                identity.copyBoxPublic(),
+                nonce,
+                secret,
+                crypto,
+            )
+        } finally {
+            nonce.fill(0)
+            secret.fill(0)
+        }
+    }
+
+    override suspend fun publishHostGenesis(
+        config: ConnectionConfig,
+        communityId: String,
+        genesisRecord: ByteArray,
+        communityKey: ChatKey,
+    ): Boolean = true
 
     override fun newChatId(): String = chatIdToMint
 

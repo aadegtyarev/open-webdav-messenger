@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -52,6 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -63,8 +65,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.CommunityMetadataUpdate
+import org.openwebdav.messenger.app.GenesisMigrationResult
 import org.openwebdav.messenger.app.NotificationPermissionPolicy
 import org.openwebdav.messenger.app.UpdateChecker
 import kotlin.math.abs
@@ -85,6 +89,7 @@ private val POLL_FLOOR_OPTIONS = listOf(15, 30, 60, 120, 300, 600, 900, 1800, 36
 @Composable
 internal fun SettingsScreen(
     onBack: () -> Unit,
+    communityId: String = AppContainer.activeCommunityId,
     isHost: Boolean = false,
     retentionWindowDays: Int = UserSettings.DEFAULT_RETENTION_WINDOW_DAYS,
     communityPollFloor: Int = UserSettings.DEFAULT_POLL_INTERVAL_SECONDS,
@@ -151,6 +156,16 @@ internal fun SettingsScreen(
 
             PollFloorSection(isHost, communityPollFloor, onPollFloorChanged, snackbarHostState)
 
+            CommunityHostIdentitySection(snackbarHostState, isHost)
+
+            CreationPolicySettingsSection(
+                communityId = communityId,
+                canAdminister = isHost && AppContainer.isCurrentCommunityVerifiedHost(),
+                snackbarHostState = snackbarHostState,
+                readPolicy = AppContainer::readCreationPolicySettings,
+                updatePolicy = AppContainer::updateCreationPolicy,
+            )
+
             PersonalPollSection(snackbarHostState)
 
             NotificationPermissionSection()
@@ -165,6 +180,84 @@ internal fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
             UpdateSection()
+        }
+    }
+}
+
+@Composable
+private fun CommunityHostIdentitySection(
+    snackbarHostState: SnackbarHostState,
+    isHost: Boolean,
+) {
+    val communityId = AppContainer.activeCommunityId
+    val scope = rememberCoroutineScope()
+    var fingerprint by remember(communityId) { mutableStateOf(AppContainer.communityHostFingerprint()) }
+    var expected by remember(communityId) { mutableStateOf("") }
+    var verified by remember(communityId) { mutableStateOf(AppContainer.communityHostFingerprintVerified()) }
+    var publishing by remember(communityId) { mutableStateOf(false) }
+    val successMessage = stringResource(R.string.community_host_verify_success)
+    val failureMessage = stringResource(R.string.community_host_verify_failure)
+    val publishSuccess = stringResource(R.string.community_genesis_publish_success)
+    val publishFailure = stringResource(R.string.community_genesis_publish_failure)
+
+    Text(stringResource(R.string.community_host_identity_title), style = MaterialTheme.typography.titleMedium)
+    if (fingerprint == null && isHost) {
+        Text(stringResource(R.string.community_genesis_migration_guidance), style = MaterialTheme.typography.bodySmall)
+        Button(
+            onClick = {
+                if (publishing) return@Button
+                publishing = true
+                scope.launch {
+                    val result = AppContainer.publishExistingCommunityGenesis()
+                    publishing = false
+                    if (result in setOf(GenesisMigrationResult.Published, GenesisMigrationResult.AlreadyPublished)) {
+                        fingerprint = AppContainer.communityHostFingerprint()
+                        verified = AppContainer.communityHostFingerprintVerified()
+                    }
+                    snackbarHostState.showSnackbar(
+                        if (result in setOf(GenesisMigrationResult.Published, GenesisMigrationResult.AlreadyPublished)) {
+                            publishSuccess
+                        } else {
+                            publishFailure
+                        },
+                    )
+                }
+            },
+            enabled = !publishing,
+        ) {
+            if (publishing) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+            } else {
+                Text(stringResource(R.string.community_genesis_publish))
+            }
+        }
+    }
+    fingerprint?.let { value ->
+        SelectionContainer {
+            Text(stringResource(R.string.community_host_fingerprint, value))
+        }
+    }
+    if (verified) {
+        Text(stringResource(R.string.community_host_verified))
+    } else {
+        Text(stringResource(R.string.community_host_unverified), style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(
+            value = expected,
+            onValueChange = { expected = it },
+            label = { Text(stringResource(R.string.community_host_fingerprint_hint)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = {
+                val matched = AppContainer.verifyCommunityHostFingerprint(expected)
+                if (matched) verified = true
+                scope.launch { snackbarHostState.showSnackbar(if (matched) successMessage else failureMessage) }
+            },
+            enabled = expected.isNotBlank(),
+        ) {
+            Text(stringResource(R.string.community_host_verify))
         }
     }
 }

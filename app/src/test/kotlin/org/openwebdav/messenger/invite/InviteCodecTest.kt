@@ -8,6 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.openwebdav.messenger.chatdirectory.ChatAccess
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.IdentityTestSupport
 
 /**
@@ -21,6 +22,21 @@ class InviteCodecTest {
     private val codec = InviteCodec(identityCrypto)
 
     private fun sampleToken(access: ChatAccess = ChatAccess.PUBLIC): InviteToken {
+        val communityId = "chatidchatidchatidchatid01"
+        val genesisSecret = identity.copySignSecret()
+        val genesis =
+            try {
+                CommunityGenesisCodec.sign(
+                    communityId,
+                    identity.copySignPublic(),
+                    identity.copyBoxPublic(),
+                    ByteArray(32) { 7 },
+                    genesisSecret,
+                    identityCrypto,
+                )
+            } finally {
+                genesisSecret.fill(0)
+            }
         val token =
             InviteToken(
                 // Obvious fake values (SC21 — no secret material in source/tests).
@@ -28,7 +44,9 @@ class InviteCodecTest {
                 username = "owner-login",
                 appPassword = "fake-app-password-not-real",
                 chatRoot = "owdm/community-root",
-                chatId = "chatidchatidchatidchatid01",
+                chatId = communityId,
+                communityId = communityId,
+                genesisRecord = genesis,
                 chatKey = ByteArray(InviteToken.CHAT_KEY_BYTES) { (it * 7 + 1).toByte() },
                 communityName = "Тестовое сообщество 🚀 with unicode + \"quotes\"",
                 access = access,
@@ -95,8 +113,10 @@ class InviteCodecTest {
         val badKey = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(4))
         val base = sampleToken()
         val json =
-            "{\"v\":\"2\",\"u\":\"${base.baseUrl}\",\"n\":\"${base.username}\",\"p\":\"${base.appPassword}\"," +
-                "\"r\":\"${base.chatRoot}\",\"c\":\"${base.chatId}\",\"k\":\"$badKey\",\"m\":\"${base.communityName}\"," +
+            "{\"v\":\"3\",\"u\":\"${base.baseUrl}\",\"n\":\"${base.username}\",\"p\":\"${base.appPassword}\"," +
+                "\"r\":\"${base.chatRoot}\",\"c\":\"${base.chatId}\",\"d\":\"${base.communityId}\", " +
+                "\"x\":\"${java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(base.genesisRecord)}\", " +
+                "\"k\":\"$badKey\",\"m\":\"${base.communityName}\"," +
                 "\"a\":\"public\",\"s\":\"${java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(base.signingPublicKey)}\"," +
                 "\"g\":\"${java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(base.signature)}\"}"
         assertReject(codec.decodeBlocking(InviteCodec.PREFIX + gzipBase64(json)))

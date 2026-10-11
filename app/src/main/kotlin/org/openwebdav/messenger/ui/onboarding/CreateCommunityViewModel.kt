@@ -64,6 +64,9 @@ internal class CreateCommunityViewModel(
                 is OnboardingService.CreateResult.FolderError ->
                     _state.update { it.copy(submitting = false, generalError = result.message) }
 
+                is OnboardingService.CreateResult.GenesisTrustFailure ->
+                    _state.update { it.copy(submitting = false, generalError = GENESIS_TRUST_FAILED_MESSAGE) }
+
                 is OnboardingService.CreateResult.Created -> {
                     _state.update { it.copy(submitting = false) }
                     onCreated()
@@ -101,6 +104,9 @@ internal class CreateCommunityViewModel(
 
         /** Plain-language message when create fails (disk unreachable / device error). */
         const val CREATE_FAILED_MESSAGE = "Couldn't create the community right now — check your details and try again."
+
+        /** Host trust must be durable before a new account is activated. */
+        const val GENESIS_TRUST_FAILED_MESSAGE = "Couldn't securely save the community host identity. Try again."
 
         /** The folder already has files — refuse to write into someone else's space. */
         const val FOLDER_OCCUPIED_MESSAGE = "This folder already has files in it — pick a different one to avoid mixing up communities."

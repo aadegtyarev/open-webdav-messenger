@@ -12,6 +12,7 @@ import org.openwebdav.messenger.sync.ChatSubscription
 import org.openwebdav.messenger.sync.SyncEngine
 import org.openwebdav.messenger.transport.ConnectionConfig
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -56,6 +57,14 @@ internal class RuntimeGraph(
             )
         },
 ) {
+    private val deletionFence = AtomicBoolean(false)
+
+    fun fenceDeletedChat() {
+        deletionFence.set(true)
+    }
+
+    fun isDeletionFenced(): Boolean = deletionFence.get()
+
     private val recipientRoster =
         VerifiedRecipientRoster(
             initialRecipientReadiness.withLocalSelf(identity.copySignPublic()),

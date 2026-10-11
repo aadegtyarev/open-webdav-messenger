@@ -9,11 +9,16 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.ChatDeleteCapability
+import org.openwebdav.messenger.app.ChatDeletionStatus
 import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.ReadReceiptService
 import org.openwebdav.messenger.app.RuntimeGraph
+import org.openwebdav.messenger.app.TombstoneReconciler
+import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageEntity
 import org.openwebdav.messenger.membership.PrivateClaimPublicationStatus
 import org.openwebdav.messenger.transport.TransportFactory
@@ -33,10 +38,31 @@ import org.openwebdav.messenger.transport.TransportFactory
 internal class ChatFeedViewModel(
     private val graph: RuntimeGraph,
     private val sendService: ChatMessageSender = MessageSendService(graph, isCurrent = { AppContainer.runtimeGraph() === graph }),
+    private val reconcileTombstone: suspend () -> TombstoneReconciler.Result = {
+        AppContainer.reconcileRemoteTombstone(graph.communityId, graph.chatId, expectedGraph = graph)
+    },
+    private val isGeneralAnchor: () -> Boolean = {
+        AppContainer.isExactUndeletableGeneralAnchor(graph.communityId, graph.chatId)
+    },
 ) : ViewModel() {
     val communityName: String = graph.communityName
     val recipientReadiness = graph.recipientReadiness
     val privateClaimStatus: StateFlow<PrivateClaimPublicationStatus> = graph.privateClaimStatus
+    private val _deleteCapability = MutableStateFlow<ChatDeleteCapability>(ChatDeleteCapability.Loading)
+    val deleteCapability: StateFlow<ChatDeleteCapability> = _deleteCapability
+
+    init {
+        refreshDeleteCapability()
+    }
+
+    fun refreshDeleteCapability() {
+        _deleteCapability.value = ChatDeleteCapability.Loading
+        viewModelScope.launch {
+            _deleteCapability.value =
+                runCatching { AppContainer.projectDeleteForAllCapability(graph) }
+                    .getOrDefault(ChatDeleteCapability.Unavailable)
+        }
+    }
 
     /** Error from the last member-name load — observed from the shared RuntimeGraph. */
     val memberNamesError: StateFlow<String?> = graph.memberNamesError
@@ -91,6 +117,12 @@ internal class ChatFeedViewModel(
         viewModelScope.launch {
             var clearedRevision: Long? = null
             try {
+                val reconciliation =
+                    reconcileTombstone()
+                if (reconciliation !in setOf(TombstoneReconciler.Result.NoTombstone, TombstoneReconciler.Result.Unauthorized)) {
+                    _sendError.value = SEND_FAILED_MESSAGE
+                    return@launch
+                }
                 val result =
                     sendService.send(text) {
                         if (draftRevision == sendDraftRevision && _draft.value == originalDraft) {
@@ -114,9 +146,33 @@ internal class ChatFeedViewModel(
         }
     }
 
+    fun deleteGroupForAll(onResult: (ChatDeletionStatus) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching { AppContainer.deleteForAll(graph) }.getOrDefault(ChatDeletionStatus.CONFLICT)
+            onResult(result)
+        }
+    }
+
+    fun deleteLocalDm(onResult: (DmLocalDeleteResult) -> Unit) {
+        viewModelScope.launch {
+            val result =
+                try {
+                    AccountMutationBarrier.process.withExclusive {
+                        graph.store.hideAndPurgeDm(graph.chatId)
+                    }
+                } catch (_: Exception) {
+                    DmLocalDeleteResult.StorageFailure
+                }
+            onResult(result)
+        }
+    }
+
     /** Retry the current chat's verified roster lookup without leaving local history. */
     fun retryRecipientRoster() {
-        AppContainer.retryRecipientRoster(graph)
+        viewModelScope.launch {
+            AppContainer.retryPendingChatDeletions()
+            AppContainer.retryRecipientRoster(graph)
+        }
     }
 
     /** Retry the durable original operation; never mint a replacement message ID or envelope. */
@@ -126,7 +182,17 @@ internal class ChatFeedViewModel(
         viewModelScope.launch {
             val delivered =
                 try {
-                    sendService.retry(messageId)
+                    if (reconcileTombstone() != TombstoneReconciler.Result.NoTombstone) {
+                        false
+                    } else {
+                        val generalAnchor = isGeneralAnchor()
+                        if (graph.isDeletionFenced() || (!generalAnchor && graph.store.isChatDeleted(graph.chatId))) {
+                            false
+                        } else {
+                            if (!generalAnchor) AppContainer.retryPendingChatDeletions()
+                            sendService.retry(messageId)
+                        }
+                    }
                 } catch (_: Exception) {
                     false
                 }

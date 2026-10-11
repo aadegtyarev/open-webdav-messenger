@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.25.0] — 2026-10-09
+
+### Added
+
+- Community-signed genesis, explicit host fingerprint trust, immutable group/DM
+  origins, host creation policy, and append-only delete tombstones.
+- Authorized delete-for-all/delete-for-both, local DM suppression, delete-wins
+  reconciliation, and durable best-effort remote cleanup retries.
+- Host settings for existing-community genesis migration and independent public/
+  private creation policy; verified delete availability and retry states.
+
+### Changed
+
+- Deleted chats are locally fenced and purged before remote cleanup; partial
+  cleanup remains pending and cannot restore a deleted chat.
+- v3 invites bind the community genesis; account backups preserve graveyard and
+  verified host trust without elevating trust on restore.
+
+### Security
+
+- Host authority requires explicit pinned fingerprint verification. DM deletion
+  authority belongs only to the verified initiator; hosts cannot delete DMs.
+
 ## [0.24.1] — 2026-10-08
 
 ### Added

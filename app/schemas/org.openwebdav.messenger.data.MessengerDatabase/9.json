@@ -1,0 +1,337 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 9,
+    "identityHash": "fb8b42a481f9b20aa2aab1f4aa954e53",
+    "entities": [
+      {
+        "tableName": "messages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`communityId` TEXT NOT NULL, `messageId` TEXT NOT NULL, `chatId` TEXT NOT NULL, `orderToken` TEXT NOT NULL, `senderSignPub` TEXT NOT NULL, `kind` INTEGER NOT NULL, `body` TEXT, `replyTo` TEXT, `targetId` TEXT, `reactionIndex` INTEGER, `sendTimestampMillis` INTEGER, `receivedAtMillis` INTEGER NOT NULL, `sendStatus` TEXT NOT NULL, `outboxEnvelope` BLOB, `outboxRecipients` TEXT, `outboxCommunityId` TEXT, `outboxClaimToken` TEXT, PRIMARY KEY(`communityId`, `messageId`))",
+        "fields": [
+          {
+            "fieldPath": "communityId",
+            "columnName": "communityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderToken",
+            "columnName": "orderToken",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "senderSignPub",
+            "columnName": "senderSignPub",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "replyTo",
+            "columnName": "replyTo",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "targetId",
+            "columnName": "targetId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "reactionIndex",
+            "columnName": "reactionIndex",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sendTimestampMillis",
+            "columnName": "sendTimestampMillis",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "receivedAtMillis",
+            "columnName": "receivedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sendStatus",
+            "columnName": "sendStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outboxEnvelope",
+            "columnName": "outboxEnvelope",
+            "affinity": "BLOB",
+            "notNull": false
+          },
+          {
+            "fieldPath": "outboxRecipients",
+            "columnName": "outboxRecipients",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "outboxCommunityId",
+            "columnName": "outboxCommunityId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "outboxClaimToken",
+            "columnName": "outboxClaimToken",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "communityId",
+            "messageId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_messages_communityId_chatId_orderToken",
+            "unique": false,
+            "columnNames": [
+              "communityId",
+              "chatId",
+              "orderToken"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_communityId_chatId_orderToken` ON `${TABLE_NAME}` (`communityId`, `chatId`, `orderToken`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "sync_cursors",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`communityId` TEXT NOT NULL, `chatId` TEXT NOT NULL, `orderToken` TEXT NOT NULL, PRIMARY KEY(`communityId`, `chatId`))",
+        "fields": [
+          {
+            "fieldPath": "communityId",
+            "columnName": "communityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderToken",
+            "columnName": "orderToken",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "communityId",
+            "chatId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "hidden_dms",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`communityId` TEXT NOT NULL, `chatId` TEXT NOT NULL, PRIMARY KEY(`communityId`, `chatId`))",
+        "fields": [
+          {
+            "fieldPath": "communityId",
+            "columnName": "communityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "communityId",
+            "chatId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "suppressed_dm_messages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`communityId` TEXT NOT NULL, `chatId` TEXT NOT NULL, `messageId` TEXT NOT NULL, PRIMARY KEY(`communityId`, `chatId`, `messageId`))",
+        "fields": [
+          {
+            "fieldPath": "communityId",
+            "columnName": "communityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "communityId",
+            "chatId",
+            "messageId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "chat_deletions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`communityId` TEXT NOT NULL, `chatId` TEXT NOT NULL, `scope` TEXT NOT NULL, `originMode` TEXT NOT NULL DEFAULT 'ORIGIN_HASH', `originHash` TEXT NOT NULL, `tombstoneHash` TEXT NOT NULL, `tombstoneStoredBytes` BLOB NOT NULL, `phase` TEXT NOT NULL, `cleanupAttempts` INTEGER NOT NULL, `nextAttemptAtMillis` INTEGER, `lastError` TEXT, `updatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`communityId`, `chatId`))",
+        "fields": [
+          {
+            "fieldPath": "communityId",
+            "columnName": "communityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scope",
+            "columnName": "scope",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originMode",
+            "columnName": "originMode",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'ORIGIN_HASH'"
+          },
+          {
+            "fieldPath": "originHash",
+            "columnName": "originHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tombstoneHash",
+            "columnName": "tombstoneHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tombstoneStoredBytes",
+            "columnName": "tombstoneStoredBytes",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "phase",
+            "columnName": "phase",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cleanupAttempts",
+            "columnName": "cleanupAttempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextAttemptAtMillis",
+            "columnName": "nextAttemptAtMillis",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "lastError",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "communityId",
+            "chatId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_chat_deletions_phase_nextAttemptAtMillis_communityId",
+            "unique": false,
+            "columnNames": [
+              "phase",
+              "nextAttemptAtMillis",
+              "communityId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chat_deletions_phase_nextAttemptAtMillis_communityId` ON `${TABLE_NAME}` (`phase`, `nextAttemptAtMillis`, `communityId`)"
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fb8b42a481f9b20aa2aab1f4aa954e53')"
+    ]
+  }
+}

@@ -28,6 +28,7 @@ import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.keystore.StoredConnection
 import org.openwebdav.messenger.message.MessageEnvelope
@@ -65,6 +66,22 @@ class InviteViewModelTest {
         server.start()
         db = SyncTestSupport.inMemoryDb()
         identity = AppTestSupport.newIdentity()
+        val identityCrypto = AppTestSupport.identityCrypto()
+        val signingSecret = identity.copySignSecret()
+        val genesis =
+            try {
+                CommunityGenesisCodec.sign(
+                    "default",
+                    identity.copySignPublic(),
+                    identity.copyBoxPublic(),
+                    ByteArray(32) { 3 },
+                    signingSecret,
+                    identityCrypto,
+                )
+            } finally {
+                signingSecret.fill(0)
+            }
+        AppContainer.setInviteGenesisTestOverride(genesis)
         AppContainer.setInviteAccessTestOverride(ChatAccess.PUBLIC)
     }
 
@@ -74,6 +91,7 @@ class InviteViewModelTest {
         server.shutdown()
         db.close()
         AppContainer.setInviteAccessTestOverride(null)
+        AppContainer.setInviteGenesisTestOverride(null)
     }
 
     /** ZXing throws on a token too long for a QR — the boundary the VM guards (documents finding 6's cause). */

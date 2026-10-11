@@ -11,6 +11,7 @@ import org.junit.Test
 import org.openwebdav.messenger.account.AccountMutationBarrier
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.KeySources
+import org.openwebdav.messenger.governance.CommunityGenesisCodec
 import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.invite.InviteCodec
 import org.openwebdav.messenger.transport.ConnectionConfig
@@ -36,6 +37,12 @@ class OnboardingServiceTest {
         var reconfiguredChatId: String? = null
         var reconfiguredKey: ChatKey? = null
         var generationAtReconfigure: Long? = null
+        var pinnedGenesis: ByteArray? = null
+        var publishedGenesis: ByteArray? = null
+        var pinGenesisSucceeds = true
+        var inviteGenesis: ByteArray? = null
+        var inviteGenesisVerified: Boolean? = null
+        var publishGenesisSucceeds = true
 
         override fun keySources(): KeySources = AppTestSupport.keySources()
 
@@ -61,6 +68,54 @@ class OnboardingServiceTest {
         }
 
         override suspend fun ensureIdentity(): Identity = identity
+
+        override fun createHostGenesis(
+            communityId: String,
+            identity: Identity,
+        ): ByteArray {
+            val crypto = AppTestSupport.identityCrypto()
+            val secret = identity.copySignSecret()
+            return try {
+                CommunityGenesisCodec.sign(
+                    communityId,
+                    identity.copySignPublic(),
+                    identity.copyBoxPublic(),
+                    ByteArray(32) { 1 },
+                    secret,
+                    crypto,
+                )
+            } finally {
+                secret.fill(0)
+            }
+        }
+
+        override fun pinCommunityGenesis(
+            communityId: String,
+            genesisRecord: ByteArray,
+            verified: Boolean,
+        ): Boolean {
+            inviteGenesis = genesisRecord.copyOf()
+            inviteGenesisVerified = verified
+            return pinGenesisSucceeds
+        }
+
+        override fun pinCreatedCommunityGenesis(
+            communityId: String,
+            genesisRecord: ByteArray,
+        ): Boolean {
+            pinnedGenesis = genesisRecord.copyOf()
+            return pinGenesisSucceeds
+        }
+
+        override suspend fun publishHostGenesis(
+            config: ConnectionConfig,
+            communityId: String,
+            genesisRecord: ByteArray,
+            communityKey: ChatKey,
+        ): Boolean {
+            publishedGenesis = genesisRecord.copyOf()
+            return publishGenesisSucceeds
+        }
 
         override fun newChatId(): String = chatIdToMint
 
@@ -113,9 +168,53 @@ class OnboardingServiceTest {
             assertEquals("https://disk.example.test", deps.savedConfig!!.baseUrl)
             assertEquals(deps.chatIdToMint, deps.savedChatId)
             assertTrue(deps.chatKeyStore.has(deps.chatIdToMint))
+            assertNotNull(deps.pinnedGenesis)
+            assertNotNull(deps.publishedGenesis)
+            assertTrue(CommunityGenesisCodec.verify(deps.pinnedGenesis!!, deps.chatIdToMint, AppTestSupport.identityCrypto()) != null)
+            assertTrue(deps.pinnedGenesis!!.contentEquals(deps.publishedGenesis!!))
             // The engine was reconfigured for that chat with the same key.
             assertEquals(deps.chatIdToMint, deps.reconfiguredChatId)
             assertNotNull(deps.reconfiguredKey)
+        }
+
+    @Test
+    fun owner_create_aborts_before_account_mutation_when_genesis_pin_fails() =
+        runTest {
+            val deps = RecordingDeps(AppTestSupport.newIdentity()).also { it.pinGenesisSucceeds = false }
+            val result =
+                service(deps).createCommunity(
+                    "https://disk.example.test",
+                    "owner",
+                    "fake-app-password-not-real",
+                    "",
+                    "My Community",
+                )
+
+            assertEquals(OnboardingService.CreateResult.GenesisTrustFailure, result)
+            assertNotNull(deps.pinnedGenesis)
+            assertNull(deps.savedConfig)
+            assertNull(deps.reconfiguredChatId)
+            assertFalse(deps.chatKeyStore.has(deps.chatIdToMint))
+        }
+
+    @Test
+    fun owner_create_aborts_before_account_mutation_when_genesis_publish_fails() =
+        runTest {
+            val deps = RecordingDeps(AppTestSupport.newIdentity()).also { it.publishGenesisSucceeds = false }
+            val result =
+                service(deps).createCommunity(
+                    "https://disk.example.test",
+                    "owner",
+                    "fake-app-password-not-real",
+                    "",
+                    "My Community",
+                )
+
+            assertEquals(OnboardingService.CreateResult.GenesisTrustFailure, result)
+            assertNotNull(deps.pinnedGenesis)
+            assertNotNull(deps.publishedGenesis)
+            assertNull(deps.savedConfig)
+            assertNull(deps.reconfiguredChatId)
         }
 
     /** owner_connect_cleartext_url_is_refused — an http:// URL is refused, NOTHING is persisted (SC13). */
@@ -151,6 +250,7 @@ class OnboardingServiceTest {
             val chatId = "shared-chat-id-000000000001"
             val key = AppTestSupport.keySources().newRandomKey()
             val invite = AppTestSupport.inviteString(ownerConfig, chatId, key, "Owner's Community")
+            val decoded = AppTestSupport.inviteCodec().decodeBlocking(invite) as InviteCodec.Result.Decoded
 
             val deps = RecordingDeps(AppTestSupport.newIdentity())
             val result = service(deps).joinFromInvite(invite)
@@ -163,6 +263,8 @@ class OnboardingServiceTest {
             assertEquals(ownerConfig.baseUrl, deps.savedConfig!!.baseUrl)
             assertEquals(ownerConfig.appPassword, deps.savedConfig!!.appPassword)
             assertTrue(deps.chatKeyStore.has(chatId))
+            assertTrue(checkNotNull(deps.inviteGenesis).contentEquals(decoded.token.genesisRecord))
+            assertEquals(true, deps.inviteGenesisVerified)
             // ...and the imported key matches what the owner put in the invite (byte-identical).
             assertArrayEqualsKey(key, deps.chatKeyStore.load(chatId))
             // The Joined result exposes NO disk fields — only the community name + chat-id.

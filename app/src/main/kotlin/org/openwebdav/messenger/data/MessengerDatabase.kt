@@ -31,8 +31,14 @@ import net.sqlcipher.database.SQLiteDatabase as SqlcipherDatabase
  * `ATTACH DATABASE` + `sqlcipher_export`.
  */
 @Database(
-    entities = [MessageEntity::class, SyncCursorEntity::class],
-    version = 6,
+    entities = [
+        MessageEntity::class,
+        SyncCursorEntity::class,
+        HiddenDmEntity::class,
+        SuppressedDmMessageEntity::class,
+        ChatDeletionEntity::class,
+    ],
+    version = 10,
     exportSchema = true,
 )
 abstract class MessengerDatabase : RoomDatabase() {
@@ -113,6 +119,51 @@ abstract class MessengerDatabase : RoomDatabase() {
                 }
             }
 
+        val MIGRATION_6_7 =
+            object : Migration(6, 7) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "CREATE TABLE hidden_dms (communityId TEXT NOT NULL, chatId TEXT NOT NULL, PRIMARY KEY(communityId, chatId))",
+                    )
+                    db.execSQL(
+                        "CREATE TABLE suppressed_dm_messages (communityId TEXT NOT NULL, chatId TEXT NOT NULL, " +
+                            "messageId TEXT NOT NULL, PRIMARY KEY(communityId, chatId, messageId))",
+                    )
+                }
+            }
+
+        val MIGRATION_7_8 =
+            object : Migration(7, 8) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL(
+                        "CREATE TABLE IF NOT EXISTS chat_deletions (communityId TEXT NOT NULL, chatId TEXT NOT NULL, " +
+                            "scope TEXT NOT NULL, originHash TEXT NOT NULL, tombstoneHash TEXT NOT NULL, " +
+                            "tombstoneStoredBytes BLOB NOT NULL, phase TEXT NOT NULL, cleanupAttempts INTEGER NOT NULL, " +
+                            "nextAttemptAtMillis INTEGER, lastError TEXT, updatedAtMillis INTEGER NOT NULL, " +
+                            "PRIMARY KEY(communityId, chatId))",
+                    )
+                    db.execSQL(
+                        "CREATE INDEX IF NOT EXISTS index_chat_deletions_phase_nextAttemptAtMillis_communityId " +
+                            "ON chat_deletions(phase, nextAttemptAtMillis, communityId)",
+                    )
+                }
+            }
+
+        val MIGRATION_8_9 =
+            object : Migration(8, 9) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE chat_deletions ADD COLUMN originMode TEXT NOT NULL DEFAULT 'ORIGIN_HASH'")
+                }
+            }
+
+        val MIGRATION_9_10 =
+            object : Migration(9, 10) {
+                override fun migrate(db: SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE chat_deletions ADD COLUMN tombstonePlaintextBytes BLOB")
+                    db.execSQL("ALTER TABLE chat_deletions ADD COLUMN originPlaintextBytes BLOB")
+                }
+            }
+
         const val LEGACY_UNSCOPED_COMMUNITY_ID = "__legacy_unscoped__"
 
         @Volatile
@@ -137,7 +188,17 @@ abstract class MessengerDatabase : RoomDatabase() {
                 val factory = SupportFactory(key)
                 return Room.databaseBuilder(context, MessengerDatabase::class.java, DB_NAME)
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7,
+                        MIGRATION_7_8,
+                        MIGRATION_8_9,
+                        MIGRATION_9_10,
+                    )
                     .addCallback(legacyHistoryRepairCallback(context))
                     // No allowMainThreadQueries() — DAOs are suspend/Flow (stack-notes Room).
                     // No fallbackToDestructiveMigration() — a schema bump must ship a Migration so local

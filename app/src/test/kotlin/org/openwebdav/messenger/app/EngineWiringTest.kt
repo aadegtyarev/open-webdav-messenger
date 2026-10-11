@@ -530,6 +530,8 @@ class EngineWiringTest {
                     readDirectory = { DirectoryReadResult(emptyList(), 0) },
                     cachePersistence = persistence,
                     provisionDm = { _, _, _ -> true },
+                    chatDeleted = { _, _ -> false },
+                    dmHidden = { _, _ -> false },
                 ),
             )
             val peer = DirectoryEntry("Verified peer", ByteArray(32) { 17 }, ByteArray(32) { 18 })

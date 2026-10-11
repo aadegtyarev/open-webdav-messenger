@@ -53,7 +53,9 @@ internal class MessageSendService(
         text: String,
         onRecoverablyPersisted: suspend () -> Unit,
     ): SendResult {
-        check(isCurrent()) { "Account changed before send" }
+        check(isCurrent() && !graph.isDeletionFenced() && !graph.store.isOutgoingBlocked(graph.chatId)) {
+            "Chat or account changed before send"
+        }
         val recipients =
             (graph.recipientSnapshot() as? RecipientReadiness.Ready)?.members
                 ?: error("Verified recipients are not ready")
@@ -81,6 +83,9 @@ internal class MessageSendService(
                     val messageId = MessageId.messageId(orderToken, envelopeBytes)
                     var inserted = false
                     withContext(NonCancellable) {
+                        check(isCurrent() && !graph.isDeletionFenced() && !graph.store.isOutgoingBlocked(graph.chatId)) {
+                            "Chat was deleted before local send commit"
+                        }
                         inserted =
                             graph.store.persist(
                                 messageId = messageId,
@@ -98,6 +103,9 @@ internal class MessageSendService(
                     PreparedSend(orderToken, messageId, envelopeBytes, recipients)
                 }
             onRecoverablyPersisted()
+            check(isCurrent() && !graph.isDeletionFenced() && !graph.store.isOutgoingBlocked(graph.chatId)) {
+                "Chat or account changed before delivery"
+            }
             return withContext(ioDispatcher) {
                 val outcome =
                     try {
@@ -113,6 +121,9 @@ internal class MessageSendService(
                     } catch (_: Exception) {
                         org.openwebdav.messenger.sync.SendOutcome(false, 0, prepared.recipients.size)
                     }
+                if (graph.isDeletionFenced() || graph.store.isOutgoingBlocked(graph.chatId)) {
+                    return@withContext SendResult(prepared.messageId, logWritten = false, complete = false)
+                }
                 if (outcome.complete) {
                     graph.store.markSent(prepared.messageId, graph.communityId)
                 } else {
@@ -139,8 +150,9 @@ internal class MessageSendService(
 
     override suspend fun retry(messageId: String): Boolean =
         AccountMutationBarrier.process.withExclusive {
-            if (!isCurrent()) return@withExclusive false
+            if (!isCurrent() || graph.isDeletionFenced() || graph.store.isOutgoingBlocked(graph.chatId)) return@withExclusive false
             withContext(ioDispatcher) {
+                if (!isCurrent() || graph.isDeletionFenced() || graph.store.isOutgoingBlocked(graph.chatId)) return@withContext false
                 graph.engine.retryOutgoing(messageId, graph.communityId, graph.senderIdentifier)
             }
         }

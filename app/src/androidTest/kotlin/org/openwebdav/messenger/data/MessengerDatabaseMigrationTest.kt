@@ -164,6 +164,61 @@ class MessengerDatabaseMigrationTest {
     }
 
     @Test
+    fun version6MigratesToHiddenDmAndExactSuppressionTables() {
+        helper.createDatabase(TEST_DB, 6).close()
+        helper.runMigrationsAndValidate(TEST_DB, 7, true, MessengerDatabase.MIGRATION_6_7).use { migrated ->
+            migrated.query("SELECT COUNT(*) FROM hidden_dms").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(0, row.getInt(0))
+            }
+            migrated.query("SELECT COUNT(*) FROM suppressed_dm_messages").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(0, row.getInt(0))
+            }
+        }
+    }
+
+    @Test
+    fun version7AddsDurableDeleteWinsGraveyardWithoutDroppingHistory() {
+        helper.createDatabase(TEST_DB, 7).apply {
+            execSQL(
+                "INSERT INTO messages (communityId, messageId, chatId, orderToken, senderSignPub, kind, body, " +
+                    "receivedAtMillis, sendStatus) VALUES ('community-a', 'preserved', 'chat-a', '0001', " +
+                    "'sender', 1, 'history', 1, 'SENT')",
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 8, true, MessengerDatabase.MIGRATION_7_8).use { migrated ->
+            migrated.query("SELECT body FROM messages WHERE messageId = 'preserved'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals("history", row.getString(0))
+            }
+            migrated.query("SELECT COUNT(*) FROM chat_deletions").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(0, row.getInt(0))
+            }
+        }
+    }
+
+    @Test
+    fun version8AddsTypedOriginModeToExistingGraveyardRows() {
+        helper.createDatabase(TEST_DB, 8).apply {
+            execSQL(
+                "INSERT INTO chat_deletions (communityId, chatId, scope, originHash, tombstoneHash, tombstoneStoredBytes, " +
+                    "phase, cleanupAttempts, nextAttemptAtMillis, lastError, updatedAtMillis) " +
+                    "VALUES ('community-a', 'chat-a', 'GROUP', 'a', 'b', X'01', 'LOCAL_COMMITTED', 0, NULL, NULL, 1)",
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 9, true, MessengerDatabase.MIGRATION_8_9).use { migrated ->
+            migrated.query("SELECT originMode FROM chat_deletions WHERE chatId = 'chat-a'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(ChatDeletionEntity.ORIGIN_MODE_HASH, row.getString(0))
+            }
+        }
+    }
+
+    @Test
     fun populatedVersion5OutboxReceivesEmptyClaimTokenColumn() {
         helper.createDatabase(TEST_DB, 5).apply {
             execSQL(
@@ -402,6 +457,25 @@ class MessengerDatabaseMigrationTest {
     ) {
         CommunityRegistry(context).replace(entries)
         ConnectionConfigStore(context).clear("community-a")
+    }
+
+    @Test
+    fun version9AddsNullableAuthenticatedTombstoneEvidence() {
+        helper.createDatabase(TEST_DB, 9).apply {
+            execSQL(
+                "INSERT INTO chat_deletions (communityId, chatId, scope, originMode, originHash, tombstoneHash, " +
+                    "tombstoneStoredBytes, phase, cleanupAttempts, updatedAtMillis) " +
+                    "VALUES ('community-a', 'dm-a', 'DM', 'ORIGIN_HASH', 'origin', 'tombstone', X'01', 'COMPLETE', 0, 1)",
+            )
+            close()
+        }
+        helper.runMigrationsAndValidate(TEST_DB, 10, true, MessengerDatabase.MIGRATION_9_10).use { migrated ->
+            migrated.query("SELECT tombstonePlaintextBytes, originPlaintextBytes FROM chat_deletions WHERE chatId = 'dm-a'").use { row ->
+                assertEquals(true, row.moveToFirst())
+                assertEquals(true, row.isNull(0))
+                assertEquals(true, row.isNull(1))
+            }
+        }
     }
 
     private companion object {

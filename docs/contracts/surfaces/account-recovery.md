@@ -10,15 +10,27 @@ Users transferring an account to a replacement device; `ExportManager`, `Restore
 
 ## Observable behavior
 
-- Current external payload and binary account-backup codec use version 3 and include every registered community's connection configuration, anchor chat, chat registry with exact `public`/`private`/`unknown` access, community key when present, all chat keys, identity, and active selection. Strict v2 payload/codec decode preserves explicit access; v1 chat access remains `unknown`.
+- The external JSON payload and inner binary account-backup codec are versioned independently; both currently use version 7. The payload includes every registered community's connection configuration, anchor chat, chat registry with exact `public`/`private`/`unknown` access, community key when present, all chat keys, identity, and active selection. JSON payload versions 1–7 and binary codec versions 1–7 are decoded explicitly; access was added at binary codec v2, trust state at v5, deletion state at v4, complete per-chat graveyard state at v6, and signed tombstone plus DM-origin evidence at v7. Older formats decode with fields absent from their version unset/defaulted; legacy v1 chat access remains `unknown`.
 - Unknown access may migrate to public only for a `kind=general` row whose ID exactly matches both community-registry and stored-config anchor IDs. Other groups require a verified descriptor; no generic unknown-to-public migration occurs.
 - Private membership claims and the device-local verified-roster cache are not
   exported. Restore invalidates local caches and pending publication state. A
   subsequent sync may best-effort publish the restored identity's self claim for
   known private groups. No upload result implies remote acknowledgement.
+- Current v7 backups preserve local deletion/graveyard state and encrypted community
+  trust pins, verification flags, and accepted policy high-water marks. DM graveyard
+  rows include public signed tombstone and immutable-origin evidence so restore can
+  authenticate the author, exact peer set, scope, origin address, and tombstone
+  address after the per-DM key has been removed. The backup identity must match
+  either participant's exact signing/box public-key pair; the tombstone signer
+  remains the immutable origin initiator. v6 and older remain decodable, but
+  a legacy DM graveyard row without this evidence is rejected during restore; group
+  graveyards retain community-key validation. Restore may preserve an existing
+  trust level but never marks an unverified host as verified; restoring data cannot
+  override delete-wins reconciliation. Legacy backups without trust fields preserve
+  trust for communities retained by restore.
 - Restore is available from the first-launch Start screen and Settings. It serializes against polls, sends, credential rotation, onboarding, and other account mutations. Store replacement, generation commit, and local runtime installation share the replacement gate; roster/network work begins after release. Legacy General-anchor migration occurs during post-gate roster preparation. Activation failure rolls stores back and restores the previous runtime under a non-cancellable replacement transaction before propagating failure/cancellation. Successful restore reports success after the selected runtime is installed and returns Settings to the Chats list.
 - Legacy v1 exports lack membership metadata. They are accepted only for an empty target with exactly one configured community key and one chat key, which are explicitly mapped to the default community; incompatible or ambiguous targets are rejected before writes. The anchored connection is written by membership replacement; restore does not first persist an unanchored bare config.
-- Restore validates the complete payload, every chat-key identifier (including keys not referenced by registries), binary keys, identity, WebDAV root/path, bounded community/chat identifiers, registries, and active-community reference before writing. Its local snapshot must successfully unwrap every enumerated community/chat key and stored connection; unreadable encrypted state aborts before replacement rather than being treated as absent. Store failures attempt every independent rollback action and report whether restoration completed. Present config and identity stores are overwritten directly, never cleared first. This remains best-effort rollback, not crash-atomicity across Android Keystore and files.
+- Restore validates the complete payload, every chat-key identifier (including keys not referenced by registries), binary keys, identity, WebDAV root/path, bounded community/chat identifiers, registries, and active-community reference before writing. Room schema v10 stores the public signed evidence beside sealed publication bytes; v9 rows migrate with evidence absent and are not implicitly trusted as authenticated DM graveyards. Its local snapshot must successfully unwrap every enumerated community/chat key and stored connection; unreadable encrypted state aborts before replacement rather than being treated as absent. Store failures attempt every independent rollback action and report whether restoration completed. Present config and identity stores are overwritten directly, never cleared first. This remains best-effort rollback, not crash-atomicity across Android Keystore and files.
 - Serialized plaintext is limited to 4 MiB and the account-registry section to 1 MiB; import and export enforce the same bounds. Oversized export returns a typed failure.
 
 ## Security and privacy

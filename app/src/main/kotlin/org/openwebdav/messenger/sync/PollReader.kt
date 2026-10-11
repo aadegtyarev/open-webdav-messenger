@@ -7,6 +7,7 @@ import org.openwebdav.messenger.message.ParseResult
 import org.openwebdav.messenger.protocol.ChangeEntry
 import org.openwebdav.messenger.protocol.ChatPaths
 import org.openwebdav.messenger.protocol.Envelope
+import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.protocol.MessageId
 import org.openwebdav.messenger.transport.InboxEntry
 import org.openwebdav.messenger.transport.ReadResult
@@ -65,7 +66,7 @@ internal class PollReader(
                     else -> return backedOffOutcome(listed)
                 }
             val target = coordinates[sub.chatTag]
-            acc += drainChat(sub, target, logEntries)
+            acc += drainChat(sub, target, logEntries, memberIdentifier)
             if (acc.backedOff) break // stop the cycle on a transport back-off; resume next run (§9.3)
             // Check read receipts from other members and mark our messages as READ.
             checkReadReceipts(memberIdentifier, sub.chatId)
@@ -122,12 +123,13 @@ internal class PollReader(
         sub: ChatSubscription,
         targetCoordinate: String?,
         logEntries: List<InboxEntry>,
+        memberIdentifier: String,
     ): CycleOutcome {
         // The caller (cycle) already filtered to chats that need a drain (needsDrain); re-read the
         // cursor as the selection floor.
         val cursor = store.cursorFor(sub.chatId)
         val pending = selectPending(logEntries, cursor, targetCoordinate)
-        return fetchAndPersist(sub.chatId, pending)
+        return fetchAndPersist(sub.chatId, pending, memberIdentifier)
     }
 
     /**
@@ -169,6 +171,7 @@ internal class PollReader(
     private suspend fun fetchAndPersist(
         chatId: String,
         pending: List<String>,
+        memberIdentifier: String,
     ): CycleOutcome {
         if (pending.isEmpty()) return CycleOutcome(0, 0, backedOff = false)
         // §scenario 7: load the ChatKey ONCE for this chat and reuse it for every envelope below —
@@ -180,7 +183,7 @@ internal class PollReader(
         val prefix = CursorPrefix(store.cursorFor(chatId))
         for (name in pending) {
             val orderToken = MessageId.splitMessageId(name)?.first ?: continue
-            when (val step = fetchOne(chatId, name, chatKey)) {
+            when (val step = fetchOne(chatId, name, chatKey, memberIdentifier)) {
                 is FetchStep.Persisted -> {
                     if (step.inserted) newCount++
                     // Persisted/dedup or a permanent Rejected both RESOLVE the coordinate: the cursor may
@@ -214,12 +217,13 @@ internal class PollReader(
         chatId: String,
         name: String,
         chatKey: ChatKey,
+        memberIdentifier: String,
     ): FetchStep {
         val path = "${ChatPaths.logDir(chatId)}/$name"
         return when (val read = transport.read(path, name)) {
             is WebDavResult.Success ->
                 when (val r = read.value) {
-                    is ReadResult.Ready -> validateAndStore(name, r.blob, r.codecId, chatKey)
+                    is ReadResult.Ready -> validateAndStore(name, r.blob, r.codecId, chatKey, memberIdentifier)
                     ReadResult.NotReady -> FetchStep.NotReady // §3 incomplete / hash-mismatch → retry next cycle
                 }
             else -> FetchStep.BackOff // 429 / timeout / transport error → stop, resume next run (§9.3)
@@ -240,12 +244,14 @@ internal class PollReader(
         blob: ByteArray,
         codecId: Byte,
         chatKey: ChatKey,
+        memberIdentifier: String,
     ): FetchStep {
         val envelopeBytes = Envelope.frame(codecId, blob)
         return when (val parsed = envelope.open(envelopeBytes, chatKey)) {
             is ParseResult.Parsed -> {
                 val orderToken = MessageId.splitMessageId(name)?.first ?: return FetchStep.Rejected
-                val inserted = store.persist(name, orderToken, parsed.message, clock())
+                val isPeerMessage = Hex.encode(parsed.message.sender.copySignPub()) != memberIdentifier
+                val inserted = store.persist(name, orderToken, parsed.message, clock(), peerMessage = isPeerMessage)
                 FetchStep.Persisted(orderToken, inserted)
             }
             is ParseResult.Rejected -> FetchStep.Rejected

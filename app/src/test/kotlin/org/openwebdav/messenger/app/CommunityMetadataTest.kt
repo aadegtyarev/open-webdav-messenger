@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -98,6 +99,27 @@ class CommunityMetadataTest {
                     )
                 assertTrue(result is WebDavResult.TransportError)
                 assertEquals(1, server.requestCount)
+            } finally {
+                server.shutdown()
+            }
+        }
+
+    @Test
+    fun isSignedBy_requires_the_pinned_host_key_and_valid_metadata() =
+        runBlocking {
+            val server = MockWebServer().apply { start() }
+            try {
+                val host = crypto.generateIdentity()
+                val attacker = crypto.generateIdentity()
+                val payload = """{"minPollIntervalSeconds":60}""".toByteArray()
+                val secret = host.copySignSecret()
+                val bytes = crypto.sign(payload, secret) + payload + host.copySignPublic()
+                secret.fill(0)
+                server.enqueue(MockResponse().setResponseCode(200).setBody(okio.Buffer().write(bytes)))
+                server.enqueue(MockResponse().setResponseCode(200).setBody(okio.Buffer().write(bytes)))
+                val transport = SyncTestSupport.transport(server)
+                assertTrue(CommunityMetadata.isSignedBy(transport, host.copySignPublic(), crypto))
+                assertFalse(CommunityMetadata.isSignedBy(transport, attacker.copySignPublic(), crypto))
             } finally {
                 server.shutdown()
             }

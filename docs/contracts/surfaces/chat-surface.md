@@ -37,22 +37,27 @@ for persistence of community/chat data.
 ## Invite format
 
 **Token scheme (2-format):** Invite tokens use the `owdm1:` URI scheme with a
-`base64url(gzip(json($fields)))` payload. Format v2 has exactly the fields for
-version, WebDAV base URL, username, app password, chat root, chat ID, raw 32-byte
-chat key, community name, access, embedded Ed25519 signing public key, and
-signature. The signature covers deterministic flat-JSON encoding of all
-configuration fields including access, under `owdm/invite/access/v2`; it protects
-field integrity but adds no external trust anchor or community authority. These
-bearer-token secrets are plain encoded, not encrypted.
+`base64url(gzip(json($fields)))` payload. Format v3 has exactly the fields for
+version, WebDAV base URL, username, app password, chat root, chat ID, community
+ID, signed community genesis record, raw 32-byte chat key, community name,
+access, embedded Ed25519 signing public key, and signature. The signature covers
+deterministic flat-JSON encoding of all invite fields including access and
+community/genesis context, under `owdm/invite/access/v3`. The genesis record is
+authenticated against the invite's community ID; host-signed invite validation
+also requires the embedded signer to match the genesis host. These checks bind
+community authority and access metadata, unlike legacy v2's embedded-key
+self-signature. Bearer-token secrets remain plain encoded, not encrypted.
 
 **Reject-don't-guess (2-reject):** A wrong prefix (`http://`, a random QR code,
 noise), bad base64url, corrupt gzip, unknown/extra/missing fields, invalid
-signature, or invalid access produces a typed rejection — never a partial config,
-crash, or exception propagated to the UI layer. Legacy v1 decodes only to legacy
-status and is rejected by onboarding. New v2 tokens require signed strict
-`access=public|private`; legacy, missing, invalid, or tampered tokens are rejected
-before account mutation with localized guidance to request a fresh invite. Access
-selects roster behavior only and grants no community authority.
+signature or genesis record, or invalid access produces a typed rejection — never
+a partial config, crash, or exception propagated to the UI layer. Legacy v1
+returns legacy status. Legacy v2 is not upgraded into v3 trust: it lacks the
+community ID/genesis authority binding and is rejected by onboarding. New v3
+tokens require signed strict `access=public|private`; legacy, missing, invalid, or
+tampered tokens are rejected before account mutation with localized guidance to
+request a fresh invite. Access selects roster behavior only; community authority
+comes from the authenticated genesis record and its host signer.
 
 **Bearer token, not encrypted:** The token carries plain (not encrypted) fields.
 Whoever holds it can join — this is by design. The on-screen warning at token
@@ -230,6 +235,42 @@ state validation; changing the selected community cannot redirect the write.
 Inbound credential application uses the same owner lock. Runtime reinstallation
 occurs only while the captured owner remains selected and its runtime key is
 current. The active group/DM remains intact.
+
+## Governance and deletion (v0.25.0)
+
+- General cannot be deleted. For groups, delete-for-all is available only to the
+  verified pinned host or the creator authenticated by the exact immutable
+  origin. Legacy, missing-origin, and conflicting-origin groups are host-only;
+  creator authority fails closed on conflict. A pinned host may delete a legacy
+  group using the exact community/chat-ID reference; recreation requires a new
+  chat ID. For DMs, either participant may delete locally, while only the
+  verified initiator from the immutable DM origin may delete for both. Hosts
+  never control DMs. Unavailable authority remains loading/retryable and never
+  grants an action.
+- Local deletion transactionally commits graveyard and exact pre-delete message
+  suppression before remote work. The derived DM key is retained for a local
+  delete. The first genuinely new peer message can reopen the DM with only new
+  history; the suppressed pre-delete IDs do not return. One valid tombstone
+  permanently closes its origin, and reconciliation purges history, keys,
+  caches, cursors, pending state, and outbox before exposing a remotely deleted
+  chat. The local graveyard retains public signed tombstone and immutable DM-origin
+  evidence alongside sealed publication bytes, so encrypted account backups can
+  validate DM deletion after the derived key has been removed; missing or mismatched
+  evidence fails closed.
+- Tombstone publication is not proof of peer observation. After publication the
+  chat is hidden, sends are rejected, and subscriptions, outbox, and in-flight
+  claims are fenced. Cleanup selectively deletes mutable descriptors, logs,
+  changes/notifies, receipts, private membership, and chat content; governance
+  origins/genesis/tombstones are retained. 404 is success; other errors are
+  durably retried. Local commit, tombstone publication, cleanup pending, and
+  completion are distinct states. Ambiguous receipts remain pending; partial
+  cleanup never resurrects a chat and is not crash-atomic remotely.
+- Offline opening is read-only when tombstone scanning is unavailable, for
+  compatibility; polling and sending remain gated until reconciliation. Old
+  clients/shared credentials can bypass cooperative policy, and secure erase,
+  downloaded exports, and peer-held copies cannot be guaranteed.
+- See [WebDAV protocol §13](../../protocol/webdav-layout.md#13-community-governance-origins-and-tombstones)
+  for wire formats and trust limits.
 
 **Accessible retry control:** Failed-message retry is a labelled button with a
 minimum 48×48dp target. It invokes the existing retry operation for the original

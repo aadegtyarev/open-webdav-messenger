@@ -1,0 +1,43 @@
+package org.openwebdav.messenger.export
+
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class AccountBackupGraveyardValidationTest {
+    @Test
+    fun signed_then_sealed_tombstone_survives_export_codec_and_production_restore() =
+        runBlocking {
+            val fixture = AccountBackupGraveyardFixture()
+            val backup = AccountBackup("community-a", listOf(fixture.community(fixture.deletion())))
+            val native = ExportTestSupport.native()
+            val identity = ExportTestSupport.freshIdentity()
+            val payload = ExportPayload.build(null, null, mapOf("anchor" to fixture.key), identity, backup)
+            val blob = encryptedExportTestPayload(native, ExportPayload.toJson(payload), "restore-password")
+            val accountStore = ExportTestSupport.InMemoryAccountBackupStore()
+            val manager =
+                RestoreManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    ExportTestSupport.inMemoryCommunityKeyStore(),
+                    ExportTestSupport.inMemoryChatKeyStore(),
+                    ExportTestSupport.inMemoryIdentityStore(),
+                    accountBackupStore = accountStore,
+                )
+
+            assertEquals(RestoreResult.Restored, manager.restore(blob, "restore-password".toCharArray()))
+            assertTrue(fixture.isAuthenticated(accountStore.snapshot()!!.communities.single().chatDeletions.single()))
+        }
+
+    @Test
+    fun sealed_tombstone_tamper_and_plaintext_hash_mismatch_fail_closed() {
+        val fixture = AccountBackupGraveyardFixture()
+        val deletion = fixture.deletion()
+
+        assertFalse(fixture.isAuthenticated(fixture.tamperCiphertext(deletion)))
+        assertFalse(fixture.isAuthenticated(deletion.copy(tombstoneHash = "b".repeat(32))))
+        assertFalse(fixture.isAuthenticated(deletion, communityId = "other-community"))
+    }
+}

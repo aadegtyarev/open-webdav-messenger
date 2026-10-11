@@ -29,6 +29,8 @@ internal data class InviteToken(
     val appPassword: String,
     val chatRoot: String,
     val chatId: String,
+    val communityId: String = chatId,
+    val genesisRecord: ByteArray = ByteArray(0),
     val chatKey: ByteArray,
     val communityName: String,
     val access: ChatAccess,
@@ -54,6 +56,8 @@ internal data class InviteToken(
             appPassword == other.appPassword &&
             chatRoot == other.chatRoot &&
             chatId == other.chatId &&
+            communityId == other.communityId &&
+            genesisRecord.contentEquals(other.genesisRecord) &&
             chatKey.contentEquals(other.chatKey) &&
             communityName == other.communityName &&
             access == other.access &&
@@ -66,6 +70,8 @@ internal data class InviteToken(
         result = 31 * result + appPassword.hashCode()
         result = 31 * result + chatRoot.hashCode()
         result = 31 * result + chatId.hashCode()
+        result = 31 * result + communityId.hashCode()
+        result = 31 * result + genesisRecord.contentHashCode()
         result = 31 * result + chatKey.contentHashCode()
         result = 31 * result + communityName.hashCode()
         result = 31 * result + access.hashCode()

@@ -39,6 +39,8 @@ internal object AccountBackupCodec {
                         out.writeUTF(chat.access)
                         if (bytes.size() > MAX_BYTES) throw PayloadTooLargeException()
                     }
+                    AccountBackupDeletionCodec.write(out, community)
+                    AccountBackupTrustCodec.write(out, community)
                     if (bytes.size() > MAX_BYTES) throw PayloadTooLargeException()
                 }
             }
@@ -75,16 +77,53 @@ internal object AccountBackupCodec {
                                 require(access in ACCESS_VALUES)
                                 ChatBackup(chatId, chatName, kind, access)
                             }
-                        CommunityBackup(id, name, anchor, config, chats, communityKey, isHost, pollFloor, retentionDays)
+                        val deletion =
+                            if (version >= DELETION_STATE_VERSION) {
+                                AccountBackupDeletionCodec.read(
+                                    input,
+                                    version >= CHAT_DELETION_STATE_VERSION,
+                                    version >= GRAVEYARD_EVIDENCE_VERSION,
+                                )
+                            } else {
+                                LocalDeletionBackup(emptyList(), emptyMap(), emptyList())
+                            }
+                        val trust =
+                            if (version >= TRUST_STATE_VERSION) {
+                                AccountBackupTrustCodec.read(input)
+                            } else {
+                                CommunityTrustBackup("", false, 0, null)
+                            }
+                        CommunityBackup(
+                            id = id,
+                            name = name,
+                            anchorChatId = anchor,
+                            config = config,
+                            chats = chats,
+                            communityKeyBase64 = communityKey,
+                            isHost = isHost,
+                            pollFloorSeconds = pollFloor,
+                            retentionWindowDays = retentionDays,
+                            hiddenDmChatIds = deletion.hiddenDmChatIds,
+                            suppressedDmMessageIds = deletion.suppressedDmMessageIds,
+                            genesisRecordBase64 = trust.genesisRecordBase64.ifEmpty { null },
+                            hostFingerprintVerified = trust.fingerprintVerified,
+                            highestPolicyRevision = trust.highestPolicyRevision,
+                            highestPolicyHash = trust.highestPolicyHash,
+                            chatDeletions = deletion.chatDeletions,
+                        )
                     }
                 require(input.available() == 0 && communities.any { it.id == activeId })
                 AccountBackup(activeId, communities)
             }
         }.getOrNull()
 
-    private const val VERSION = 3
+    private const val VERSION = 7
     private const val LEGACY_VERSION = 1
     private const val ACCESS_VERSION = 2
+    private const val DELETION_STATE_VERSION = 4
+    private const val TRUST_STATE_VERSION = 5
+    private const val CHAT_DELETION_STATE_VERSION = 6
+    private const val GRAVEYARD_EVIDENCE_VERSION = 7
     private val ACCESS_VALUES = setOf("public", "private", "unknown")
 
     private fun legacyAccess(): String = "unknown"

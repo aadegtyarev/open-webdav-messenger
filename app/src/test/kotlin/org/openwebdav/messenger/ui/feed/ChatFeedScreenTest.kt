@@ -31,6 +31,7 @@ import org.junit.runner.RunWith
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppTestSupport
 import org.openwebdav.messenger.app.CachedVerifiedRoster
+import org.openwebdav.messenger.app.ChatDeleteCapability
 import org.openwebdav.messenger.app.EngineWiring
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RosterCacheProvenance
@@ -40,6 +41,7 @@ import org.openwebdav.messenger.app.VerifiedRosterCachePersistence
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
+import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.DirectoryEntry
@@ -151,6 +153,65 @@ class ChatFeedScreenTest {
         store.persist(messageId, orderToken, msg, seq)
     }
 
+    @Test
+    fun local_dm_delete_requires_exact_title_and_fences_old_message_replay() {
+        runBlocking {
+            store.persist("old-message", "0001", TextMessage(chatId, identity.publicIdentity(), null, "old", 1L), 1L)
+            store.advanceCursor(chatId, "0001")
+        }
+        val deletionResult = java.util.concurrent.atomic.AtomicReference<DmLocalDeleteResult?>(null)
+        val viewModel = ChatFeedViewModel(graph())
+        composeRule.setContent {
+            ChatFeedScreen(
+                onShowInvite = {},
+                canDeleteLocalDm = true,
+                chatTitle = "Peer",
+                onLocalDmDeleted = { deletionResult.set(DmLocalDeleteResult.Deleted) },
+                viewModel = viewModel,
+            )
+        }
+
+        composeRule.onNodeWithContentDescription("Delete locally").assertWidthIsAtLeast(48.dp).performClick()
+        composeRule.onNodeWithText("Type the chat title").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete locally").assertIsNotEnabled()
+        composeRule.onNodeWithText("Type the chat title").performTextInput("Peer")
+        composeRule.onNodeWithText("Delete locally").assertIsEnabled().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Type the chat title").assertDoesNotExist()
+        composeRule.waitUntil(5_000) { deletionResult.get() != null }
+        assertEquals(DmLocalDeleteResult.Deleted, deletionResult.get())
+
+        runBlocking {
+            assertTrue(store.isDmHidden(chatId))
+            assertTrue(store.messagesForChat(chatId).isEmpty())
+            assertEquals("", store.cursorFor(chatId))
+            assertFalse(store.persist("old-message", "0001", TextMessage(chatId, identity.publicIdentity(), null, "replay", 2L), 2L))
+        }
+    }
+
+    @Test
+    fun remote_delete_actions_follow_projected_authority_and_local_dm_stays_available() {
+        val viewModel = ChatFeedViewModel(graph())
+        val capability = mutableStateOf<ChatDeleteCapability?>(ChatDeleteCapability.NotAuthorized)
+        composeRule.setContent {
+            ChatFeedScreen(
+                onShowInvite = {},
+                canDeleteLocalDm = true,
+                deleteCapabilityOverride = capability.value,
+                viewModel = viewModel,
+            )
+        }
+        composeRule.onNodeWithContentDescription("Delete for everyone").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Delete locally").assertIsDisplayed()
+
+        composeRule.runOnIdle { capability.value = ChatDeleteCapability.Loading }
+        composeRule.onNodeWithContentDescription("Checking delete authority").assertIsDisplayed()
+        composeRule.runOnIdle { capability.value = ChatDeleteCapability.Unavailable }
+        composeRule.onNodeWithContentDescription("Delete authority unavailable. Tap to retry.").assertIsDisplayed()
+        composeRule.runOnIdle { capability.value = ChatDeleteCapability.Available }
+        composeRule.onNodeWithContentDescription("Delete for everyone").assertIsDisplayed()
+    }
+
     /** An empty chat shows the empty-state prompt and the disabled-until-typed Send action. */
     @Test
     fun empty_feed_shows_prompt_and_disabled_send() {
@@ -195,6 +256,9 @@ class ChatFeedScreenTest {
                 loadStored = { stored },
                 readDirectory = { CompletableDeferred<DirectoryReadResult>().also(reads::put).await() },
                 onRosterEnrichmentCompleted = { enrichmentCompletions.poll()?.complete(Unit) },
+                remoteTombstoneResult = { _, _ ->
+                    org.openwebdav.messenger.app.TombstoneReconciler.Result.NoTombstone
+                },
             ),
         )
         seedHistory(groupId, "group history")

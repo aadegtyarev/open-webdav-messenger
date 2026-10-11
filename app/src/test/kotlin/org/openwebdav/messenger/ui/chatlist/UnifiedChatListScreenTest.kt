@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.flowOf
@@ -14,6 +15,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.openwebdav.messenger.app.AppContainer
+import org.openwebdav.messenger.app.ChatDeleteCapability
+import org.openwebdav.messenger.app.ChatListDeletionResult
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.util.concurrent.CopyOnWriteArrayList
@@ -48,6 +51,28 @@ class UnifiedChatListScreenTest {
 
         composeRule.onNodeWithText("No chats yet.").assertIsDisplayed()
         composeRule.onNodeWithText("Tap + to create a chat or join a community.").assertIsDisplayed()
+    }
+
+    @Test
+    fun locally_hidden_dm_is_not_listed_but_other_chat_types_remain_visible() {
+        val chats =
+            listOf(
+                AppContainer.UnifiedChat("dm-id", "Peer", "dm", "community-a", "A"),
+                AppContainer.UnifiedChat("general-id", "General", "general", "community-a", "A"),
+            )
+        composeRule.setContent {
+            UnifiedChatListScreen(
+                onCreateCommunity = {},
+                onJoin = {},
+                onOpenFeed = {},
+                onSettings = {},
+                chatItems = chats,
+                deletedChatKeys = setOf("community-a" to "dm-id"),
+                observeUnreadCount = { _, _ -> flowOf(0) },
+            )
+        }
+        composeRule.onNodeWithContentDescription("A · Peer").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("A · General").assertIsDisplayed()
     }
 
     @Test
@@ -205,6 +230,88 @@ class UnifiedChatListScreenTest {
         composeRule.onNodeWithContentDescription("A · General").performClick()
         composeRule.waitUntil(5_000) { feedOpens.get() == 1 }
         assertEquals(1, feedOpens.get())
+    }
+
+    @Test
+    fun list_overflow_hides_unauthorized_remote_delete_but_keeps_local_dm_action() {
+        val chats =
+            listOf(
+                AppContainer.UnifiedChat("group-id", "Group", "group", "community-a", "A"),
+                AppContainer.UnifiedChat("dm-id", "Peer", "dm", "community-a", "A"),
+                AppContainer.UnifiedChat("general-id", "General", "general", "community-a", "A"),
+            )
+        composeRule.setContent {
+            UnifiedChatListScreen(
+                onCreateCommunity = {},
+                onJoin = {},
+                onOpenFeed = {},
+                onSettings = {},
+                chatItems = chats,
+                observeUnreadCount = { _, _ -> flowOf(0) },
+                projectDeleteCapability = { _, _ -> ChatDeleteCapability.NotAuthorized },
+            )
+        }
+        composeRule.onNodeWithContentDescription("Actions for A · Group").performClick()
+        composeRule.onNodeWithText("Delete for everyone").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Actions for Peer").performClick()
+        composeRule.onNodeWithText("Delete locally").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("A · General").assertIsDisplayed()
+    }
+
+    @Test
+    fun authorized_list_delete_requires_typed_confirmation_and_reports_pending_cleanup() {
+        val selected = CopyOnWriteArrayList<Boolean>()
+        val chat = AppContainer.UnifiedChat("group-id", "Group", "group", "community-a", "A")
+        composeRule.setContent {
+            UnifiedChatListScreen(
+                onCreateCommunity = {},
+                onJoin = {},
+                onOpenFeed = {},
+                onSettings = {},
+                chatItems = listOf(chat),
+                observeUnreadCount = { _, _ -> flowOf(0) },
+                projectDeleteCapability = { _, _ -> ChatDeleteCapability.Available },
+                deleteChat = { _, _, localOnly ->
+                    selected += localOnly
+                    ChatListDeletionResult.REMOTE_CLEANUP_PENDING
+                },
+            )
+        }
+        composeRule.onNodeWithContentDescription("Actions for A · Group").performClick()
+        composeRule.onNodeWithText("Delete for everyone").performClick()
+        composeRule.onNodeWithText(
+            "Type “Group” to publish a permanent deletion tombstone. Remote content cleanup may remain pending.",
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText("Type the chat title").performTextInput("Group")
+        composeRule.onNodeWithText("Delete for everyone").performClick()
+        composeRule.waitUntil(5_000) { selected.size == 1 }
+        composeRule.onNodeWithText(
+            "Chat is deleted. Remote cleanup remains pending and will retry; governance records are retained.",
+        ).assertIsDisplayed()
+        assertEquals(listOf(false), selected.toList())
+    }
+
+    @Test
+    fun unavailable_list_authority_can_retry_and_exposes_only_after_available() {
+        val attempts = AtomicInteger()
+        val chat = AppContainer.UnifiedChat("group-id", "Group", "group", "community-a", "A")
+        composeRule.setContent {
+            UnifiedChatListScreen(
+                onCreateCommunity = {},
+                onJoin = {},
+                onOpenFeed = {},
+                onSettings = {},
+                chatItems = listOf(chat),
+                observeUnreadCount = { _, _ -> flowOf(0) },
+                projectDeleteCapability = { _, _ ->
+                    if (attempts.incrementAndGet() == 1) ChatDeleteCapability.Unavailable else ChatDeleteCapability.Available
+                },
+            )
+        }
+        composeRule.onNodeWithContentDescription("Actions for A · Group").performClick()
+        composeRule.onNodeWithText("Delete authority unavailable. Tap to retry.").performClick()
+        composeRule.waitUntil(5_000) { attempts.get() >= 2 }
+        composeRule.onNodeWithText("Delete for everyone").assertIsDisplayed()
     }
 
     // -- Top bar --------------------------------------------------------------

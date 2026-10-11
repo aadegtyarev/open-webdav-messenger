@@ -1,22 +1,38 @@
 package org.openwebdav.messenger.keystore
 
 import android.content.Context
+import org.openwebdav.messenger.crypto.Aead
+import org.openwebdav.messenger.crypto.ChatKey
+import org.openwebdav.messenger.crypto.NativeCrypto
 import org.openwebdav.messenger.export.AccountBackup
+import org.openwebdav.messenger.export.AccountBackupGraveyardValidation
 import org.openwebdav.messenger.export.ChatBackup
+import org.openwebdav.messenger.export.ChatDeletionBackup
 import org.openwebdav.messenger.export.CommunityBackup
 import org.openwebdav.messenger.export.ExportableAccountBackupStore
+import org.openwebdav.messenger.governance.CommunityDmParticipant
+import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
+import org.openwebdav.messenger.identity.IdentityCrypto
+import org.openwebdav.messenger.identity.IdentityLoadResult
+import org.openwebdav.messenger.identity.IdentityStore
 import org.openwebdav.messenger.ui.settings.UserSettings
+import java.util.Base64
 
 /** Bridges the encrypted account backup to the existing per-community secure and registry stores. */
 internal class AccountBackupStore(
     private val context: Context,
     private val configStore: AccountBackupConfigStore = ConnectionConfigStore(context),
+    private val identityCrypto: IdentityCrypto? = null,
+    private val nativeCrypto: NativeCrypto? = null,
 ) : ExportableAccountBackupStore {
     private val communityRegistry = CommunityRegistry(context)
     private val chatRegistry = ChatRegistry(context)
     private val activeStore = ActiveCommunityStore(context)
     private val communityKeyStore = CommunityKeyStore(context)
-    private val snapshotWriter = AccountBackupSnapshotWriter(configStore, communityRegistry, chatRegistry, activeStore)
+    private val deletionState = AccountBackupDeletionState(context)
+    private val trustStore = CommunityTrustStore(context)
+    private val snapshotWriter =
+        AccountBackupSnapshotWriter(context, configStore, communityRegistry, chatRegistry, activeStore, identityCrypto)
 
     override fun hasMembershipState(): Boolean = hasRegistryState() || configStore.hasAny()
 
@@ -45,6 +61,8 @@ internal class AccountBackupStore(
                 val rawCommunityKey = communityKey?.export()
                 val encodedCommunityKey = rawCommunityKey?.let(java.util.Base64.getEncoder()::encodeToString)
                 rawCommunityKey?.fill(0)
+                val deletion = deletionState.snapshot(entry.id)
+                val trust = trustStore.get(entry.id)
                 CommunityBackup(
                     entry.id,
                     entry.name,
@@ -55,8 +73,73 @@ internal class AccountBackupStore(
                     UserSettings.isHostFor(entry.id),
                     UserSettings.pollFloorFor(entry.id),
                     UserSettings.retentionDaysFor(entry.id),
+                    deletion.hiddenChatIds,
+                    deletion.suppressedMessageIds,
+                    trust?.genesisRecord?.let(java.util.Base64.getEncoder()::encodeToString),
+                    trust?.fingerprintVerified ?: false,
+                    trust?.highestPolicyRevision ?: 0,
+                    trust?.highestPolicyHash,
+                    deletion.chatDeletions.map { row ->
+                        ChatDeletionBackup(
+                            row.chatId,
+                            row.scope,
+                            row.originMode,
+                            row.originHash,
+                            row.tombstoneHash,
+                            java.util.Base64.getEncoder().encodeToString(row.tombstoneStoredBytes),
+                            row.phase,
+                            row.cleanupAttempts,
+                            row.nextAttemptAtMillis,
+                            row.lastError,
+                            row.updatedAtMillis,
+                            row.tombstonePlaintextBytes?.let(Base64.getEncoder()::encodeToString),
+                            row.originPlaintextBytes?.let(Base64.getEncoder()::encodeToString),
+                        )
+                    },
                 )
             }
+        communities.forEach { community ->
+            if (community.chatDeletions.isNotEmpty()) {
+                val native = checkNotNull(nativeCrypto) { "Cannot export unauthenticated chat-deletion state" }
+                val verifier = checkNotNull(identityCrypto) { "Cannot export unauthenticated chat-deletion state" }
+                val key =
+                    community.communityKeyBase64?.let { encoded ->
+                        val keyBytes = Base64.getDecoder().decode(encoded)
+                        try {
+                            ChatKey.fromBytes(keyBytes)
+                        } finally {
+                            keyBytes.fill(0)
+                        }
+                    }
+                check(community.chatDeletions.none { it.scope == "GROUP" } || key != null) {
+                    "Cannot export unauthenticated group deletion state"
+                }
+                val expectedOwner =
+                    if (community.chatDeletions.any { it.scope == "DM" }) {
+                        val identity =
+                            (IdentityStore(context, verifier).load() as? IdentityLoadResult.Loaded)?.identity
+                                ?: error("Cannot export unauthenticated DM deletion state")
+                        CommunityDmParticipant(identity.copySignPublic(), identity.copyBoxPublic())
+                    } else {
+                        null
+                    }
+                try {
+                    check(
+                        AccountBackupGraveyardValidation.hasAuthenticatedTombstones(
+                            community.id,
+                            key,
+                            community.chatDeletions,
+                            CommunityGovernanceEnvelopeCodec(Aead(native)),
+                            verifier,
+                            expectedOwner,
+                        ),
+                    ) { "Cannot export invalid chat-deletion state" }
+                } finally {
+                    expectedOwner?.signingPublicKey?.fill(0)
+                    expectedOwner?.boxPublicKey?.fill(0)
+                }
+            }
+        }
         if (communities.isEmpty()) return null
         val active = activeStore.load(communities.first().id)
         return AccountBackup(active.takeIf { id -> communities.any { it.id == id } } ?: communities.first().id, communities)
