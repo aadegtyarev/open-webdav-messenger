@@ -103,8 +103,9 @@ for both the durable retryable envelope recipients and immediate fan-out. One
 send is reserved per draft revision before asynchronous work starts, preventing
 a double tap from producing two messages. A send creates a local echo only after
 its retryable envelope is durably persisted; the persistence callback and draft
-compare-and-clear run on the UI dispatcher with draft edits. The draft clears
-after persistence succeeds and is not erased by a stale completion.
+compare-and-clear run on the UI dispatcher with draft edits. The exact submitted
+draft clears after persistence succeeds and is not erased by a stale completion
+or a delayed pre-send Compose input callback; edits begun after send survive.
 
 **Verified roster cache (3-roster-cache):** A bounded device-local cache stores only
 verified public participant entries, encrypted with the Android Keystore. Cache
@@ -179,13 +180,17 @@ The saveable Participants destination supports system and toolbar Back to Feed;
 a runtime-scope mismatch returns to Feed rather than displaying a stale graph.
 This foreground-only view does not change background delivery.
 
-**Send failure and retry (3-send-fail):** A failed or uncertain send remains in
-the feed with truthful local status. A transient error below the draft clears
-when the draft changes or a send succeeds. Automatic sync retry and explicit
-retry reuse the original persisted envelope and message ID; they do not create
-a replacement row or payload. Retry work is restricted to the message's local
-community owner and only one delivery attempt may claim a message ID at a time.
-A recoverable draft is retained if local persistence fails.
+**Send failure and retry (3-send-fail):** A durable outgoing bubble visibly and
+accessibly reports Queue/Queued (`В очереди`) while pending or sending, Sent
+(`Отправлено`) only after the WebDAV log write succeeds, or Failed (`Не
+отправлено`) on failure. These states make no claim that a peer received or read
+the message. A failed or uncertain send remains in the feed with truthful local
+status. A transient error below the draft clears when the draft changes or a
+send succeeds. Automatic sync retry and explicit retry reuse the original
+persisted envelope and message ID; they do not create a replacement row or
+payload. Retry work is restricted to the message's local community owner and
+only one delivery attempt may claim a message ID at a time. A recoverable draft
+is retained if local persistence fails; later network failure never restores it.
 
 **Runtime scoping (3-scope):** Feed and invite state is scoped to the active
 community and chat. Room history, unread/read state, and sync cursors are

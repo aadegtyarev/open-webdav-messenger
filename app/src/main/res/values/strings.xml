@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <!-- The app remains English-first; this release localizes only the requested send states to Russian. -->
     <string name="app_name">DavChat</string>
     <string name="join_legacy_invite">This invite is outdated. Ask the sender for a fresh invite to join safely.</string>
     <string name="fast_poll_channel_name">Message sync</string>
@@ -22,6 +23,10 @@
     <string name="participants_retry">Retry</string>
     <string name="participants_empty">No other verified participants in this chat.</string>
     <string name="participants_fingerprint">Identity · %1$s</string>
+    <string name="message_status_queued">Queued</string>
+    <string name="message_status_sent">Sent</string>
+    <string name="message_status_failed">Failed</string>
+    <string name="message_retry">Retry sending message</string>
     <string name="dm_delete_title">Delete this chat from this device?</string>
     <string name="dm_delete_confirmation">Type “%1$s” to delete local history. A genuinely new message from your peer will reopen this chat with new history only.</string>
     <string name="dm_delete_type_title">Type the chat title</string>

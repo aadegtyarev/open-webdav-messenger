@@ -82,6 +82,8 @@ class ChatFeedViewModelSendFailureTest {
             }
         }
 
+    private fun ChatFeedViewModel.editDraft(value: String) = onDraft(value, composerState.value.sessionToken)
+
     private fun testGraph(
         targetChatId: String = chatId,
         communityId: String = "default",
@@ -160,19 +162,53 @@ class ChatFeedViewModelSendFailureTest {
                         reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
                     ),
                 )
-            vm.onDraft("original")
+            vm.editDraft("original")
             vm.send()
             runCurrent()
 
             persistenceGate.complete(Unit)
             runCurrent()
-            assertEquals("", vm.draft.first())
-            vm.onDraft("newer draft")
+            assertEquals("", vm.composerState.value.draft)
+            vm.editDraft("newer draft")
             networkGate.complete(Unit)
             advanceUntilIdle()
 
-            assertEquals("newer draft", vm.draft.first())
+            assertEquals("newer draft", vm.composerState.value.draft)
             assertEquals(null, vm.sendError.first())
+        }
+
+    @Test
+    fun retained_composer_callback_is_rejected_by_session_and_new_session_accepts_same_text() =
+        runTest(mainDispatcher) {
+            val persistenceGate = CompletableDeferred<Unit>()
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler), persistenceGate = persistenceGate)
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
+                )
+            val oldSession = vm.composerState.value.sessionToken
+            vm.onDraft("submitted", oldSession)
+            val retainedComposeCallback = composerDraftChangeHandler(vm::onDraft, oldSession)
+
+            vm.send()
+            runCurrent()
+            persistenceGate.complete(Unit)
+            runCurrent()
+            assertEquals("", vm.composerState.value.draft)
+            assertEquals(oldSession + 1, vm.composerState.value.sessionToken)
+
+            // Invoke the same callback factory used by ComposerDraftField before recomposition.
+            retainedComposeCallback("different stale value")
+            assertEquals("", vm.composerState.value.draft)
+
+            val activeSession = vm.composerState.value.sessionToken
+            val currentComposeCallback = composerDraftChangeHandler(vm::onDraft, activeSession)
+            currentComposeCallback("submitted")
+            assertEquals("submitted", vm.composerState.value.draft)
         }
 
     @Test
@@ -189,25 +225,25 @@ class ChatFeedViewModelSendFailureTest {
                     ),
                 )
 
-            vm.onDraft("original")
+            vm.editDraft("original")
             vm.send()
             runCurrent()
             vm.send()
             runCurrent()
             assertEquals(1, sender.attempts)
 
-            vm.onDraft("newer")
+            vm.editDraft("newer")
             gate.complete(Unit)
             advanceUntilIdle()
 
             assertEquals(1, sender.persisted)
-            assertEquals("newer", vm.draft.first())
+            assertEquals("newer", vm.composerState.value.draft)
             assertEquals(null, vm.sendError.first())
 
             vm.send()
             advanceUntilIdle()
             assertEquals(2, sender.attempts)
-            assertEquals("", vm.draft.first())
+            assertEquals("", vm.composerState.value.draft)
         }
 
     @Test
@@ -222,18 +258,21 @@ class ChatFeedViewModelSendFailureTest {
                         reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
                     ),
                 )
-            vm.onDraft("retry after persistence failure")
+            vm.editDraft("retry after persistence failure")
+            val sessionBeforeFailure = vm.composerState.value.sessionToken
 
             vm.send()
             advanceUntilIdle()
-            assertEquals("retry after persistence failure", vm.draft.first())
+            assertEquals("retry after persistence failure", vm.composerState.value.draft)
+            assertEquals(sessionBeforeFailure, vm.composerState.value.sessionToken)
             assertEquals(1, sender.attempts)
 
             vm.send()
             advanceUntilIdle()
             assertEquals(2, sender.attempts)
             assertEquals(1, sender.persisted)
-            assertEquals("", vm.draft.first())
+            assertEquals("", vm.composerState.value.draft)
+            assertEquals(sessionBeforeFailure + 1, vm.composerState.value.sessionToken)
         }
 
     @Test
@@ -304,6 +343,27 @@ class ChatFeedViewModelSendFailureTest {
             assertEquals(0, sender.retryAttempts)
         }
 
+    @Test
+    fun remote_tombstone_blocks_initial_send_and_retains_composer_draft() =
+        runTest(mainDispatcher) {
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler))
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.Applied },
+                    ),
+                )
+            vm.editDraft("must not send")
+
+            vm.send()
+            advanceUntilIdle()
+
+            assertEquals(0, sender.attempts)
+            assertEquals("must not send", vm.composerState.value.draft)
+        }
+
     /** A failure before local persistence keeps the draft and surfaces the error. */
     @Test
     fun send_failure_before_persistence_keeps_draft_and_surfaces_error() =
@@ -318,11 +378,11 @@ class ChatFeedViewModelSendFailureTest {
                     ),
                 )
 
-            vm.onDraft("don't lose me")
+            vm.editDraft("don't lose me")
             vm.send()
             advanceUntilIdle()
 
-            assertEquals("don't lose me", vm.draft.first())
+            assertEquals("don't lose me", vm.composerState.value.draft)
             assertEquals(ChatFeedViewModel.SEND_FAILED_MESSAGE, vm.sendError.first())
             assertEquals(1, sender.attempts)
         }

@@ -87,19 +87,29 @@ internal class ChatFeedViewModel(
             rows.map { it.toFeedRow(names) }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), emptyList())
 
-    private val _draft = MutableStateFlow("")
+    data class ComposerState(
+        val draft: String,
+        val sessionToken: Long,
+    )
+
+    private val _composerState = MutableStateFlow(ComposerState(draft = "", sessionToken = 0L))
+    val composerState: StateFlow<ComposerState> = _composerState
     private var draftRevision = 0L
     private val reservedSendRevisions = mutableSetOf<Long>()
-    val draft: StateFlow<String> = _draft
 
     private val _sendError = MutableStateFlow<String?>(null)
 
     /** A transient send-failure message, or `null`. Cleared when the draft changes or a send succeeds. */
     val sendError: StateFlow<String?> = _sendError
 
-    fun onDraft(v: String) {
+    /** Accept edits only from the active editor session; stale callbacks cannot mutate a new draft. */
+    fun onDraft(
+        value: String,
+        sessionToken: Long,
+    ) {
+        if (sessionToken != _composerState.value.sessionToken) return
         draftRevision++
-        _draft.value = v
+        _composerState.value = _composerState.value.copy(draft = value)
         _sendError.value = null
     }
 
@@ -108,7 +118,8 @@ internal class ChatFeedViewModel(
      * draft and attempt the disk write. Delivery status is updated by [MessageSendService].
      */
     fun send() {
-        val originalDraft = _draft.value
+        val submittedComposer = _composerState.value
+        val originalDraft = submittedComposer.draft
         val text = originalDraft.trim()
         if (text.isEmpty()) return
         val sendDraftRevision = draftRevision
@@ -125,8 +136,17 @@ internal class ChatFeedViewModel(
                 }
                 val result =
                     sendService.send(text) {
-                        if (draftRevision == sendDraftRevision && _draft.value == originalDraft) {
-                            _draft.value = ""
+                        val currentComposer = _composerState.value
+                        if (
+                            draftRevision == sendDraftRevision &&
+                            currentComposer.sessionToken == submittedComposer.sessionToken &&
+                            currentComposer.draft == originalDraft
+                        ) {
+                            _composerState.value =
+                                currentComposer.copy(
+                                    draft = "",
+                                    sessionToken = currentComposer.sessionToken + 1,
+                                )
                             draftRevision++
                             clearedRevision = draftRevision
                         }

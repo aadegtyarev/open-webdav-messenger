@@ -18,10 +18,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.People
@@ -59,7 +59,6 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -102,7 +101,9 @@ internal fun ChatFeedScreen(
         ),
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
-    val draft by viewModel.draft.collectAsStateWithLifecycle()
+    val composerState by viewModel.composerState.collectAsStateWithLifecycle()
+    val draft = composerState.draft
+    val editorSessionToken = composerState.sessionToken
     val sendError by viewModel.sendError.collectAsStateWithLifecycle()
     val lastSyncText by viewModel.lastSyncText.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
@@ -404,6 +405,7 @@ internal fun ChatFeedScreen(
         bottomBar = {
             Composer(
                 draft = draft,
+                editorSessionToken = editorSessionToken,
                 sendError = sendError,
                 onDraft = viewModel::onDraft,
                 onSend = viewModel::send,
@@ -496,11 +498,11 @@ private fun MessageRow(
     row: ChatFeedViewModel.FeedRow,
     onRetry: () -> Unit,
 ) {
+    val retryLabel = stringResource(R.string.message_retry)
     val align = if (row.isMine) Alignment.End else Alignment.Start
     val borderAlpha =
         when (row.sendStatus) {
-            MessageEntity.STATUS_SENT -> 0.06f // barely visible = delivered
-            MessageEntity.STATUS_READ -> 0.14f // normal = seen
+            MessageEntity.STATUS_SENT, MessageEntity.STATUS_READ -> 0.06f
             else -> 0.10f // SENDING or other
         }
     val borderColor =
@@ -539,27 +541,46 @@ private fun MessageRow(
         Row(
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Status icon on the left for own messages
             if (row.isMine) {
-                when (row.sendStatus) {
-                    MessageEntity.STATUS_SENDING ->
-                        Icon(
-                            Icons.Filled.Schedule,
-                            contentDescription = "Sending",
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.outline,
-                        )
-                    MessageEntity.STATUS_FAILED ->
-                        IconButton(
-                            onClick = onRetry,
-                            modifier = Modifier.size(48.dp).semantics { contentDescription = "Retry failed message" },
-                        ) {
+                val statusLabel =
+                    when (row.sendStatus) {
+                        MessageEntity.STATUS_SENDING -> stringResource(R.string.message_status_queued)
+                        MessageEntity.STATUS_FAILED -> stringResource(R.string.message_status_failed)
+                        else -> stringResource(R.string.message_status_sent)
+                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    when (row.sendStatus) {
+                        MessageEntity.STATUS_SENDING ->
                             Icon(
-                                Icons.Filled.ErrorOutline,
+                                Icons.Filled.Schedule,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.outline,
                             )
-                        }
+                        MessageEntity.STATUS_FAILED ->
+                            IconButton(
+                                onClick = onRetry,
+                                modifier = Modifier.size(48.dp).semantics { contentDescription = retryLabel },
+                            ) {
+                                Icon(
+                                    Icons.Filled.ErrorOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        else ->
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                    }
+                    Text(
+                        text = statusLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.semantics { contentDescription = statusLabel },
+                    )
                 }
             }
 
@@ -579,8 +600,9 @@ private fun MessageRow(
 @Composable
 private fun Composer(
     draft: String,
+    editorSessionToken: Long,
     sendError: String?,
-    onDraft: (String) -> Unit,
+    onDraft: (String, Long) -> Unit,
     onSend: () -> Unit,
     sendEnabled: Boolean,
     rosterUnavailable: RecipientReadiness.Unavailable?,
@@ -609,17 +631,12 @@ private fun Composer(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = onDraft,
+            ComposerDraftField(
+                draft = draft,
+                sessionToken = editorSessionToken,
+                onDraft = onDraft,
                 enabled = !rosterLoading,
-                placeholder = {
-                    Text(if (rosterLoading) stringResource(R.string.roster_loading_placeholder) else "Message")
-                },
-                keyboardOptions =
-                    KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Sentences,
-                    ),
+                placeholder = if (rosterLoading) stringResource(R.string.roster_loading_placeholder) else "Message",
                 modifier = Modifier.weight(1f).semantics { contentDescription = "Message" },
             )
             IconButton(
