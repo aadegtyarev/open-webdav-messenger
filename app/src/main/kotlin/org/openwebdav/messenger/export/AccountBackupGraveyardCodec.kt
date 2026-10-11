@@ -20,8 +20,8 @@ internal object AccountBackupGraveyardCodec {
             output.writeUTF(deletion.tombstoneHash)
             output.writeInt(raw.size)
             output.write(raw)
-            writeEvidence(output, deletion.tombstonePlaintextBytesBase64)
-            writeEvidence(output, deletion.originPlaintextBytesBase64)
+            AccountBackupDeletionCodec.writeEvidence(output, deletion.tombstonePlaintextBytesBase64)
+            AccountBackupDeletionCodec.writeEvidence(output, deletion.originPlaintextBytesBase64)
             output.writeUTF(deletion.phase)
             output.writeInt(deletion.cleanupAttempts)
             output.writeBoolean(deletion.nextAttemptAtMillis != null)
@@ -47,8 +47,8 @@ internal object AccountBackupGraveyardCodec {
                 val tombstoneHash = input.readUTF()
                 val size = input.readInt().also { require(it in 1..AccountBackupGraveyardValidation.MAX_TOMBSTONE_BYTES) }
                 val bytes = ByteArray(size).also { input.readFully(it) }
-                val tombstoneEvidence = if (includeEvidence) readEvidence(input) else null
-                val originEvidence = if (includeEvidence) readEvidence(input) else null
+                val tombstoneEvidence = if (includeEvidence) AccountBackupDeletionCodec.readEvidence(input) else null
+                val originEvidence = if (includeEvidence) AccountBackupDeletionCodec.readEvidence(input) else null
                 val phase = input.readUTF().also { require(it in AccountBackupGraveyardValidation.PHASES) }
                 val attempts = input.readInt().also { require(it in 0..AccountBackupGraveyardValidation.MAX_ATTEMPTS) }
                 val nextAttempt = if (input.readBoolean()) input.readLong() else null
@@ -80,26 +80,4 @@ internal object AccountBackupGraveyardCodec {
         require(AccountBackupGraveyardValidation.isValid(result))
         return result
     }
-
-    private fun writeEvidence(
-        output: DataOutput,
-        encoded: String?,
-    ) {
-        output.writeBoolean(encoded != null)
-        if (encoded != null) {
-            val bytes = java.util.Base64.getDecoder().decode(encoded)
-            require(bytes.size in 1..AccountBackupGraveyardValidation.MAX_TOMBSTONE_BYTES)
-            output.writeInt(bytes.size)
-            output.write(bytes)
-        }
-    }
-
-    private fun readEvidence(input: DataInput): String? =
-        if (!input.readBoolean()) {
-            null
-        } else {
-            val size = input.readInt().also { require(it in 1..AccountBackupGraveyardValidation.MAX_TOMBSTONE_BYTES) }
-            val bytes = ByteArray(size).also { input.readFully(it) }
-            java.util.Base64.getEncoder().encodeToString(bytes)
-        }
 }

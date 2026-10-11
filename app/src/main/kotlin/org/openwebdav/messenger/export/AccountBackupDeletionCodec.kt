@@ -60,6 +60,28 @@ internal object AccountBackupDeletionCodec {
         return LocalDeletionBackup(hidden, suppressed.mapValues { it.value.toList() }, deletions)
     }
 
+    internal fun writeEvidence(
+        output: DataOutput,
+        encoded: String?,
+    ) {
+        output.writeBoolean(encoded != null)
+        if (encoded != null) {
+            val bytes = java.util.Base64.getDecoder().decode(encoded)
+            require(bytes.size in 1..AccountBackupGraveyardValidation.MAX_TOMBSTONE_BYTES)
+            output.writeInt(bytes.size)
+            output.write(bytes)
+        }
+    }
+
+    internal fun readEvidence(input: DataInput): String? =
+        if (!input.readBoolean()) {
+            null
+        } else {
+            val size = input.readInt().also { require(it in 1..AccountBackupGraveyardValidation.MAX_TOMBSTONE_BYTES) }
+            val bytes = ByteArray(size).also { input.readFully(it) }
+            java.util.Base64.getEncoder().encodeToString(bytes)
+        }
+
     private const val MAX_CHATS = 1000
     private const val MAX_IDS_PER_CHAT = 10_000
     private const val MAX_IDS_TOTAL = 100_000
