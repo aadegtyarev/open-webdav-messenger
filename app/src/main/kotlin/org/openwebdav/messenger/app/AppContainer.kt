@@ -1804,10 +1804,10 @@ internal object AppContainer {
         val generation = AccountMutationBarrier.process.replacementGeneration()
         val entry = chatFor(communityId, chatId)
         val kind = entry?.kind ?: kindOverride
-        val stored = configStore.loadStored(communityId) ?: return TombstoneReconciler.Result.Unavailable
+        val stored = loadCommunityConnection(communityId) ?: return TombstoneReconciler.Result.Unavailable
         if (isExactGeneralDeletionTarget(communityId, chatId, stored.chatId)) {
             return if (generation == AccountMutationBarrier.process.replacementGeneration() &&
-                configStore.loadStored(communityId)?.config == stored.config &&
+                loadCommunityConnection(communityId)?.config == stored.config &&
                 (expectedGraph == null || runtimeGraph() === expectedGraph)
             ) {
                 TombstoneReconciler.Result.NoTombstone
@@ -1832,7 +1832,7 @@ internal object AppContainer {
             TombstoneReconciler(
                 isCurrent = {
                     generation == AccountMutationBarrier.process.replacementGeneration() &&
-                        configStore.loadStored(communityId)?.config == stored.config &&
+                        loadCommunityConnection(communityId)?.config == stored.config &&
                         (expectedGraph == null || runtimeGraph() === expectedGraph)
                 },
                 scan = { scanner.scan(communityId, chatId, scope, objectKey) },
@@ -3161,9 +3161,12 @@ internal object AppContainer {
         communityId: String,
         chatId: String,
     ): Boolean {
-        val stored = configStore.loadStored(communityId) ?: return false
+        val stored = loadCommunityConnection(communityId) ?: return false
         return isExactGeneralDeletionTarget(communityId, chatId, stored.chatId)
     }
+
+    private fun loadCommunityConnection(communityId: String): StoredConnection? =
+        chatOpenTestSeam?.loadStored?.invoke(communityId) ?: configStore.loadStored(communityId)
 
     private fun isExactGeneralDeletionTarget(
         communityId: String,
