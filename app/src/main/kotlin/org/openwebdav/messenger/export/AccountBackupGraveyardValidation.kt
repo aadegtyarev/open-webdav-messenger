@@ -1,8 +1,6 @@
 package org.openwebdav.messenger.export
 
 import org.openwebdav.messenger.crypto.ChatKey
-import org.openwebdav.messenger.governance.CommunityDmOriginCodec
-import org.openwebdav.messenger.governance.CommunityDmOriginParticipants
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.governance.CommunityTombstoneCodec
 import org.openwebdav.messenger.governance.GovernanceObjectKind
@@ -64,33 +62,13 @@ internal object AccountBackupGraveyardValidation {
                         require(record.originHash == deletion.originHash)
                         require(CommunityTombstoneCodec.contentAddress(signed) == deletion.tombstoneHash)
                         if (scope == TombstoneScope.DM) {
-                            val originBytes =
-                                java.util.Base64.getDecoder().decode(requireNotNull(deletion.originPlaintextBytesBase64))
-                            try {
-                                val origin =
-                                    requireNotNull(
-                                        CommunityDmOriginCodec.verify(
-                                            originBytes,
-                                            communityId,
-                                            deletion.chatId,
-                                            identityCrypto,
-                                        ),
-                                    )
-                                require(CommunityDmOriginCodec.contentAddress(originBytes) == deletion.originHash)
-                                require(record.signerRole.name == "DM_INITIATOR")
-                                require(record.originMode == TombstoneOriginMode.ORIGIN_HASH)
-                                require(record.signerSigningPublicKey.contentEquals(origin.initiatorSigningPublicKey))
-                                require(CommunityDmOriginParticipants.matches(record.participants, origin.participants))
-                                expectedSignerPublicKey?.let { expectedSigner ->
-                                    require(
-                                        origin.participants.any { participant ->
-                                            participant.signingPublicKey.contentEquals(expectedSigner)
-                                        },
-                                    )
-                                }
-                            } finally {
-                                originBytes.fill(0)
-                            }
+                            AccountBackupDmGraveyardValidation.validateEvidence(
+                                deletion,
+                                record,
+                                communityId,
+                                identityCrypto,
+                                expectedSignerPublicKey,
+                            )
                         }
                     } finally {
                         signed.fill(0)

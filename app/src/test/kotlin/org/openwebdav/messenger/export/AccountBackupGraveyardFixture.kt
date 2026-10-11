@@ -3,16 +3,12 @@ package org.openwebdav.messenger.export
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.CryptoTestSupport
-import org.openwebdav.messenger.governance.CommunityDmOrigin
-import org.openwebdav.messenger.governance.CommunityDmOriginCodec
-import org.openwebdav.messenger.governance.CommunityDmParticipant
 import org.openwebdav.messenger.governance.CommunityGovernanceEnvelopeCodec
 import org.openwebdav.messenger.governance.CommunityTombstone
 import org.openwebdav.messenger.governance.CommunityTombstoneCodec
 import org.openwebdav.messenger.governance.GovernanceObjectKind
 import org.openwebdav.messenger.governance.TombstoneScope
 import org.openwebdav.messenger.governance.TombstoneSignerRole
-import org.openwebdav.messenger.identity.Identity
 import org.openwebdav.messenger.identity.IdentityCrypto
 import org.openwebdav.messenger.transport.ConnectionConfig
 import java.util.Base64
@@ -79,84 +75,6 @@ internal class AccountBackupGraveyardFixture {
             null,
             null,
             123L,
-        )
-    }
-
-    fun dmDeletion(
-        identity: Identity,
-        wrongPeer: Boolean = false,
-        initiator: Identity = identity,
-    ): ChatDeletionBackup {
-        val owner = CommunityDmParticipant(identity.copySignPublic(), identity.copyBoxPublic())
-        val signer = initiator.copySignPublic()
-        val peerIdentity = if (owner.signingPublicKey.contentEquals(signer)) crypto.generateIdentity() else initiator
-        val otherPeer = crypto.generateIdentity()
-        val participants =
-            listOf(
-                owner,
-                CommunityDmParticipant(peerIdentity.copySignPublic(), peerIdentity.copyBoxPublic()),
-            )
-        val secret = initiator.copySignSecret()
-        val originBytes =
-            try {
-                CommunityDmOriginCodec.sign(
-                    CommunityDmOrigin(
-                        "community-a",
-                        "deleted-dm",
-                        participants,
-                        signer,
-                        ByteArray(32) { 9 },
-                    ),
-                    secret,
-                    crypto,
-                )
-            } finally {
-                secret.fill(0)
-            }
-        val tombstoneParticipants =
-            if (wrongPeer) {
-                listOf(
-                    participants.first(),
-                    CommunityDmParticipant(otherPeer.copySignPublic(), otherPeer.copyBoxPublic()),
-                )
-            } else {
-                participants
-            }
-        val tombstoneSecret = initiator.copySignSecret()
-        val signed =
-            try {
-                CommunityTombstoneCodec.sign(
-                    CommunityTombstone(
-                        "community-a",
-                        "deleted-dm",
-                        CommunityDmOriginCodec.contentAddress(originBytes),
-                        TombstoneScope.DM,
-                        1,
-                        TombstoneSignerRole.DM_INITIATOR,
-                        signer,
-                        tombstoneParticipants,
-                    ),
-                    tombstoneSecret,
-                    crypto,
-                )
-            } finally {
-                tombstoneSecret.fill(0)
-            }
-        val sealed = envelopes.seal(GovernanceObjectKind.DM_TOMBSTONE, "community-a", key, signed)
-        return ChatDeletionBackup(
-            "deleted-dm",
-            "DM",
-            "ORIGIN_HASH",
-            CommunityDmOriginCodec.contentAddress(originBytes),
-            CommunityTombstoneCodec.contentAddress(signed),
-            Base64.getEncoder().encodeToString(sealed),
-            "COMPLETE",
-            0,
-            null,
-            null,
-            123L,
-            Base64.getEncoder().encodeToString(signed),
-            Base64.getEncoder().encodeToString(originBytes),
         )
     }
 
