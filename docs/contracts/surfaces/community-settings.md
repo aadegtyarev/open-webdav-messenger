@@ -24,17 +24,23 @@ Community metadata remains signed by the host identity and stored in the existin
 
 ## Governance settings (v0.25.0)
 
-- Existing communities can publish host-signed genesis only through an explicit
-  migration action. Members verify the short host fingerprint or import a fresh
-  governance invite; self-signed metadata and the local host toggle are not
-  authority.
-- A verified host can independently allow/deny public and private group
-  creation. Disabling a type first completes a bounded verified origin scan and
-  stores an immutable grandfather snapshot. Revision/high-water conflicts or
-  unavailable publication leave prior state unchanged and offer retry.
-- Policy controls are hidden or read-only when host authority is unverified.
-  The host-exemption behavior is disclosed: policy also applies to host-created
-  groups. Existing groups remain open when creation is disabled.
+- A new-community creator pins its signing key through invite genesis. Existing
+  communities publish host-signed genesis only through explicit migration;
+  members must verify the short fingerprint or import a fresh governance invite.
+  Self-signed community metadata and local `isHost` are not authority. Missing,
+  conflicting, or unverified pins fail closed. No silent key replacement or
+  rotation/transfer is supported.
+- A verified host independently controls public- and private-group creation.
+  Policy has a monotonic revision and bounded grandfather snapshot of immutable
+  origin hashes. Disabling either type requires a completed verified origin
+  listing; the snapshot preserves existing origins. With no trusted policy ever
+  advertised, both types remain allowed. After a trusted policy exists, missing,
+  unavailable, rollback, or equivocation fails closed for new creation, while
+  existing chats remain open. Policy also applies to host-created groups.
+- Controls are hidden or read-only when authority is unverified. Old clients and
+  holders of shared WebDAV credentials can bypass this cooperative policy.
+  Backups preserve pinned key, verification, and revision/high-water state but
+  restore never elevates trust.
 - See [WebDAV protocol §13](../../protocol/webdav-layout.md#13-community-governance-origins-and-tombstones)
   for trust and compatibility limits.
 

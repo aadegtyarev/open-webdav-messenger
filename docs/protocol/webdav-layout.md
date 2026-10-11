@@ -831,13 +831,19 @@ recreated legacy chat must use a new chat ID. Unknown values, cross-mode replay,
 noncanonical ordering, invalid identities, and trailing bytes are rejected.
 
 Clients persist a local graveyard before remote work. After a successful
-append-only PUT they hide the chat, reject sends, and fence poll/open/outbox
-work; PUT success is not peer observation. Cleanup is best-effort and deletes
-only chat-scoped mutable descriptors, logs, changes/notifies, receipts, private
-membership, and content. 404 is success; other failures remain durably retryable
-and never erase the tombstone. Offline clients reconcile tombstones before
-open/discovery/poll and purge local history, keys, caches, cursors, and outbox
-before exposing state. Partial cleanup never resurrects a tombstoned chat.
+append-only PUT they hide the chat, reject sends, and fence poll/open/outbox and
+in-flight claims; PUT success is not peer observation. Cleanup is best-effort and
+deletes only chat-scoped mutable descriptors, logs, changes/notifies, receipts,
+private membership, and content. 404 is success; all other failures, including
+ambiguous receipt outcomes, remain durably pending/retryable and never erase the
+tombstone. Cleanup status distinguishes local commit, tombstone publication,
+pending cleanup, and completion. Offline clients reconcile tombstones before
+open/discovery/poll and purge local history, keys, caches, cursors, pending
+state, and outbox before exposing state. For local DM deletion, clients persist
+exact pre-delete message-ID suppression and retain the derived DM key; only the
+first genuinely new peer message reopens the DM, with only new history. Partial
+cleanup never resurrects a tombstoned chat and remote cleanup is not
+crash-atomic.
 
 ### 13.7 Confidentiality and limits
 

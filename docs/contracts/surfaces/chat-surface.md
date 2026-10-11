@@ -233,17 +233,34 @@ current. The active group/DM remains intact.
 
 ## Governance and deletion (v0.25.0)
 
-- Group delete-for-all is offered only when the verified authority projection
-  confirms pinned-host or immutable-creator authority. DM delete-for-both is
-  offered only to the verified origin initiator; every DM participant retains
-  local deletion independently. Unavailable authority stays visibly loading or
-  retryable and never grants an action.
-- Local graveyard state is committed before remote publication. A tombstone
-  permanently closes its chat origin; reconciliation purges stale local state
-  before surfacing it. Cleanup is selective, best-effort, and durably retried;
-  incomplete cleanup never restores a deleted chat.
-- Offline open remains read-only when tombstone scanning is unavailable for
-  compatibility; polling and sending remain gated until reconciliation.
+- General cannot be deleted. For groups, delete-for-all is available only to the
+  verified pinned host or the creator authenticated by the exact immutable
+  origin. Legacy, missing-origin, and conflicting-origin groups are host-only;
+  creator authority fails closed on conflict. A pinned host may delete a legacy
+  group using the exact community/chat-ID reference; recreation requires a new
+  chat ID. For DMs, either participant may delete locally, while only the
+  verified initiator from the immutable DM origin may delete for both. Hosts
+  never control DMs. Unavailable authority remains loading/retryable and never
+  grants an action.
+- Local deletion transactionally commits graveyard and exact pre-delete message
+  suppression before remote work. The derived DM key is retained for a local
+  delete. The first genuinely new peer message can reopen the DM with only new
+  history; the suppressed pre-delete IDs do not return. One valid tombstone
+  permanently closes its origin, and reconciliation purges history, keys,
+  caches, cursors, pending state, and outbox before exposing a remotely deleted
+  chat.
+- Tombstone publication is not proof of peer observation. After publication the
+  chat is hidden, sends are rejected, and subscriptions, outbox, and in-flight
+  claims are fenced. Cleanup selectively deletes mutable descriptors, logs,
+  changes/notifies, receipts, private membership, and chat content; governance
+  origins/genesis/tombstones are retained. 404 is success; other errors are
+  durably retried. Local commit, tombstone publication, cleanup pending, and
+  completion are distinct states. Ambiguous receipts remain pending; partial
+  cleanup never resurrects a chat and is not crash-atomic remotely.
+- Offline opening is read-only when tombstone scanning is unavailable, for
+  compatibility; polling and sending remain gated until reconciliation. Old
+  clients/shared credentials can bypass cooperative policy, and secure erase,
+  downloaded exports, and peer-held copies cannot be guaranteed.
 - See [WebDAV protocol §13](../../protocol/webdav-layout.md#13-community-governance-origins-and-tombstones)
   for wire formats and trust limits.
 
