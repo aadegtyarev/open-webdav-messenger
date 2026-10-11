@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <!-- The app remains English-first; this release localizes only the requested send states to Russian. -->
     <string name="app_name">DavChat</string>
     <string name="join_legacy_invite">This invite is outdated. Ask the sender for a fresh invite to join safely.</string>
     <string name="fast_poll_channel_name">Message sync</string>
