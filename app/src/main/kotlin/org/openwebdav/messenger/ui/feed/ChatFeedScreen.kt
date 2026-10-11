@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.People
@@ -103,6 +104,7 @@ internal fun ChatFeedScreen(
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
+    val draftInputGeneration by viewModel.draftInputGeneration.collectAsStateWithLifecycle()
     val sendError by viewModel.sendError.collectAsStateWithLifecycle()
     val lastSyncText by viewModel.lastSyncText.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
@@ -405,7 +407,7 @@ internal fun ChatFeedScreen(
             Composer(
                 draft = draft,
                 sendError = sendError,
-                onDraft = viewModel::onDraft,
+                onDraft = { value -> viewModel.onDraft(value, draftInputGeneration, draft) },
                 onSend = viewModel::send,
                 sendEnabled = recipientReadiness is RecipientReadiness.Ready,
                 rosterUnavailable = recipientReadiness as? RecipientReadiness.Unavailable,
@@ -496,11 +498,11 @@ private fun MessageRow(
     row: ChatFeedViewModel.FeedRow,
     onRetry: () -> Unit,
 ) {
+    val retryLabel = stringResource(R.string.message_retry)
     val align = if (row.isMine) Alignment.End else Alignment.Start
     val borderAlpha =
         when (row.sendStatus) {
-            MessageEntity.STATUS_SENT -> 0.06f // barely visible = delivered
-            MessageEntity.STATUS_READ -> 0.14f // normal = seen
+            MessageEntity.STATUS_SENT, MessageEntity.STATUS_READ -> 0.06f
             else -> 0.10f // SENDING or other
         }
     val borderColor =
@@ -539,27 +541,46 @@ private fun MessageRow(
         Row(
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Status icon on the left for own messages
             if (row.isMine) {
-                when (row.sendStatus) {
-                    MessageEntity.STATUS_SENDING ->
-                        Icon(
-                            Icons.Filled.Schedule,
-                            contentDescription = "Sending",
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.outline,
-                        )
-                    MessageEntity.STATUS_FAILED ->
-                        IconButton(
-                            onClick = onRetry,
-                            modifier = Modifier.size(48.dp).semantics { contentDescription = "Retry failed message" },
-                        ) {
+                val statusLabel =
+                    when (row.sendStatus) {
+                        MessageEntity.STATUS_SENDING -> stringResource(R.string.message_status_queued)
+                        MessageEntity.STATUS_FAILED -> stringResource(R.string.message_status_failed)
+                        else -> stringResource(R.string.message_status_sent)
+                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    when (row.sendStatus) {
+                        MessageEntity.STATUS_SENDING ->
                             Icon(
-                                Icons.Filled.ErrorOutline,
+                                Icons.Filled.Schedule,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.outline,
                             )
-                        }
+                        MessageEntity.STATUS_FAILED ->
+                            IconButton(
+                                onClick = onRetry,
+                                modifier = Modifier.size(48.dp).semantics { contentDescription = retryLabel },
+                            ) {
+                                Icon(
+                                    Icons.Filled.ErrorOutline,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        else ->
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                    }
+                    Text(
+                        text = statusLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.semantics { contentDescription = statusLabel },
+                    )
                 }
             }
 

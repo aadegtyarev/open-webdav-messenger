@@ -176,6 +176,38 @@ class ChatFeedViewModelSendFailureTest {
         }
 
     @Test
+    fun stale_compose_callback_cannot_restore_cleared_draft_and_post_send_edit_survives() =
+        runTest(mainDispatcher) {
+            val persistenceGate = CompletableDeferred<Unit>()
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler), persistenceGate = persistenceGate)
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                    ),
+                )
+            vm.onDraft("submitted")
+            val composedGeneration = vm.draftInputGeneration.value
+            val composedDraft = vm.draft.value
+
+            vm.send()
+            runCurrent()
+            persistenceGate.complete(Unit)
+            runCurrent()
+            assertEquals("", vm.draft.value)
+
+            // This models a callback retained by the pre-send Compose composition.
+            vm.onDraft(composedDraft, composedGeneration, composedDraft)
+            assertEquals("", vm.draft.value)
+
+            // A genuine edit from that same briefly stale composition has a new value and is retained.
+            vm.onDraft("next draft", composedGeneration, composedDraft)
+            assertEquals("next draft", vm.draft.value)
+        }
+
+    @Test
     fun duplicate_tap_reserves_revision_and_stale_persistence_keeps_new_draft() =
         runTest(mainDispatcher) {
             val gate = CompletableDeferred<Unit>()
@@ -302,6 +334,27 @@ class ChatFeedViewModelSendFailureTest {
             advanceUntilIdle()
 
             assertEquals(0, sender.retryAttempts)
+        }
+
+    @Test
+    fun remote_tombstone_blocks_initial_send_and_retains_composer_draft() =
+        runTest(mainDispatcher) {
+            val sender = ControlledSender(StandardTestDispatcher(testScheduler))
+            val vm =
+                track(
+                    ChatFeedViewModel(
+                        testGraph(),
+                        sender,
+                        reconcileTombstone = { TombstoneReconciler.Result.Applied },
+                    ),
+                )
+            vm.onDraft("must not send")
+
+            vm.send()
+            advanceUntilIdle()
+
+            assertEquals(0, sender.attempts)
+            assertEquals("must not send", vm.draft.first())
         }
 
     /** A failure before local persistence keeps the draft and surfaces the error. */

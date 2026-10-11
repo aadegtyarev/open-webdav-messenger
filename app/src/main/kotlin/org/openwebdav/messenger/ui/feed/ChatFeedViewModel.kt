@@ -89,6 +89,8 @@ internal class ChatFeedViewModel(
 
     private val _draft = MutableStateFlow("")
     private var draftRevision = 0L
+    private val _draftInputGeneration = MutableStateFlow(0L)
+    val draftInputGeneration: StateFlow<Long> = _draftInputGeneration
     private val reservedSendRevisions = mutableSetOf<Long>()
     val draft: StateFlow<String> = _draft
 
@@ -97,7 +99,16 @@ internal class ChatFeedViewModel(
     /** A transient send-failure message, or `null`. Cleared when the draft changes or a send succeeds. */
     val sendError: StateFlow<String?> = _sendError
 
-    fun onDraft(v: String) {
+    /**
+     * The composition generation and text snapshot reject a delayed callback replaying its pre-clear
+     * value, while allowing a changed post-send edit even before Compose recomposes.
+     */
+    fun onDraft(
+        v: String,
+        inputGeneration: Long = _draftInputGeneration.value,
+        composedDraft: String = _draft.value,
+    ) {
+        if (inputGeneration != _draftInputGeneration.value && v == composedDraft) return
         draftRevision++
         _draft.value = v
         _sendError.value = null
@@ -128,6 +139,7 @@ internal class ChatFeedViewModel(
                         if (draftRevision == sendDraftRevision && _draft.value == originalDraft) {
                             _draft.value = ""
                             draftRevision++
+                            _draftInputGeneration.value++
                             clearedRevision = draftRevision
                         }
                     }

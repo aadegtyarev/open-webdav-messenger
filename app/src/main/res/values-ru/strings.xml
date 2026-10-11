@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="message_status_queued">В очереди</string>
+    <string name="message_status_sent">Отправлено</string>
+    <string name="message_status_failed">Не отправлено</string>
+    <string name="message_retry">Повторить отправку</string>
+</resources>

@@ -1,5 +1,6 @@
 package org.openwebdav.messenger.ui.feed
 
+import android.content.res.Configuration
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
@@ -28,14 +29,18 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.openwebdav.messenger.R
 import org.openwebdav.messenger.app.AppContainer
 import org.openwebdav.messenger.app.AppTestSupport
 import org.openwebdav.messenger.app.CachedVerifiedRoster
 import org.openwebdav.messenger.app.ChatDeleteCapability
+import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.EngineWiring
+import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RosterCacheProvenance
 import org.openwebdav.messenger.app.RuntimeGraph
+import org.openwebdav.messenger.app.TombstoneReconciler
 import org.openwebdav.messenger.app.VerifiedParticipant
 import org.openwebdav.messenger.app.VerifiedRosterCachePersistence
 import org.openwebdav.messenger.crypto.Aead
@@ -58,7 +63,9 @@ import org.openwebdav.messenger.sync.SyncRunner
 import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.ui.participants.ParticipantsScreen
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.GraphicsMode
+import java.util.Locale
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -537,20 +544,94 @@ class ChatFeedScreenTest {
     }
 
     @Test
-    fun failed_message_retry_is_a_labelled_accessible_target() {
+    fun outgoing_statuses_are_visible_accessible_and_retry_stays_on_failed_bubble() {
         runBlocking {
-            val body = "retry me"
-            val message = TextMessage(chatId, identity.publicIdentity(), replyTo = null, body = body, sendTimestampMillis = 3)
-            val orderToken = OrderToken.build(1_717_000_000_000L, Hex.encode(identity.copySignPublic()), 3)
-            val messageId = MessageId.messageId(orderToken, body.toByteArray())
-            store.persist(messageId, orderToken, message, 3, sendStatus = org.openwebdav.messenger.data.MessageEntity.STATUS_FAILED)
+            val states =
+                listOf(
+                    "queued bubble" to org.openwebdav.messenger.data.MessageEntity.STATUS_SENDING,
+                    "sent bubble" to org.openwebdav.messenger.data.MessageEntity.STATUS_SENT,
+                    "failed bubble" to org.openwebdav.messenger.data.MessageEntity.STATUS_FAILED,
+                )
+            states.forEachIndexed { index, (body, status) ->
+                val message = TextMessage(chatId, identity.publicIdentity(), null, body, index.toLong() + 10)
+                val orderToken = OrderToken.build(1_717_000_000_000L, Hex.encode(identity.copySignPublic()), index.toLong() + 10)
+                store.persist(
+                    MessageId.messageId(orderToken, body.toByteArray()),
+                    orderToken,
+                    message,
+                    index.toLong() + 10,
+                    sendStatus = status,
+                )
+            }
         }
         composeRule.setContent {
             ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph()))
         }
-        composeRule.onNodeWithContentDescription("Retry failed message")
+
+        composeRule.onNodeWithText("Queued").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Queued").assertIsDisplayed()
+        composeRule.onNodeWithText("Sent").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Sent").assertIsDisplayed()
+        composeRule.onNodeWithText("Failed").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Failed").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Retry sending message")
             .assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun send_state_labels_have_russian_resource_translations() {
+        val context = RuntimeEnvironment.getApplication()
+        val configuration =
+            Configuration(context.resources.configuration).apply {
+                setLocale(Locale("ru"))
+            }
+        val resources = context.createConfigurationContext(configuration).resources
+        assertEquals("В очереди", resources.getString(R.string.message_status_queued))
+        assertEquals("Отправлено", resources.getString(R.string.message_status_sent))
+        assertEquals("Не отправлено", resources.getString(R.string.message_status_failed))
+    }
+
+    @Test
+    fun failed_message_retry_is_accessible_and_retries_original_bubble() {
+        val body = "retry me"
+        val orderToken = OrderToken.build(1_717_000_000_000L, Hex.encode(identity.copySignPublic()), 3)
+        val messageId = MessageId.messageId(orderToken, body.toByteArray())
+        runBlocking {
+            val message = TextMessage(chatId, identity.publicIdentity(), replyTo = null, body = body, sendTimestampMillis = 3)
+            store.persist(messageId, orderToken, message, 3, sendStatus = org.openwebdav.messenger.data.MessageEntity.STATUS_FAILED)
+        }
+        var retriedId: String? = null
+        val sender =
+            object : ChatMessageSender {
+                override suspend fun send(
+                    text: String,
+                    onRecoverablyPersisted: suspend () -> Unit,
+                ) = MessageSendService.SendResult("unused", false)
+
+                override suspend fun retry(messageId: String): Boolean {
+                    retriedId = messageId
+                    return true
+                }
+            }
+        val graph = graph()
+        val viewModel =
+            ChatFeedViewModel(
+                graph,
+                sender,
+                reconcileTombstone = { TombstoneReconciler.Result.NoTombstone },
+                isGeneralAnchor = { true },
+            )
+        composeRule.setContent {
+            ChatFeedScreen(onShowInvite = {}, viewModel = viewModel)
+        }
+        composeRule.onNodeWithContentDescription("Retry sending message")
+            .assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+        composeRule.waitUntil(5_000) { retriedId != null }
+        assertEquals(messageId, retriedId)
+        assertEquals(listOf(messageId), runBlocking { store.messagesForChat(chatId).map { it.messageId } })
     }
 
     /** The Send action enables once the composer draft is non-blank. */
