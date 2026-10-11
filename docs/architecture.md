@@ -94,8 +94,11 @@ One line per decision. Detail in git history. OPEN items are flagged for resolut
 12. **Codec dedup:** shared parse cursor + shared community-directory engine + single-source constant homes.
 13. **Local history encryption (Implemented — 2026-06-14):** Room DB encrypted at rest via SQLCipher + Keystore-wrapped AES-256 key; unencrypted→encrypted migration on first upgrade (ATTACH + sqlcipher_export).
 14. **Account export/restore:** External JSON payload and inner binary codec are independently
-    versioned and currently v6; binary v2 added explicit chat access, v5 trust state, and v6
-    complete per-chat graveyard state. Older v1 formats retain unknown chat access. Password-
+    versioned and currently v7; binary v2 added explicit chat access, v5 trust state, v6
+    complete per-chat graveyard state, and v7 signed tombstone plus DM-origin evidence.
+    Versions v1–v6 remain decodable, but DM graveyards without v7 evidence fail closed on
+    restore; authenticated DM participants may restore those records without the deleted
+    per-chat key. Older v1 formats retain unknown chat access. Password-
     encrypted backups include registered community configs, registries/keys, active
     selection, and identity keypair. Argon2id→XChaCha20-Poly1305 produces a
     base64 blob shareable through Android's Share sheet. Password is mandatory because

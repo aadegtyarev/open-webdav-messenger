@@ -85,17 +85,18 @@ internal class AccountBackupGraveyardFixture {
     fun dmDeletion(
         identity: Identity,
         wrongPeer: Boolean = false,
+        initiator: Identity = identity,
     ): ChatDeletionBackup {
-        val signer = identity.copySignPublic()
-        val signerBox = identity.copyBoxPublic()
-        val peer = crypto.generateIdentity()
+        val owner = CommunityDmParticipant(identity.copySignPublic(), identity.copyBoxPublic())
+        val signer = initiator.copySignPublic()
+        val peerIdentity = if (owner.signingPublicKey.contentEquals(signer)) crypto.generateIdentity() else initiator
         val otherPeer = crypto.generateIdentity()
         val participants =
             listOf(
-                CommunityDmParticipant(signer, signerBox),
-                CommunityDmParticipant(peer.copySignPublic(), peer.copyBoxPublic()),
+                owner,
+                CommunityDmParticipant(peerIdentity.copySignPublic(), peerIdentity.copyBoxPublic()),
             )
-        val secret = identity.copySignSecret()
+        val secret = initiator.copySignSecret()
         val originBytes =
             try {
                 CommunityDmOriginCodec.sign(
@@ -121,7 +122,7 @@ internal class AccountBackupGraveyardFixture {
             } else {
                 participants
             }
-        val tombstoneSecret = identity.copySignSecret()
+        val tombstoneSecret = initiator.copySignSecret()
         val signed =
             try {
                 CommunityTombstoneCodec.sign(

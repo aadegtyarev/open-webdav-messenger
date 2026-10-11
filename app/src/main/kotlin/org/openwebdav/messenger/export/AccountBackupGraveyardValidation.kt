@@ -81,8 +81,12 @@ internal object AccountBackupGraveyardValidation {
                                 require(record.originMode == TombstoneOriginMode.ORIGIN_HASH)
                                 require(record.signerSigningPublicKey.contentEquals(origin.initiatorSigningPublicKey))
                                 require(CommunityDmOriginParticipants.matches(record.participants, origin.participants))
-                                expectedSignerPublicKey?.let {
-                                    require(it.contentEquals(origin.initiatorSigningPublicKey))
+                                expectedSignerPublicKey?.let { expectedSigner ->
+                                    require(
+                                        origin.participants.any { participant ->
+                                            participant.signingPublicKey.contentEquals(expectedSigner)
+                                        },
+                                    )
                                 }
                             } finally {
                                 originBytes.fill(0)

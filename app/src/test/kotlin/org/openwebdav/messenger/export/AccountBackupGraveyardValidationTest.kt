@@ -99,6 +99,50 @@ class AccountBackupGraveyardValidationTest {
         }
 
     @Test
+    fun dm_recipient_backup_round_trips_after_key_deletion_and_outsider_identity_fails_closed() =
+        runBlocking {
+            val fixture = AccountBackupGraveyardFixture()
+            val recipient = ExportTestSupport.freshIdentity()
+            val initiator = ExportTestSupport.freshIdentity()
+            val outsider = ExportTestSupport.freshIdentity()
+            val deletion = fixture.dmDeletion(recipient, initiator = initiator)
+            assertTrue(fixture.isAuthenticated(deletion, communityKey = null, expectedSigner = recipient.copySignPublic()))
+            assertFalse(fixture.isAuthenticated(deletion, communityKey = null, expectedSigner = outsider.copySignPublic()))
+
+            val native = ExportTestSupport.native()
+            val payload =
+                ExportPayload.build(
+                    null,
+                    null,
+                    mapOf("anchor" to fixture.key),
+                    recipient,
+                    AccountBackup("community-a", listOf(fixture.community(deletion))),
+                )
+            val blob = encryptedExportTestPayload(native, ExportPayload.toJson(payload), "restore-password")
+            val manager =
+                RestoreManager(
+                    native,
+                    ExportTestSupport.inMemoryConnectionConfigStore(),
+                    ExportTestSupport.inMemoryCommunityKeyStore(),
+                    ExportTestSupport.inMemoryChatKeyStore(),
+                    ExportTestSupport.inMemoryIdentityStore(),
+                    accountBackupStore = ExportTestSupport.InMemoryAccountBackupStore(),
+                )
+            assertEquals(RestoreResult.Restored, manager.restore(blob, "restore-password".toCharArray()))
+
+            val outsiderPayload =
+                ExportPayload.build(
+                    null,
+                    null,
+                    mapOf("anchor" to fixture.key),
+                    outsider,
+                    AccountBackup("community-a", listOf(fixture.community(deletion))),
+                )
+            val outsiderBlob = encryptedExportTestPayload(native, ExportPayload.toJson(outsiderPayload), "restore-password")
+            assertEquals(RestoreResult.CorruptPayload, manager.restore(outsiderBlob, "restore-password".toCharArray()))
+        }
+
+    @Test
     fun sealed_tombstone_tamper_and_plaintext_hash_mismatch_fail_closed() {
         val fixture = AccountBackupGraveyardFixture()
         val deletion = fixture.deletion()
