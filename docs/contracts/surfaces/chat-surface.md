@@ -171,8 +171,9 @@ published together and agree semantically. For a DM, verified self and peer rows
 are built before graph installation, so the first published graph already
 contains the matching recipients and participant projection.
 
-The feed toolbar reserves fixed 48dp slots for Back, Refresh/status, People,
-Invite, and contextual More around a flexible one-line ellipsized community title.
+The feed toolbar applies status-bar and display-cutout safe insets, then reserves
+fixed 48dp slots for Back, Refresh/status, People, Invite, and contextual More
+around a flexible one-line ellipsized community title.
 People and Invite stay fully visible, at least 48dp actionable targets, and retain
 identical coordinates across roster and deletion-authority states. They are
 disabled with explanatory semantics while verified roster data is loading or

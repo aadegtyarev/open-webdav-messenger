@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -96,6 +98,7 @@ internal fun ChatFeedScreen(
     chatTitle: String = "",
     onLocalDmDeleted: () -> Unit = {},
     onChatDeleted: (ChatDeletionStatus) -> Unit = {},
+    toolbarSafeArea: Modifier = Modifier.statusBarsPadding().displayCutoutPadding(),
     viewModel: ChatFeedViewModel =
         viewModel(
             key = runtimeScopeKey("feed"),
@@ -349,128 +352,133 @@ internal fun ChatFeedScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            Row(
-                modifier = Modifier.fillMaxWidth().height(64.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
+                modifier = Modifier.fillMaxWidth().then(toolbarSafeArea),
+                contentAlignment = Alignment.CenterStart,
             ) {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-                Column(
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                    verticalArrangement = Arrangement.Center,
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = displayTitle,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = titleStatus,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                        modifier =
-                            Modifier.semantics {
-                                if (privateClaimStatus != PrivateClaimPublicationStatus.NOT_PRIVATE) {
-                                    contentDescription = "$lastSyncText. $titleStatus"
-                                }
-                            },
-                    )
-                }
-                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    if (loadingProgressLabel.isNotEmpty()) {
-                        CircularProgressIndicator(
-                            modifier =
-                                Modifier.size(22.dp).semantics {
-                                    contentDescription = loadingProgressLabel
-                                    progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
-                                },
-                            strokeWidth = 2.dp,
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = displayTitle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleMedium,
                         )
-                    } else {
-                        IconButton(
-                            onClick = { viewModel.syncNow() },
-                            enabled = !isSyncing,
-                            modifier = Modifier.size(48.dp),
-                        ) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "Refresh messages")
+                        Text(
+                            text = titleStatus,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier =
+                                Modifier.semantics {
+                                    if (privateClaimStatus != PrivateClaimPublicationStatus.NOT_PRIVATE) {
+                                        contentDescription = "$lastSyncText. $titleStatus"
+                                    }
+                                },
+                        )
+                    }
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        if (loadingProgressLabel.isNotEmpty()) {
+                            CircularProgressIndicator(
+                                modifier =
+                                    Modifier.size(22.dp).semantics {
+                                        contentDescription = loadingProgressLabel
+                                        progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+                                    },
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            IconButton(
+                                onClick = { viewModel.syncNow() },
+                                enabled = !isSyncing,
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(Icons.Filled.Refresh, contentDescription = "Refresh messages")
+                            }
                         }
                     }
-                }
-                IconButton(
-                    onClick = onShowParticipants,
-                    enabled = rosterActionsEnabled,
-                    modifier = Modifier.size(48.dp),
-                ) {
-                    Icon(Icons.Filled.People, contentDescription = participantsActionDescription)
-                }
-                IconButton(
-                    onClick = onShowInvite,
-                    enabled = rosterActionsEnabled,
-                    modifier = Modifier.size(48.dp),
-                ) {
-                    Icon(Icons.Filled.PersonAdd, contentDescription = inviteActionDescription)
-                }
-                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    if (showOverflowActions) {
-                        IconButton(
-                            onClick = { showMoreActions = true },
-                            modifier = Modifier.size(48.dp),
-                        ) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = moreActionsDescription)
-                        }
-                        DropdownMenu(
-                            expanded = showMoreActions,
-                            onDismissRequest = { showMoreActions = false },
-                        ) {
-                            when {
-                                deleteCapability is ChatDeleteCapability.Loading ->
+                    IconButton(
+                        onClick = onShowParticipants,
+                        enabled = rosterActionsEnabled,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(Icons.Filled.People, contentDescription = participantsActionDescription)
+                    }
+                    IconButton(
+                        onClick = onShowInvite,
+                        enabled = rosterActionsEnabled,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(Icons.Filled.PersonAdd, contentDescription = inviteActionDescription)
+                    }
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        if (showOverflowActions) {
+                            IconButton(
+                                onClick = { showMoreActions = true },
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = moreActionsDescription)
+                            }
+                            DropdownMenu(
+                                expanded = showMoreActions,
+                                onDismissRequest = { showMoreActions = false },
+                            ) {
+                                when {
+                                    deleteCapability is ChatDeleteCapability.Loading ->
+                                        DropdownMenuItem(
+                                            text = { Text(deleteAuthorityLoadingLabel) },
+                                            onClick = {},
+                                            enabled = false,
+                                        )
+                                    deleteCapability is ChatDeleteCapability.Unavailable -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.chat_delete_authority_unavailable_status)) },
+                                            onClick = {},
+                                            enabled = false,
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(deleteAuthorityRetryLabel) },
+                                            onClick = {
+                                                showMoreActions = false
+                                                viewModel.refreshDeleteCapability()
+                                            },
+                                        )
+                                    }
+                                    deleteCapability is ChatDeleteCapability.NotAuthorized && !canDeleteForAll && canDeleteLocalDm ->
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.chat_delete_authority_not_authorized)) },
+                                            onClick = {},
+                                            enabled = false,
+                                        )
+                                }
+                                if (canDeleteForAll || deleteCapability is ChatDeleteCapability.Available) {
                                     DropdownMenuItem(
-                                        text = { Text(deleteAuthorityLoadingLabel) },
-                                        onClick = {},
-                                        enabled = false,
-                                    )
-                                deleteCapability is ChatDeleteCapability.Unavailable -> {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.chat_delete_authority_unavailable_status)) },
-                                        onClick = {},
-                                        enabled = false,
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(deleteAuthorityRetryLabel) },
+                                        text = { Text(stringResource(R.string.chat_delete_all_action)) },
                                         onClick = {
                                             showMoreActions = false
-                                            viewModel.refreshDeleteCapability()
+                                            showDeleteChatConfirmation = true
                                         },
                                     )
                                 }
-                                deleteCapability is ChatDeleteCapability.NotAuthorized && !canDeleteForAll && canDeleteLocalDm ->
+                                if (canDeleteLocalDm) {
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.chat_delete_authority_not_authorized)) },
-                                        onClick = {},
-                                        enabled = false,
+                                        text = { Text(stringResource(R.string.dm_delete_action)) },
+                                        onClick = {
+                                            showMoreActions = false
+                                            showDeleteDmConfirmation = true
+                                        },
                                     )
-                            }
-                            if (canDeleteForAll || deleteCapability is ChatDeleteCapability.Available) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.chat_delete_all_action)) },
-                                    onClick = {
-                                        showMoreActions = false
-                                        showDeleteChatConfirmation = true
-                                    },
-                                )
-                            }
-                            if (canDeleteLocalDm) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.dm_delete_action)) },
-                                    onClick = {
-                                        showMoreActions = false
-                                        showDeleteDmConfirmation = true
-                                    },
-                                )
+                                }
                             }
                         }
                     }

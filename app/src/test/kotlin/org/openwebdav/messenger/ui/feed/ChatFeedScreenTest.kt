@@ -2,6 +2,7 @@ package org.openwebdav.messenger.ui.feed
 
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.absolutePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.runtime.CompositionLocalProvider
@@ -9,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHeightIsAtLeast
@@ -20,6 +22,7 @@ import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -911,6 +914,52 @@ class ChatFeedScreenTest {
                     }
                 }
             }
+        }
+    }
+
+    @Test
+    fun toolbar_respects_status_cutout_and_horizontal_safe_insets() {
+        val longTitle = "Community title that must remain visible beside toolbar actions"
+        val graph = graph(longTitle)
+        val safeAreaPadding = Modifier.absolutePadding(left = 20.dp, top = 24.dp, right = 16.dp)
+        val width = mutableStateOf(320)
+        val viewModel = ChatFeedViewModel(graph)
+        composeRule.setContent {
+            Box(Modifier.requiredWidth(width.value.dp).height(720.dp).testTag("safe-area-host")) {
+                ChatFeedScreen(
+                    onShowInvite = {},
+                    onShowParticipants = {},
+                    deleteCapabilityOverride = ChatDeleteCapability.Available,
+                    chatTitle = longTitle,
+                    toolbarSafeArea = safeAreaPadding,
+                    viewModel = viewModel,
+                )
+            }
+        }
+
+        for (screenWidth in listOf(320, 360)) {
+            composeRule.runOnIdle { width.value = screenWidth }
+            composeRule.waitForIdle()
+            val host = composeRule.onNodeWithTag("safe-area-host").fetchSemanticsNode().boundsInRoot
+            val back = bounds("Back")
+            val title = composeRule.onNodeWithText(longTitle).fetchSemanticsNode().boundsInRoot
+            val refresh = bounds("Refresh messages")
+            val people = bounds("Participants")
+            val invite = bounds("Invite someone")
+            val more = bounds("More actions for $longTitle")
+
+            assertTrue("toolbar did not honor top/status inset", back.top >= host.top + 24f)
+            assertTrue("toolbar did not honor left cutout inset: host=$host toolbar=$back", back.left >= host.left + 12f)
+            assertTrue("toolbar exceeded right safe inset", more.right <= host.right - 16f)
+            assertTrue("title is not visible inside safe area", title.width > 0f && title.left >= back.right)
+            assertTrue(
+                "toolbar slots overlap",
+                title.right <= refresh.left && refresh.right <= people.left && people.right <= invite.left && invite.right <= more.left,
+            )
+            listOf(back, refresh, people, invite, more).forEach { target ->
+                assertTrue("toolbar action target is under 48dp", target.width >= 48f && target.height >= 48f)
+            }
+            assertTrue("toolbar title is not one line", title.height < 48f)
         }
     }
 
