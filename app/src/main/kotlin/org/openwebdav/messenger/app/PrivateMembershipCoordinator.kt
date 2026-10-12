@@ -29,21 +29,33 @@ internal class PrivateMembershipCoordinator(
         stored: StoredConnection,
         communityKey: ChatKey?,
         isCurrent: () -> Boolean,
+        locallyCreatedWithoutPeers: Boolean = false,
+        markNonSelfMemberObserved: () -> Unit = {},
     ) {
         if (!isCurrent()) return
         val accountGeneration = AccountMutationBarrier.process.replacementGeneration()
         graph.enablePrivateMembership()
         val lookup = cache.lookup(graph.communityId, graph.chatId, "private", graph.chatKey, graph.identity)
         val cached = lookup.record?.let { PrivateMembershipCacheProjection.members(graph.chatId, it.members) }
-        val cachedReady = cached != null && cache.applyCached(lookup, isCurrent) { applyMembers(graph, cached) }
-        if (!cachedReady && isCurrent()) graph.updateRecipientReadiness(RecipientReadiness.Loading)
+        val cachedReady = cached != null && runCatching {
+            cache.applyCached(lookup, isCurrent) { applyMembers(graph, cached, markNonSelfMemberObserved) }
+        }.getOrDefault(false)
+        if (!cachedReady && isCurrent()) {
+            if (locallyCreatedWithoutPeers && cached == null) {
+                graph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(graph.senderIdentifier)))
+            } else {
+                graph.updateRecipientReadiness(RecipientReadiness.Loading)
+            }
+        }
         val service = serviceFor(stored.config)
         scope.launch {
             val directory = communityKey?.let { runCatching { readDirectory(stored, it) }.getOrNull() }
             val result = runCatching { service.read(graph.chatId, graph.chatKey, directory) }.getOrNull()
             if (!isCurrent()) return@launch
             if (result == null || result.listingFailed) {
-                if (!cachedReady) graph.updateRecipientReadiness(RecipientReadiness.Unavailable(unavailableMessage))
+                if (!cachedReady && !locallyCreatedWithoutPeers) {
+                    graph.updateRecipientReadiness(RecipientReadiness.Unavailable(unavailableMessage))
+                }
                 return@launch
             }
             val record =
@@ -54,9 +66,16 @@ internal class PrivateMembershipCoordinator(
                     result.members,
                 )
             try {
-                cache.commit(lookup, record, isCurrent) { applyMembers(graph, result.members) }
+                cache.commit(lookup, record, isCurrent) {
+                    applyMembers(graph, result.members, markNonSelfMemberObserved)
+                }
             } catch (_: Exception) {
-                cache.applyLive(lookup, isCurrent) { applyMembers(graph, result.members) }
+                if (locallyCreatedWithoutPeers) {
+                    graph.updateRecipientReadiness(RecipientReadiness.Unavailable(unavailableMessage))
+                }
+                cache.applyLive(lookup, isCurrent) {
+                    applyMembers(graph, result.members, markNonSelfMemberObserved)
+                }
             }
         }
         scope.launch {
@@ -83,7 +102,11 @@ internal class PrivateMembershipCoordinator(
     private fun applyMembers(
         graph: RuntimeGraph,
         members: List<VerifiedPrivateMember>,
+        markNonSelfMemberObserved: () -> Unit,
     ) {
+        if (members.any { Hex.encode(it.claim.copySigningPublicKey()) != graph.senderIdentifier }) {
+            markNonSelfMemberObserved()
+        }
         val participants = privateVerifiedParticipants(members, graph.senderIdentifier, graph.identity.copySignPublic())
         graph.memberNames = members.associate { Hex.encode(it.claim.copySigningPublicKey()) to it.displayName }
         val ids = (members.map { Hex.encode(it.claim.copySigningPublicKey()) } + graph.senderIdentifier).distinct()

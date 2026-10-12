@@ -178,6 +178,63 @@ class MessageSendServiceTest {
         }
 
     @Test
+    fun later_send_after_verified_member_joins_uses_exact_new_roster() =
+        runTest {
+            val store = store()
+            val graph = graph(store)
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined)
+            val first = service.send("self only")
+            assertTrue(first.complete)
+            assertTrue(disk.fileNames(ChatPaths.CHANGES).isEmpty())
+
+            val peerA = Hex.encode(ByteArray(32) { 0x11 })
+            val peerB = Hex.encode(ByteArray(32) { 0x22 })
+            graph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(peerA, peerB)))
+            disk.failPutUnderPrefix[ChatPaths.LOG] = 503
+            val second = service.send("after peer join")
+            assertFalse(second.complete)
+            val queued = store.messagesForChat(chatId).last()
+            assertEquals("$peerA\n$peerB", queued.outboxRecipients)
+            disk.failPutUnderPrefix.clear()
+            assertTrue(service.retry(second.messageId))
+
+            val rows = store.messagesForChat(chatId)
+            assertEquals(2, rows.size)
+            assertEquals(MessageEntity.STATUS_SENT, rows.last().sendStatus)
+            assertEquals(1, disk.fileNames(ChatPaths.changeIndex(peerA, chatId)).size)
+            assertEquals(1, disk.fileNames(ChatPaths.changeIndex(peerB, chatId)).size)
+            assertEquals(2, disk.fileNames(ChatPaths.logDir(chatId)).size)
+        }
+
+    @Test
+    fun successful_log_append_is_sent_while_failed_member_notification_remains_retryable() =
+        runTest {
+            val store = store()
+            val graph = graph(store)
+            val peer = Hex.encode(ByteArray(32) { 0x33 })
+            graph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(peer)))
+            disk.failPutUnderPrefix[ChatPaths.changeIndex(peer, chatId)] = 503
+            val service = MessageSendService(graph, ioDispatcher = Dispatchers.Unconfined)
+
+            val result = service.send("append succeeded, notification pending")
+            val sent = store.messagesForChat(chatId).single()
+            assertTrue(result.logWritten)
+            assertTrue(result.complete)
+            assertEquals(MessageEntity.STATUS_SENT, sent.sendStatus)
+            assertNotNull(sent.outboxEnvelope)
+            assertEquals(listOf(sent.messageId), store.pendingOutgoing("default").map { it.messageId })
+            assertTrue(disk.fileNames(ChatPaths.logDir(chatId)).size == 1)
+
+            disk.failPutUnderPrefix.clear()
+            graph.engine.pollCycle(graph.senderIdentifier, listOf(ChatSubscription(chatId)))
+            val completed = store.messagesForChat(chatId).single()
+            assertEquals(MessageEntity.STATUS_SENT, completed.sendStatus)
+            assertNull(completed.outboxEnvelope)
+            assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+            assertEquals(1, disk.fileNames(ChatPaths.changeIndex(peer, chatId)).size)
+        }
+
+    @Test
     fun send_for_replaced_account_is_rejected_before_persistence_or_webdav() =
         runTest {
             val store = store()

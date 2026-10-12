@@ -16,7 +16,7 @@ internal class OutgoingOutbox(
         messageId: String,
         communityId: String,
         senderIdentifier: String,
-    ): Boolean = deliverOne(messageId, communityId, senderIdentifier)?.complete ?: false
+    ): Boolean = deliverOne(messageId, communityId, senderIdentifier)?.logWritten ?: false
 
     suspend fun retryChats(
         chatIds: Set<String>,
@@ -36,10 +36,16 @@ internal class OutgoingOutbox(
         val outgoing = store.messageById(messageId, communityId) ?: return null
         if (store.isOutgoingBlocked(outgoing.chatId)) return null
         val claimToken = UUID.randomUUID().toString()
+        var sentWasAlreadyWritten = false
         return try {
             val message = store.claimOutgoing(messageId, communityId, claimToken) ?: return null
+            sentWasAlreadyWritten = message.sendStatus == MessageEntity.STATUS_SENT
             if (store.isOutgoingBlocked(message.chatId)) {
-                store.failOutgoingClaim(message.messageId, communityId, claimToken)
+                if (sentWasAlreadyWritten) {
+                    store.releaseSentOutgoingClaim(message.messageId, communityId, claimToken)
+                } else {
+                    store.failOutgoingClaim(message.messageId, communityId, claimToken)
+                }
                 return null
             }
             val envelope = message.outboxEnvelope ?: return null
@@ -52,14 +58,21 @@ internal class OutgoingOutbox(
                 } catch (_: Exception) {
                     SendOutcome(false, 0, recipients.size)
                 }
-            if (outcome.complete) {
-                store.finishOutgoingClaim(message.messageId, communityId, claimToken)
-            } else {
-                store.failOutgoingClaim(message.messageId, communityId, claimToken)
+            when {
+                outcome.complete -> store.finishOutgoingClaim(message.messageId, communityId, claimToken)
+                outcome.logWritten -> store.markLogWrittenClaim(message.messageId, communityId, claimToken)
+                sentWasAlreadyWritten -> store.releaseSentOutgoingClaim(message.messageId, communityId, claimToken)
+                else -> store.failOutgoingClaim(message.messageId, communityId, claimToken)
             }
             outcome
         } catch (cancelled: CancellationException) {
-            withContext(NonCancellable) { store.failOutgoingClaim(messageId, communityId, claimToken) }
+            withContext(NonCancellable) {
+                if (sentWasAlreadyWritten) {
+                    store.releaseSentOutgoingClaim(messageId, communityId, claimToken)
+                } else {
+                    store.failOutgoingClaim(messageId, communityId, claimToken)
+                }
+            }
             throw cancelled
         }
     }

@@ -22,7 +22,14 @@ internal class ChatRegistry(private val context: Context) {
             val o = json.getJSONObject(i)
             val access = o.optString("access", ACCESS_UNKNOWN)
             require(access in ACCESS_VALUES) { "Invalid chat access metadata" }
-            Entry(o.getString("id"), o.getString("name"), o.getString("kind"), access)
+            Entry(
+                o.getString("id"),
+                o.getString("name"),
+                o.getString("kind"),
+                access,
+                o.optBoolean("locallyCreatedPrivate", false),
+                o.optBoolean("nonSelfMemberObserved", false),
+            )
         }
     }
 
@@ -62,6 +69,8 @@ internal class ChatRegistry(private val context: Context) {
                     require(e.access in ACCESS_VALUES) { "Invalid chat access metadata" }
                     put("kind", e.kind)
                     put("access", e.access)
+                    put("locallyCreatedPrivate", e.locallyCreatedPrivate)
+                    put("nonSelfMemberObserved", e.nonSelfMemberObserved)
                 },
             )
         }
@@ -75,7 +84,17 @@ internal class ChatRegistry(private val context: Context) {
         val name: String,
         val kind: String = "general",
         val access: String = ACCESS_UNKNOWN,
+        val locallyCreatedPrivate: Boolean = false,
+        val nonSelfMemberObserved: Boolean = false,
     )
+
+    fun markNonSelfMemberObserved(communityId: String, chatId: String) {
+        val rows = all(communityId)
+        val row = rows.singleOrNull { it.id == chatId } ?: return
+        if (!row.nonSelfMemberObserved) {
+            replace(communityId, rows.map { if (it.id == chatId) it.copy(nonSelfMemberObserved = true) else it })
+        }
+    }
 
     private companion object {
         const val ACCESS_PUBLIC = "public"

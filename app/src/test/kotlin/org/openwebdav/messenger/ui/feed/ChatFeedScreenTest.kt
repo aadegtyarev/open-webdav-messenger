@@ -6,12 +6,14 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -229,6 +231,64 @@ class ChatFeedScreenTest {
 
         composeRule.onNodeWithText("No messages yet — say hello.").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
+    }
+
+    @Test
+    fun locally_created_private_room_is_ready_and_composer_enabled_while_claim_scan_runs() {
+        val communityId = "default"
+        val privateId = "private-self-${java.util.UUID.randomUUID()}"
+        val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
+        val scanStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+        server.dispatcher =
+            object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+                    if (request.method == "PROPFIND" && request.path.orEmpty().contains("private-membership/$privateId")) {
+                        scanStarted.set(true)
+                        okhttp3.mockwebserver.MockResponse().setResponseCode(404)
+                    } else {
+                        okhttp3.mockwebserver.MockResponse().setResponseCode(404)
+                    }
+            }
+        EngineWiring.initialize(
+            AppTestSupport.chatOpenTestDeps(
+                server,
+                db,
+                communityId,
+                stored,
+                identity,
+                mapOf(chatId to chatKey, privateId to chatKey),
+            ),
+        )
+        AppContainer.configureChatOpenTestSeam(
+            communityId,
+            AppContainer.ChatOpenTestSeam(
+                loadChatKey = { if (it == privateId) chatKey else null },
+                loadStored = { stored },
+                readDirectory = { DirectoryReadResult(emptyList(), 0) },
+                chatKind = { _, _ -> "group" },
+                chatAccess = { _, _ -> "private" },
+                localPrivateSelfRoomEligible = { _, id -> id == privateId },
+            ),
+        )
+        try {
+            val request = AppContainer.beginChatOpenRequest()
+            assertTrue(runBlocking { AppContainer.openGroupChat(privateId, "Self room", communityId, requestToken = request) })
+            val graph = checkNotNull(AppContainer.runtimeGraph())
+            assertEquals(privateId, graph.chatId)
+            assertTrue(graph.privateMembershipChat)
+            assertTrue(graph.recipientSnapshot() is RecipientReadiness.Ready)
+            assertEquals(listOf(graph.senderIdentifier), (graph.recipientSnapshot() as RecipientReadiness.Ready).members)
+            composeRule.setContent { ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph)) }
+            composeRule.onNodeWithContentDescription("Message").assertIsEnabled()
+            composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
+            composeRule.onNodeWithContentDescription("Reading participants from server").assertDoesNotExist()
+            composeRule.waitUntil(5_000) { scanStarted.get() }
+            composeRule.waitUntil(5_000) { graph.recipientSnapshot() is RecipientReadiness.Ready }
+            assertEquals(listOf(graph.senderIdentifier), (graph.recipientSnapshot() as RecipientReadiness.Ready).members)
+        } finally {
+            AppContainer.clearChatOpenTestSeam()
+            EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
+        }
     }
 
     @Test
@@ -483,6 +543,47 @@ class ChatFeedScreenTest {
     }
 
     @Test
+    fun toolbar_has_one_progress_indicator_at_most_for_all_loading_combinations() {
+        val graph = graph()
+        val capability = mutableStateOf<ChatDeleteCapability>(ChatDeleteCapability.NotAuthorized)
+        composeRule.setContent {
+            ChatFeedScreen(
+                onShowInvite = {},
+                deleteCapabilityOverride = capability.value,
+                viewModel = ChatFeedViewModel(graph),
+            )
+        }
+        val loadingCombinations = listOf(false to false, true to false, false to true, true to true)
+        for ((rosterLoading, deleteLoading) in loadingCombinations) {
+            composeRule.runOnIdle {
+                graph.updateRecipientReadiness(
+                    if (rosterLoading) RecipientReadiness.Loading else RecipientReadiness.Ready(listOf(graph.senderIdentifier)),
+                )
+                capability.value = if (deleteLoading) ChatDeleteCapability.Loading else ChatDeleteCapability.NotAuthorized
+            }
+            composeRule.waitForIdle()
+            val spinnerCount =
+                composeRule.onAllNodes(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate))
+                    .fetchSemanticsNodes().size
+            assertEquals(if (rosterLoading || deleteLoading) 1 else 0, spinnerCount)
+            composeRule.onNodeWithContentDescription("Refresh messages").assertIsEnabled()
+            composeRule.onNodeWithContentDescription(
+                if (rosterLoading) "Participants unavailable while verified members load" else "Participants",
+            ).assertIsDisplayed()
+            composeRule.onNodeWithContentDescription(
+                if (rosterLoading) "Invite someone (verified participants are loading)" else "Invite someone",
+            ).assertIsDisplayed()
+            if (rosterLoading) {
+                composeRule.onNodeWithContentDescription("Participants unavailable while verified members load").assertIsNotEnabled()
+                composeRule.onNodeWithContentDescription("Invite someone (verified participants are loading)").assertIsNotEnabled()
+            } else {
+                composeRule.onNodeWithContentDescription("Participants").assertIsEnabled()
+                composeRule.onNodeWithContentDescription("Invite someone").assertIsEnabled()
+            }
+        }
+    }
+
+    @Test
     fun cached_ready_roster_has_no_loading_surface_and_keeps_send_enabled() {
         val graph = graph().apply { updateRecipientReadiness(RecipientReadiness.Ready(listOf(senderIdentifier, "peer"))) }
         composeRule.setContent {
@@ -505,8 +606,9 @@ class ChatFeedScreenTest {
         composeRule.setContent {
             ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph))
         }
-        composeRule.onNodeWithContentDescription("Reading participants from server")
-            .assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+        composeRule.onNodeWithContentDescription("Reading participants from server").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Participants unavailable while verified members load").assertIsNotEnabled()
+        composeRule.onNodeWithContentDescription("Invite someone (verified participants are loading)").assertIsNotEnabled()
         composeRule.onNodeWithText("Reading participants from server…").assertIsDisplayed()
         composeRule.onNodeWithText("Reading participants from server. Sending will be available when complete.").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
@@ -568,13 +670,12 @@ class ChatFeedScreenTest {
             ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph()))
         }
 
-        composeRule.onNodeWithText("Queued").assertIsDisplayed()
+        composeRule.onNodeWithText("Queued").assertDoesNotExist()
         composeRule.onNodeWithContentDescription("Queued").assertIsDisplayed()
-        composeRule.onNodeWithText("Sent").assertIsDisplayed()
+        composeRule.onNodeWithText("Sent").assertDoesNotExist()
         composeRule.onNodeWithContentDescription("Sent").assertIsDisplayed()
-        composeRule.onNodeWithText("Failed").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Failed").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Retry sending message")
+        composeRule.onNodeWithText("Failed").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Failed. Retry sending message")
             .assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
     }
@@ -625,7 +726,7 @@ class ChatFeedScreenTest {
         composeRule.setContent {
             ChatFeedScreen(onShowInvite = {}, viewModel = viewModel)
         }
-        composeRule.onNodeWithContentDescription("Retry sending message")
+        composeRule.onNodeWithContentDescription("Failed. Retry sending message")
             .assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
             .performClick()

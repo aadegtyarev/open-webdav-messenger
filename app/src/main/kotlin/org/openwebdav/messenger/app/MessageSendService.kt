@@ -124,12 +124,12 @@ internal class MessageSendService(
                 if (graph.isDeletionFenced() || graph.store.isOutgoingBlocked(graph.chatId)) {
                     return@withContext SendResult(prepared.messageId, logWritten = false, complete = false)
                 }
-                if (outcome.complete) {
-                    graph.store.markSent(prepared.messageId, graph.communityId)
-                } else {
-                    graph.store.markFailed(prepared.messageId, graph.communityId)
+                when {
+                    outcome.complete -> graph.store.markSent(prepared.messageId, graph.communityId)
+                    outcome.logWritten -> graph.store.markLogWritten(prepared.messageId, graph.communityId)
+                    else -> graph.store.markFailed(prepared.messageId, graph.communityId)
                 }
-                SendResult(messageId = prepared.messageId, logWritten = outcome.logWritten, complete = outcome.complete)
+                SendResult(messageId = prepared.messageId, logWritten = outcome.logWritten, complete = outcome.logWritten)
             }
         } catch (cancelled: CancellationException) {
             persistedMessageId?.let { messageId ->
@@ -159,8 +159,8 @@ internal class MessageSendService(
 
     /**
      * @property messageId the §2 id of the sent message (the local echo row's key; the dedup key on poll).
-     * @property logWritten whether the shared-`log/` write landed; `false` means kept-locally / will-retry
-     *   (the echo row is already persisted, so the message is not lost — plan Scenario 6 offline send).
+     * @property logWritten whether the shared-`log/` write landed; successful log append is the Sent boundary,
+     *   independent of pending change-index notifications. A failed or uncertain append remains retryable.
      */
     data class SendResult(val messageId: String, val logWritten: Boolean, val complete: Boolean = logWritten)
 }

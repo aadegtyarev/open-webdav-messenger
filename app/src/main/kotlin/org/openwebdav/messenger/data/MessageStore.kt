@@ -60,6 +60,11 @@ class MessageStore(
         if (communityId == this.communityId) messageDao.finishOutgoing(messageId, communityId)
     }
 
+    /** Record a successful shared-log write while retaining the payload for pending notifications. */
+    suspend fun markLogWritten(messageId: String, communityId: String) {
+        if (communityId == this.communityId) messageDao.markOutgoingLogWritten(messageId, communityId)
+    }
+
     /** Mark a locally-sent message for later retry without discarding its original operation. */
     suspend fun markFailed(
         messageId: String,
@@ -84,6 +89,14 @@ class MessageStore(
         claimToken: String,
     ) {
         if (communityId == this.communityId) messageDao.finishOutgoingClaim(messageId, communityId, claimToken)
+    }
+
+    suspend fun markLogWrittenClaim(messageId: String, communityId: String, claimToken: String) {
+        if (communityId == this.communityId) messageDao.markOutgoingClaimLogWritten(messageId, communityId, claimToken)
+    }
+
+    suspend fun releaseSentOutgoingClaim(messageId: String, communityId: String, claimToken: String) {
+        if (communityId == this.communityId) messageDao.releaseSentOutgoingClaim(messageId, communityId, claimToken)
     }
 
     suspend fun failOutgoingClaim(

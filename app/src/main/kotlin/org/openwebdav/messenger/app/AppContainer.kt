@@ -216,6 +216,7 @@ internal object AppContainer {
         val cachePersistence: VerifiedRosterCachePersistence? = null,
         val chatKind: ((String, String) -> String?)? = null,
         val chatAccess: ((String, String) -> String?)? = null,
+        val localPrivateSelfRoomEligible: ((String, String) -> Boolean)? = null,
         val provisionDm: ((Identity, DirectoryEntry, String) -> Boolean)? = null,
         val onGeneralRosterCompleted: (() -> Unit)? = null,
         val beforeGeneralRosterPreparation: (() -> Unit)? = null,
@@ -661,7 +662,16 @@ internal object AppContainer {
                 chatOpenRequestCoordinator.runIfCurrent(requestToken) {
                     if (!isCurrentGroupContext(context, requestToken)) return@runIfCurrent false
                     crypto.chatKeyStore(requireContext()).store(chatId, key)
-                    chatRegistry.add(context.communityId, ChatRegistry.Entry(chatId, name, "group", access.name.lowercase()))
+                    chatRegistry.add(
+                        context.communityId,
+                        ChatRegistry.Entry(
+                            chatId,
+                            name,
+                            "group",
+                            access.name.lowercase(),
+                            locallyCreatedPrivate = access == ChatAccess.PRIVATE,
+                        ),
+                    )
                     true
                 }
             }
@@ -880,9 +890,17 @@ internal object AppContainer {
                     it.communityRuntimeKey == selection.graph.communityRuntimeKey &&
                     runtimeSelectionGuard.isCurrent(selection.selectionRevision)
             } ?: return false
+        if (plan.access == ChatAccess.PRIVATE.name.lowercase() &&
+            isLocallyCreatedPrivateBeforePeers(graph.communityId, graph.chatId)
+        ) {
+            graph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(graph.senderIdentifier)))
+        }
         val stored = plan.stored
         if (plan.kind == "group" && plan.access == ChatAccess.PRIVATE.name.lowercase()) {
             graph.enablePrivateMembership()
+            if (isLocallyCreatedPrivateBeforePeers(graph.communityId, graph.chatId)) {
+                graph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(graph.senderIdentifier)))
+            }
             if (stored == null) {
                 graph.updateRecipientReadiness(RecipientReadiness.Unavailable(ROSTER_UNAVAILABLE))
             } else {
@@ -950,6 +968,13 @@ internal object AppContainer {
         return true
     }
 
+    private fun isLocallyCreatedPrivateBeforePeers(communityId: String, chatId: String): Boolean {
+        chatOpenTestSeam?.localPrivateSelfRoomEligible?.invoke(communityId, chatId)?.let { return it }
+        val entry = runCatching { chatRegistry.all(communityId).singleOrNull { it.id == chatId } }.getOrNull()
+        return entry?.kind == "group" && entry.access == ChatAccess.PRIVATE.name.lowercase() &&
+            entry.locallyCreatedPrivate && !entry.nonSelfMemberObserved
+    }
+
     private fun preparePrivateRoster(
         graph: RuntimeGraph,
         requestToken: ChatOpenRequestCoordinator.Token,
@@ -961,7 +986,19 @@ internal object AppContainer {
         val isCurrent = {
             isRosterContextCurrent(requestToken, revision, graph, runtimeKey, graph.communityId, graph.chatId)
         }
-        privateMembershipCoordinator.prepare(graph, stored, communityKey, isCurrent)
+        val locallyCreatedWithoutPeers = isLocallyCreatedPrivateBeforePeers(graph.communityId, graph.chatId)
+        if (locallyCreatedWithoutPeers) {
+            graph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(graph.senderIdentifier)))
+        }
+        privateMembershipCoordinator.prepare(
+            graph,
+            stored,
+            communityKey,
+            isCurrent,
+            locallyCreatedWithoutPeers,
+        ) {
+            chatRegistry.markNonSelfMemberObserved(graph.communityId, graph.chatId)
+        }
     }
 
     private fun launchUnknownChatAccessResolution(
