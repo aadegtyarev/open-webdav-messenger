@@ -37,9 +37,13 @@ internal class PrivateMembershipCoordinator(
         graph.enablePrivateMembership()
         val lookup = cache.lookup(graph.communityId, graph.chatId, "private", graph.chatKey, graph.identity)
         val cached = lookup.record?.let { PrivateMembershipCacheProjection.members(graph.chatId, it.members) }
-        val cachedReady = cached != null && runCatching {
-            cache.applyCached(lookup, isCurrent) { applyMembers(graph, cached, markNonSelfMemberObserved) }
-        }.getOrDefault(false)
+        val cachedReady =
+            cached != null &&
+                runCatching {
+                    cache.applyCached(lookup, isCurrent) {
+                        applyMembers(graph, cached, markNonSelfMemberObserved)
+                    }
+                }.getOrDefault(false)
         if (!cachedReady && isCurrent()) {
             if (locallyCreatedWithoutPeers && cached == null) {
                 graph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(graph.senderIdentifier)))

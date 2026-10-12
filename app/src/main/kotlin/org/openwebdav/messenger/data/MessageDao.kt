@@ -343,7 +343,10 @@ interface MessageDao {
             "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
             "AND sendStatus = 'SENDING' AND outboxClaimToken IS NULL AND outboxEnvelope IS NOT NULL",
     )
-    suspend fun markOutgoingLogWritten(messageId: String, communityId: String): Int
+    suspend fun markOutgoingLogWritten(
+        messageId: String,
+        communityId: String,
+    ): Int
 
     @Query(
         "UPDATE messages SET sendStatus = 'FAILED', outboxClaimToken = NULL " +
@@ -393,14 +396,22 @@ interface MessageDao {
             "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
             "AND sendStatus IN ('SENDING', 'SENT') AND outboxClaimToken = :claimToken AND outboxEnvelope IS NOT NULL",
     )
-    suspend fun markOutgoingClaimLogWritten(messageId: String, communityId: String, claimToken: String): Int
+    suspend fun markOutgoingClaimLogWritten(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ): Int
 
     @Query(
         "UPDATE messages SET outboxClaimToken = NULL WHERE communityId = :communityId AND messageId = :messageId " +
             "AND outboxCommunityId = :communityId AND sendStatus = 'SENT' AND outboxClaimToken = :claimToken " +
             "AND outboxEnvelope IS NOT NULL",
     )
-    suspend fun releaseSentOutgoingClaim(messageId: String, communityId: String, claimToken: String): Int
+    suspend fun releaseSentOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ): Int
 
     @Query(
         "UPDATE messages SET sendStatus = 'FAILED', outboxClaimToken = NULL " +

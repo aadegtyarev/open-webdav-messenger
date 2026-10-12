@@ -968,11 +968,18 @@ internal object AppContainer {
         return true
     }
 
-    private fun isLocallyCreatedPrivateBeforePeers(communityId: String, chatId: String): Boolean {
+    private fun isLocallyCreatedPrivateBeforePeers(
+        communityId: String,
+        chatId: String,
+    ): Boolean {
         chatOpenTestSeam?.localPrivateSelfRoomEligible?.invoke(communityId, chatId)?.let { return it }
-        val entry = runCatching { chatRegistry.all(communityId).singleOrNull { it.id == chatId } }.getOrNull()
-        return entry?.kind == "group" && entry.access == ChatAccess.PRIVATE.name.lowercase() &&
-            entry.locallyCreatedPrivate && !entry.nonSelfMemberObserved
+        val entry =
+            runCatching { chatRegistry.all(communityId).singleOrNull { it.id == chatId } }
+                .getOrNull()
+        return entry?.kind == "group" &&
+            entry.access == ChatAccess.PRIVATE.name.lowercase() &&
+            entry.locallyCreatedPrivate &&
+            !entry.nonSelfMemberObserved
     }
 
     private fun preparePrivateRoster(

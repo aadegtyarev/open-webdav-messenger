@@ -121,6 +121,18 @@ internal fun ChatFeedScreen(
     val deleteAuthorityRetryLabel = stringResource(R.string.chat_delete_authority_retry)
     val participantsActionLabel = stringResource(R.string.participants_action)
     val inviteActionLabel = stringResource(R.string.invite_action)
+    val participantsActionDescription =
+        if (recipientReadiness is RecipientReadiness.Loading) {
+            stringResource(R.string.participants_loading_disabled)
+        } else {
+            participantsActionLabel
+        }
+    val inviteActionDescription =
+        if (recipientReadiness is RecipientReadiness.Loading) {
+            stringResource(R.string.invite_roster_loading)
+        } else {
+            inviteActionLabel
+        }
     val loadingProgressLabel =
         when {
             recipientReadiness is RecipientReadiness.Loading && deleteCapability is ChatDeleteCapability.Loading ->
@@ -348,10 +360,11 @@ internal fun ChatFeedScreen(
                     }
                     if (loadingProgressLabel.isNotEmpty()) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp).semantics {
-                                contentDescription = loadingProgressLabel
-                                progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
-                            },
+                            modifier =
+                                Modifier.size(24.dp).semantics {
+                                    contentDescription = loadingProgressLabel
+                                    progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+                                },
                             strokeWidth = 2.dp,
                         )
                     }
@@ -362,11 +375,7 @@ internal fun ChatFeedScreen(
                     ) {
                         Icon(
                             Icons.Filled.People,
-                            contentDescription = if (recipientReadiness is RecipientReadiness.Loading) {
-                                stringResource(R.string.participants_loading_disabled)
-                            } else {
-                                participantsActionLabel
-                            },
+                            contentDescription = participantsActionDescription,
                         )
                     }
                     if (deleteCapability is ChatDeleteCapability.Unavailable) {
@@ -400,11 +409,7 @@ internal fun ChatFeedScreen(
                     ) {
                         Icon(
                             Icons.Filled.PersonAdd,
-                            contentDescription = if (recipientReadiness is RecipientReadiness.Loading) {
-                                stringResource(R.string.invite_roster_loading)
-                            } else {
-                                inviteActionLabel
-                            },
+                            contentDescription = inviteActionDescription,
                         )
                     }
                 },
@@ -561,7 +566,9 @@ private fun MessageRow(
                     IconButton(
                         onClick = onRetry,
                         modifier =
-                            Modifier.size(48.dp).semantics { contentDescription = failedStatusRetryLabel },
+                            Modifier.size(48.dp).semantics {
+                                contentDescription = failedStatusRetryLabel
+                            },
                     ) {
                         Icon(
                             Icons.Filled.ErrorOutline,
@@ -570,15 +577,15 @@ private fun MessageRow(
                         )
                     }
                 } else {
+                    val isQueued = row.sendStatus == MessageEntity.STATUS_SENDING
+                    val statusIcon = if (isQueued) Icons.Filled.Schedule else Icons.Filled.CheckCircle
+                    val statusTint =
+                        if (isQueued) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary
                     Icon(
-                        if (row.sendStatus == MessageEntity.STATUS_SENDING) Icons.Filled.Schedule else Icons.Filled.CheckCircle,
+                        statusIcon,
                         contentDescription = statusLabel,
                         modifier = Modifier.size(16.dp),
-                        tint = if (row.sendStatus == MessageEntity.STATUS_SENDING) {
-                            MaterialTheme.colorScheme.outline
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
+                        tint = statusTint,
                     )
                 }
             }

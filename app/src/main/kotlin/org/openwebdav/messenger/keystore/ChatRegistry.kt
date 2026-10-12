@@ -88,11 +88,17 @@ internal class ChatRegistry(private val context: Context) {
         val nonSelfMemberObserved: Boolean = false,
     )
 
-    fun markNonSelfMemberObserved(communityId: String, chatId: String) {
+    fun markNonSelfMemberObserved(
+        communityId: String,
+        chatId: String,
+    ) {
         val rows = all(communityId)
         val row = rows.singleOrNull { it.id == chatId } ?: return
         if (!row.nonSelfMemberObserved) {
-            replace(communityId, rows.map { if (it.id == chatId) it.copy(nonSelfMemberObserved = true) else it })
+            replace(
+                communityId,
+                rows.map { if (it.id == chatId) it.copy(nonSelfMemberObserved = true) else it },
+            )
         }
     }
 

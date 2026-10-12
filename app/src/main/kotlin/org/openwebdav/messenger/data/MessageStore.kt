@@ -61,7 +61,10 @@ class MessageStore(
     }
 
     /** Record a successful shared-log write while retaining the payload for pending notifications. */
-    suspend fun markLogWritten(messageId: String, communityId: String) {
+    suspend fun markLogWritten(
+        messageId: String,
+        communityId: String,
+    ) {
         if (communityId == this.communityId) messageDao.markOutgoingLogWritten(messageId, communityId)
     }
 
@@ -91,11 +94,19 @@ class MessageStore(
         if (communityId == this.communityId) messageDao.finishOutgoingClaim(messageId, communityId, claimToken)
     }
 
-    suspend fun markLogWrittenClaim(messageId: String, communityId: String, claimToken: String) {
+    suspend fun markLogWrittenClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ) {
         if (communityId == this.communityId) messageDao.markOutgoingClaimLogWritten(messageId, communityId, claimToken)
     }
 
-    suspend fun releaseSentOutgoingClaim(messageId: String, communityId: String, claimToken: String) {
+    suspend fun releaseSentOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ) {
         if (communityId == this.communityId) messageDao.releaseSentOutgoingClaim(messageId, communityId, claimToken)
     }
 
