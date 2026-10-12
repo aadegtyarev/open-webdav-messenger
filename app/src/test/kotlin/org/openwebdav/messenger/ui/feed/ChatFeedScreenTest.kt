@@ -1,6 +1,7 @@
 package org.openwebdav.messenger.ui.feed
 
 import android.content.res.Configuration
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
@@ -9,10 +10,13 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CompletableDeferred
@@ -237,17 +241,19 @@ class ChatFeedScreenTest {
     fun locally_created_private_room_is_ready_and_composer_enabled_while_claim_scan_runs() {
         val communityId = "default"
         val privateId = "private-self-${java.util.UUID.randomUUID()}"
+        val importedId = "joined-room-${java.util.UUID.randomUUID()}"
         val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
-        val scanStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+        val scannedPrivateIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         server.dispatcher =
             object : okhttp3.mockwebserver.Dispatcher() {
-                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
-                    if (request.method == "PROPFIND" && request.path.orEmpty().contains("private-membership/$privateId")) {
-                        scanStarted.set(true)
-                        okhttp3.mockwebserver.MockResponse().setResponseCode(404)
-                    } else {
-                        okhttp3.mockwebserver.MockResponse().setResponseCode(404)
-                    }
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): okhttp3.mockwebserver.MockResponse {
+                    val scannedId =
+                        listOf(privateId, importedId).firstOrNull {
+                            request.path.orEmpty().contains("private-membership/$it")
+                        }
+                    if (request.method == "PROPFIND" && scannedId != null) scannedPrivateIds += scannedId
+                    return okhttp3.mockwebserver.MockResponse().setResponseCode(404)
+                }
             }
         EngineWiring.initialize(
             AppTestSupport.chatOpenTestDeps(
@@ -256,13 +262,13 @@ class ChatFeedScreenTest {
                 communityId,
                 stored,
                 identity,
-                mapOf(chatId to chatKey, privateId to chatKey),
+                mapOf(chatId to chatKey, privateId to chatKey, importedId to chatKey),
             ),
         )
         AppContainer.configureChatOpenTestSeam(
             communityId,
             AppContainer.ChatOpenTestSeam(
-                loadChatKey = { if (it == privateId) chatKey else null },
+                loadChatKey = { if (it in setOf(privateId, importedId)) chatKey else null },
                 loadStored = { stored },
                 readDirectory = { DirectoryReadResult(emptyList(), 0) },
                 chatKind = { _, _ -> "group" },
@@ -278,13 +284,26 @@ class ChatFeedScreenTest {
             assertTrue(graph.privateMembershipChat)
             assertTrue(graph.recipientSnapshot() is RecipientReadiness.Ready)
             assertEquals(listOf(graph.senderIdentifier), (graph.recipientSnapshot() as RecipientReadiness.Ready).members)
-            composeRule.setContent { ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph)) }
+            val visibleGraph = mutableStateOf<RuntimeGraph?>(null)
+            composeRule.setContent {
+                visibleGraph.value?.let { ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(it)) }
+            }
+            visibleGraph.value = graph
             composeRule.onNodeWithContentDescription("Message").assertIsEnabled()
             composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
             composeRule.onNodeWithContentDescription("Reading participants from server").assertDoesNotExist()
-            composeRule.waitUntil(5_000) { scanStarted.get() }
+            composeRule.waitUntil(5_000) { privateId in scannedPrivateIds }
             composeRule.waitUntil(5_000) { graph.recipientSnapshot() is RecipientReadiness.Ready }
             assertEquals(listOf(graph.senderIdentifier), (graph.recipientSnapshot() as RecipientReadiness.Ready).members)
+
+            val joined = openInstalledChat(importedId, "Joined room")
+            assertEquals(RecipientReadiness.Loading, joined.recipientSnapshot())
+            visibleGraph.value = joined
+            composeRule.waitUntil(5_000) { importedId in scannedPrivateIds }
+            composeRule.waitUntil(5_000) { joined.recipientSnapshot() is RecipientReadiness.Unavailable }
+            composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
+            composeRule.onNodeWithText("Verified members unavailable — reconnect and retry").assertIsDisplayed()
+            composeRule.onNodeWithText("Retry").assertIsDisplayed()
         } finally {
             AppContainer.clearChatOpenTestSeam()
             EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
@@ -681,6 +700,46 @@ class ChatFeedScreenTest {
     }
 
     @Test
+    fun room_status_flow_moves_queued_to_sent_and_failed_without_visible_status_words() {
+        val queuedBody = "queued transition"
+        val failedBody = "failed transition"
+        val queuedId = "queued-transition"
+        val failedId = "failed-transition"
+        runBlocking {
+            listOf(queuedBody to queuedId, failedBody to failedId).forEachIndexed { index, (body, id) ->
+                store.persist(
+                    messageId = id,
+                    orderToken = "000${index + 1}",
+                    message = TextMessage(chatId, identity.publicIdentity(), null, body, index.toLong() + 1),
+                    receivedAtMillis = index.toLong() + 1,
+                    sendStatus = org.openwebdav.messenger.data.MessageEntity.STATUS_SENDING,
+                    outboxEnvelope = byteArrayOf(index.toByte()),
+                    outboxCommunityId = "default",
+                )
+            }
+        }
+        composeRule.setContent { ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph())) }
+        assertEquals(2, composeRule.onAllNodesWithContentDescription("Queued").fetchSemanticsNodes().size)
+        composeRule.onNodeWithText("Queued").assertDoesNotExist()
+
+        runBlocking { store.markSent(queuedId, "default") }
+        composeRule.waitUntil(5_000) {
+            runBlocking { store.messageById(queuedId)?.sendStatus == org.openwebdav.messenger.data.MessageEntity.STATUS_SENT }
+        }
+        composeRule.onNodeWithContentDescription("Sent").assertIsDisplayed()
+        composeRule.onNodeWithText("Sent").assertDoesNotExist()
+
+        runBlocking { store.markFailed(failedId, "default") }
+        composeRule.waitUntil(5_000) {
+            runBlocking { store.messageById(failedId)?.sendStatus == org.openwebdav.messenger.data.MessageEntity.STATUS_FAILED }
+        }
+        composeRule.onNodeWithText(failedBody).performScrollTo()
+        composeRule.onNodeWithContentDescription("Failed. Retry sending message")
+            .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithText("Failed").assertDoesNotExist()
+    }
+
+    @Test
     fun send_state_labels_have_russian_resource_translations() {
         val context = RuntimeEnvironment.getApplication()
         val configuration =
@@ -691,6 +750,34 @@ class ChatFeedScreenTest {
         assertEquals("В очереди", resources.getString(R.string.message_status_queued))
         assertEquals("Отправлено", resources.getString(R.string.message_status_sent))
         assertEquals("Не отправлено", resources.getString(R.string.message_status_failed))
+    }
+
+    @Test
+    fun russian_failed_status_is_an_accessible_retry_name_without_visible_status_text() {
+        val body = "Russian failure"
+        val orderToken = OrderToken.build(1_717_000_000_000L, Hex.encode(identity.copySignPublic()), 9)
+        runBlocking {
+            store.persist(
+                MessageId.messageId(orderToken, body.toByteArray()),
+                orderToken,
+                TextMessage(chatId, identity.publicIdentity(), null, body, 9L),
+                9L,
+                sendStatus = org.openwebdav.messenger.data.MessageEntity.STATUS_FAILED,
+            )
+        }
+        val context = RuntimeEnvironment.getApplication()
+        val russian =
+            context.createConfigurationContext(
+                Configuration(context.resources.configuration).apply { setLocale(Locale("ru")) },
+            )
+        composeRule.setContent {
+            CompositionLocalProvider(LocalContext provides russian) {
+                ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph()))
+            }
+        }
+        composeRule.onNodeWithContentDescription("Не отправлено. Повторить отправку")
+            .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithText("Не отправлено").assertDoesNotExist()
     }
 
     @Test

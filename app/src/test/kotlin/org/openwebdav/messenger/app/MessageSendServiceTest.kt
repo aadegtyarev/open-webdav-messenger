@@ -1,5 +1,8 @@
 package org.openwebdav.messenger.app
 
+import android.content.Context
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -138,6 +141,39 @@ class MessageSendServiceTest {
         }
 
     @Test
+    fun self_send_echo_and_status_survive_room_database_restart() =
+        runTest {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val name = "outbox-restart-${java.util.UUID.randomUUID()}"
+            val persistentDb = Room.databaseBuilder(context, MessengerDatabase::class.java, name).build()
+            try {
+                val persistentStore = SyncTestSupport.store(persistentDb)
+                val service = MessageSendService(graph(persistentStore), ioDispatcher = Dispatchers.Unconfined)
+                val sent = service.send("survive restart")
+                assertTrue(sent.logWritten)
+                assertEquals(1, persistentStore.messagesForChat(chatId).size)
+                persistentDb.close()
+
+                val reopened = Room.databaseBuilder(context, MessengerDatabase::class.java, name).build()
+                try {
+                    val reopenedStore = SyncTestSupport.store(reopened)
+                    val rows = reopenedStore.messagesForChat(chatId)
+                    assertEquals(1, rows.size)
+                    assertEquals(sent.messageId, rows.single().messageId)
+                    assertEquals("survive restart", rows.single().body)
+                    assertEquals(MessageEntity.STATUS_SENT, rows.single().sendStatus)
+                    assertNull(rows.single().outboxEnvelope)
+                    assertEquals(1, disk.fileNames(ChatPaths.logDir(chatId)).size)
+                } finally {
+                    reopened.close()
+                }
+            } finally {
+                runCatching { persistentDb.close() }
+                context.deleteDatabase(name)
+            }
+        }
+
+    @Test
     fun seal_failure_does_not_persist_or_publish_an_outgoing_message() =
         runTest {
             val store = store()
@@ -204,6 +240,34 @@ class MessageSendServiceTest {
             assertEquals(1, disk.fileNames(ChatPaths.changeIndex(peerA, chatId)).size)
             assertEquals(1, disk.fileNames(ChatPaths.changeIndex(peerB, chatId)).size)
             assertEquals(2, disk.fileNames(ChatPaths.logDir(chatId)).size)
+        }
+
+    @Test
+    fun verified_peer_change_index_polls_the_shared_log_append() =
+        runTest {
+            val senderStore = store()
+            val senderGraph = graph(senderStore)
+            val peer = AppTestSupport.newIdentity()
+            val peerIdentifier = Hex.encode(peer.copySignPublic())
+            senderGraph.updateRecipientReadiness(RecipientReadiness.Ready(listOf(peerIdentifier)))
+            val sent = MessageSendService(senderGraph, ioDispatcher = Dispatchers.Unconfined).send("poll peer path")
+            assertTrue(sent.logWritten)
+            assertEquals(1, disk.fileNames(ChatPaths.changeIndex(peerIdentifier, chatId)).size)
+
+            val peerStore = store("peer-community")
+            val peerEngine =
+                SyncEngine(
+                    transport = transport(),
+                    envelope = SyncTestSupport.messageEnvelope(),
+                    store = peerStore,
+                    keyProvider = { requested -> if (requested == chatId) chatKey else null },
+                )
+            val polled = peerEngine.pollCycle(peerIdentifier, listOf(ChatSubscription(chatId)), "peer-community")
+            assertEquals(1, polled.newCount)
+            val received = peerStore.messagesForChat(chatId)
+            assertEquals(1, received.size)
+            assertEquals("poll peer path", received.single().body)
+            assertEquals(sent.messageId, received.single().messageId)
         }
 
     @Test
