@@ -154,6 +154,14 @@ The exact ciphertext survives retries. Local account stability is held only for
 pending-state reads/writes and final commit, never over WebDAV; stale graph/request
 results cannot update the active roster.
 
+A locally created private group is durably marked as locally created in the chat
+registry. Before any verified non-self member has been observed, it may become
+`Ready(self)` immediately while remote claim scanning continues. This exception is
+based only on that local provenance marker, never on remote failure; imported,
+joined, or ambiguous rooms remain fail-closed. Observation of any non-self member
+is sticky and disables self-only readiness thereafter, preserving the exact
+verified roster and cache rules.
+
 **Verified participants (3-participants):** A separately accessible, labelled People
 icon in the top bar (minimum 48×48dp target) opens a read-only list for the exact
 active General, group, or DM graph; Invite/PersonAdd remains a separate action.
@@ -162,6 +170,11 @@ verified recipients and sending: member IDs and public-identity rows are
 published together and agree semantically. For a DM, verified self and peer rows
 are built before graph installation, so the first published graph already
 contains the matching recipients and participant projection.
+
+Across recipient-roster and delete-authority loading, the toolbar exposes at most
+one accessible progress indicator. People and Invite actions stay in stable
+positions with disabled/loading semantics where their data is not ready; message
+refresh remains a distinct action.
 
 A valid Ready cache hit renders without waiting for network refresh; refresh
 remains silent and a failed refresh does not displace the cached Ready state.
@@ -180,17 +193,21 @@ The saveable Participants destination supports system and toolbar Back to Feed;
 a runtime-scope mismatch returns to Feed rather than displaying a stale graph.
 This foreground-only view does not change background delivery.
 
-**Send failure and retry (3-send-fail):** A durable outgoing bubble visibly and
-accessibly reports Queue/Queued (`В очереди`) while pending or sending, Sent
-(`Отправлено`) only after the WebDAV log write succeeds, or Failed (`Не
-отправлено`) on failure. These states make no claim that a peer received or read
-the message. A failed or uncertain send remains in the feed with truthful local
-status. A transient error below the draft clears when the draft changes or a
-send succeeds. Automatic sync retry and explicit retry reuse the original
-persisted envelope and message ID; they do not create a replacement row or
-payload. Retry work is restricted to the message's local community owner and
-only one delivery attempt may claim a message ID at a time. A recoverable draft
-is retained if local persistence fails; later network failure never restores it.
+**Send failure and retry (3-send-fail):** A durable outgoing bubble uses icon-only
+status visuals—clock for queued/sending, check for Sent, warning with an accessible
+Retry target for failure—with no permanent visible status word and no reliance on
+color alone. Localized accessibility names expose Queue/Queued (`В очереди`), Sent
+(`Отправлено`), Failed (`Не отправлено`), and Retry. Sent means the WebDAV
+shared-log append succeeded; it does not claim peer delivery or receipt. A
+successful append remains Sent even if a later per-member change-index
+notification is pending; that notification retains a durable retry payload. A
+failed or uncertain send remains in the feed with truthful local status. A
+transient error below the draft clears when the draft changes or a send succeeds.
+Automatic sync retry and explicit retry reuse the original persisted envelope,
+exact recipients, and message ID; they do not create a replacement row or payload.
+Retry work is restricted to the message's local community owner and only one
+delivery attempt may claim a message ID at a time. A recoverable draft is retained
+if local persistence fails; later network failure never restores it.
 
 **Runtime scoping (3-scope):** Feed and invite state is scoped to the active
 community and chat. Room history, unread/read state, and sync cursors are
