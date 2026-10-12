@@ -171,10 +171,21 @@ published together and agree semantically. For a DM, verified self and peer rows
 are built before graph installation, so the first published graph already
 contains the matching recipients and participant projection.
 
-Across recipient-roster and delete-authority loading, the toolbar exposes at most
-one accessible progress indicator. People and Invite actions stay in stable
-positions with disabled/loading semantics where their data is not ready; message
-refresh remains a distinct action.
+The feed toolbar reserves fixed 48dp slots for Back, Refresh/status, People,
+Invite, and contextual More around a flexible one-line ellipsized community title.
+People and Invite stay fully visible, at least 48dp actionable targets, and retain
+identical coordinates across roster and deletion-authority states. They are
+disabled with explanatory semantics while verified roster data is loading or
+unavailable.
+
+Roster loading, deletion-authority loading, and message refresh reuse the Refresh/status
+slot for at most one accessible progress indicator whose description identifies the
+active operation(s); this does not move primary actions. When no progress is active,
+the slot exposes the Refresh messages action. Delete-authority status/retry and
+applicable delete-for-all/local-DM actions live in one contextual overflow menu.
+The More slot remains geometrically reserved but has no actionable control when
+there are no applicable actions. No separate toolbar slots are allocated to
+progress, retry, or deletion actions.
 
 A valid Ready cache hit renders without waiting for network refresh; refresh
 remains silent and a failed refresh does not displace the cached Ready state.

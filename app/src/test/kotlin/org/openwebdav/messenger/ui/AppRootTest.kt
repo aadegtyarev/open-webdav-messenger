@@ -2,6 +2,7 @@ package org.openwebdav.messenger.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -127,7 +128,7 @@ class AppRootTest {
     }
 
     @Test
-    fun participants_retry_button_runs_the_guarded_roster_refresh() {
+    fun unavailable_feed_roster_retry_runs_the_guarded_refresh() {
         AppContainer.bind(RuntimeEnvironment.getApplication())
         val stored = StoredConnection(SyncTestSupport.config(server), chatId, "My Community")
         EngineWiring.initialize(JvmDeps(stored = stored))
@@ -149,12 +150,11 @@ class AppRootTest {
             ),
         )
         composeRule.setContent { AppNav(initialScreen = Screen.Feed) }
-        composeRule.onNodeWithContentDescription("Participants").performClick()
         composeRule.onNodeWithText("Retry").performClick()
         runBlocking { withTimeout(5_000) { readStarted.await() } }
         readResult.complete(DirectoryReadResult(listOf(DirectoryEntry("Retry peer", ByteArray(32) { 19 }, ByteArray(32) { 20 })), 0))
         runBlocking { withTimeout(5_000) { readFinished.await() } }
-        composeRule.onNodeWithText("Retry peer").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Participants").assertIsDisplayed().assertIsEnabled()
         assertTrue((graph.recipientSnapshot() as RecipientReadiness.Ready).participants.any { it.displayName == "Retry peer" })
     }
 

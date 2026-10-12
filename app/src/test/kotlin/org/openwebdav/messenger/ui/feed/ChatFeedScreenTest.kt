@@ -1,10 +1,16 @@
 package org.openwebdav.messenger.ui.feed
 
 import android.content.res.Configuration
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -18,6 +24,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -167,7 +174,7 @@ class ChatFeedScreenTest {
         override fun clear() = records.clear()
     }
 
-    private fun graph(): RuntimeGraph {
+    private fun graph(communityName: String = "Community"): RuntimeGraph {
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
         val engine =
             SyncEngine(
@@ -182,7 +189,7 @@ class ChatFeedScreenTest {
             envelope = envelope,
             config = SyncTestSupport.config(server),
             chatId = chatId,
-            communityName = "Community",
+            communityName = communityName,
             chatKey = chatKey,
             identity = identity,
             senderIdentifier = Hex.encode(identity.copySignPublic()),
@@ -217,7 +224,8 @@ class ChatFeedScreenTest {
             )
         }
 
-        composeRule.onNodeWithContentDescription("Delete locally").assertWidthIsAtLeast(48.dp).performClick()
+        composeRule.onNodeWithContentDescription("More actions for Peer").performClick()
+        composeRule.onNodeWithText("Delete locally").assertHeightIsAtLeast(48.dp).performClick()
         composeRule.onNodeWithText("Type the chat title").assertIsDisplayed()
         composeRule.onNodeWithText("Delete locally").assertIsNotEnabled()
         composeRule.onNodeWithText("Type the chat title").performTextInput("Peer")
@@ -247,15 +255,22 @@ class ChatFeedScreenTest {
                 viewModel = viewModel,
             )
         }
-        composeRule.onNodeWithContentDescription("Delete for everyone").assertDoesNotExist()
-        composeRule.onNodeWithContentDescription("Delete locally").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("More actions for Community").performClick()
+        composeRule.onNodeWithText("Delete for everyone").assertDoesNotExist()
+        composeRule.onNodeWithText("Delete locally").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithText("You cannot delete this chat for everyone").assertIsDisplayed()
 
         composeRule.runOnIdle { capability.value = ChatDeleteCapability.Loading }
-        composeRule.onNodeWithContentDescription("Checking delete authority").assertIsDisplayed()
+        composeRule.onNodeWithText("Checking delete authority").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete for everyone").assertDoesNotExist()
         composeRule.runOnIdle { capability.value = ChatDeleteCapability.Unavailable }
-        composeRule.onNodeWithContentDescription("Delete authority unavailable. Tap to retry.").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete authority could not be checked").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete authority unavailable. Tap to retry.")
+            .assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithText("Delete for everyone").assertDoesNotExist()
         composeRule.runOnIdle { capability.value = ChatDeleteCapability.Available }
-        composeRule.onNodeWithContentDescription("Delete for everyone").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete for everyone").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
     }
 
     /** An empty chat shows the empty-state prompt and the disabled-until-typed Send action. */
@@ -484,7 +499,7 @@ class ChatFeedScreenTest {
             }
             val oldRead = reads.poll(5, TimeUnit.SECONDS) ?: error("group roster read did not start")
             assertEquals(RecipientReadiness.Loading, groupGraph.recipientSnapshot())
-            composeRule.onNodeWithContentDescription("Reading participants from server").assertIsDisplayed()
+            assertToolbarProgressContains("Reading participants from server")
             composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
             composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
 
@@ -517,7 +532,7 @@ class ChatFeedScreenTest {
                 }.getOrDefault(false)
             }
             val dmRead = reads.poll(5, TimeUnit.SECONDS) ?: error("DM roster read did not start")
-            composeRule.onNodeWithContentDescription("Reading participants from server").assertIsDisplayed()
+            assertToolbarProgressContains("Reading participants from server")
             composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
             composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
             val dmReadFinished = CompletableDeferred<Unit>()
@@ -702,8 +717,13 @@ class ChatFeedScreenTest {
             val spinnerCount =
                 composeRule.onAllNodes(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate))
                     .fetchSemanticsNodes().size
-            assertEquals(if (rosterLoading || deleteLoading) 1 else 0, spinnerCount)
-            composeRule.onNodeWithContentDescription("Refresh messages").assertIsEnabled()
+            assertTrue("toolbar exposed multiple progress indicators", spinnerCount <= 1)
+            if (rosterLoading || deleteLoading) assertEquals(1, spinnerCount)
+            if (spinnerCount == 1) {
+                composeRule.onNodeWithContentDescription("Refresh messages").assertDoesNotExist()
+            } else {
+                composeRule.onNodeWithContentDescription("Refresh messages").assertIsEnabled()
+            }
             composeRule.onNodeWithContentDescription(
                 if (rosterLoading) "Participants unavailable while verified members load" else "Participants",
             ).assertIsDisplayed()
@@ -743,28 +763,164 @@ class ChatFeedScreenTest {
                 ChatDeleteCapability.Available,
             )
         for (deleteState in deleteStates) {
-            for (readiness in listOf(RecipientReadiness.Ready(listOf(graph.senderIdentifier)), RecipientReadiness.Loading)) {
+            for (
+            readiness in listOf(
+                RecipientReadiness.Ready(listOf(graph.senderIdentifier)),
+                RecipientReadiness.Loading,
+                RecipientReadiness.Unavailable("offline"),
+            )
+            ) {
                 composeRule.runOnIdle {
                     capability.value = deleteState
                     graph.updateRecipientReadiness(readiness)
                 }
                 composeRule.waitForIdle()
                 val peopleDescription =
-                    if (readiness is RecipientReadiness.Loading) {
-                        "Participants unavailable while verified members load"
-                    } else {
-                        "Participants"
+                    when (readiness) {
+                        is RecipientReadiness.Loading -> "Participants unavailable while verified members load"
+                        is RecipientReadiness.Unavailable -> "Participants unavailable until the verified roster is retried"
+                        is RecipientReadiness.Ready -> "Participants"
                     }
                 assertEquals(peopleLeft, left(peopleDescription), 0.01f)
                 val inviteDescription =
-                    if (readiness is RecipientReadiness.Loading) {
-                        "Invite someone (verified participants are loading)"
-                    } else {
-                        "Invite someone"
+                    when (readiness) {
+                        is RecipientReadiness.Loading -> "Invite someone (verified participants are loading)"
+                        is RecipientReadiness.Unavailable -> "Invite someone (verified participants are unavailable)"
+                        is RecipientReadiness.Ready -> "Invite someone"
                     }
                 assertEquals(inviteLeft, left(inviteDescription), 0.01f)
             }
         }
+    }
+
+    @Test
+    fun responsive_toolbar_fits_narrow_widths_and_font_scales_without_action_overlap() {
+        val longTitle = "A community title long enough to be ellipsized on a narrow display"
+        val graph = graph(longTitle)
+        val width = mutableStateOf(320)
+        val fontScale = mutableStateOf(1f)
+        val readiness = mutableStateOf<RecipientReadiness>(RecipientReadiness.Ready(listOf(graph.senderIdentifier)))
+        val capability = mutableStateOf<ChatDeleteCapability>(ChatDeleteCapability.NotAuthorized)
+        val viewModel = ChatFeedViewModel(graph)
+        composeRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, fontScale.value)) {
+                Box(Modifier.requiredWidth(width.value.dp).height(720.dp)) {
+                    ChatFeedScreen(
+                        onShowInvite = {},
+                        onShowParticipants = {},
+                        deleteCapabilityOverride = capability.value,
+                        chatTitle = longTitle,
+                        viewModel = viewModel,
+                    )
+                }
+            }
+        }
+
+        val readinessStates =
+            listOf(
+                RecipientReadiness.Ready(listOf(graph.senderIdentifier)),
+                RecipientReadiness.Loading,
+                RecipientReadiness.Unavailable("offline"),
+            )
+        val authorityStates =
+            listOf(
+                ChatDeleteCapability.NotAuthorized,
+                ChatDeleteCapability.Loading,
+                ChatDeleteCapability.Unavailable,
+                ChatDeleteCapability.Available,
+            )
+        for (screenWidth in listOf(320, 360)) {
+            var expectedPeopleLeft: Float? = null
+            var expectedInviteLeft: Float? = null
+            for (scale in listOf(1f, 1.3f)) {
+                composeRule.runOnIdle {
+                    width.value = screenWidth
+                    fontScale.value = scale
+                }
+                for (authority in authorityStates) {
+                    for (roster in readinessStates) {
+                        composeRule.runOnIdle {
+                            capability.value = authority
+                            readiness.value = roster
+                            graph.updateRecipientReadiness(roster)
+                        }
+                        composeRule.waitForIdle()
+
+                        val back = bounds("Back")
+                        val peopleDescription =
+                            when (roster) {
+                                is RecipientReadiness.Loading -> "Participants unavailable while verified members load"
+                                is RecipientReadiness.Unavailable -> "Participants unavailable until the verified roster is retried"
+                                is RecipientReadiness.Ready -> "Participants"
+                            }
+                        val inviteDescription =
+                            when (roster) {
+                                is RecipientReadiness.Loading -> "Invite someone (verified participants are loading)"
+                                is RecipientReadiness.Unavailable -> "Invite someone (verified participants are unavailable)"
+                                is RecipientReadiness.Ready -> "Invite someone"
+                            }
+                        val people = bounds(peopleDescription)
+                        val invite = bounds(inviteDescription)
+                        if (roster is RecipientReadiness.Ready) {
+                            composeRule.onNodeWithContentDescription(peopleDescription).assertIsEnabled()
+                            composeRule.onNodeWithContentDescription(inviteDescription).assertIsEnabled()
+                        } else {
+                            composeRule.onNodeWithContentDescription(peopleDescription).assertIsNotEnabled()
+                            composeRule.onNodeWithContentDescription(inviteDescription).assertIsNotEnabled()
+                        }
+                        val progressCount =
+                            composeRule.onAllNodes(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate))
+                                .fetchSemanticsNodes().size
+                        assertTrue("toolbar exposed multiple progress indicators", progressCount <= 1)
+                        val refresh =
+                            if (progressCount == 1) {
+                                composeRule.onNode(
+                                    hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate),
+                                ).fetchSemanticsNode().boundsInRoot
+                            } else {
+                                bounds("Refresh messages")
+                            }
+                        val title = composeRule.onNodeWithText(longTitle).fetchSemanticsNode().boundsInRoot
+                        val orderedTargets = listOf(back, title, refresh, people, invite)
+                        orderedTargets.zipWithNext().forEach { (left, right) ->
+                            assertTrue("toolbar bounds overlap at $screenWidth dp, fontScale $scale", left.right <= right.left + 0.01f)
+                        }
+                        listOf(back, people, invite).forEach { target ->
+                            assertTrue("toolbar action target is under 48dp", target.width >= 48f && target.height >= 48f)
+                        }
+                        if (progressCount == 0) {
+                            assertTrue("refresh action target is under 48dp", refresh.width >= 48f && refresh.height >= 48f)
+                        }
+                        assertTrue("title should remain one line", title.height < 48f)
+                        assertTrue("title is not visible", title.width > 0f)
+                        if (expectedPeopleLeft == null) {
+                            expectedPeopleLeft = people.left
+                            expectedInviteLeft = invite.left
+                        }
+                        assertEquals(expectedPeopleLeft!!, people.left, 0.01f)
+                        assertEquals(expectedInviteLeft!!, invite.left, 0.01f)
+                        val hasActions = authority !is ChatDeleteCapability.NotAuthorized
+                        val more = composeRule.onNodeWithContentDescription("More actions for $longTitle")
+                        if (hasActions) {
+                            more.assertIsDisplayed().assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
+                            val moreBounds = more.fetchSemanticsNode().boundsInRoot
+                            assertTrue("More action overlaps Invite", invite.right <= moreBounds.left + 0.01f)
+                        } else {
+                            more.assertDoesNotExist()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun bounds(description: String) = composeRule.onNodeWithContentDescription(description).fetchSemanticsNode().boundsInRoot
+
+    private fun assertToolbarProgressContains(operation: String) {
+        val descriptions =
+            composeRule.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate))
+                .fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
+        assertTrue("progress description omitted $operation: $descriptions", descriptions.any { operation in it })
     }
 
     @Test
@@ -790,7 +946,7 @@ class ChatFeedScreenTest {
         composeRule.setContent {
             ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph))
         }
-        composeRule.onNodeWithContentDescription("Reading participants from server").assertIsDisplayed()
+        assertToolbarProgressContains("Reading participants from server")
         composeRule.onNodeWithContentDescription("Participants unavailable while verified members load").assertIsNotEnabled()
         composeRule.onNodeWithContentDescription("Invite someone (verified participants are loading)").assertIsNotEnabled()
         composeRule.onNodeWithText("Reading participants from server…").assertIsDisplayed()
@@ -891,7 +1047,12 @@ class ChatFeedScreenTest {
         composeRule.waitUntil(5_000) {
             runBlocking { store.messageById(queuedId)?.sendStatus == org.openwebdav.messenger.data.MessageEntity.STATUS_SENT }
         }
-        composeRule.onNodeWithContentDescription("Sent").assertIsDisplayed()
+        composeRule.waitUntil(5_000) {
+            runCatching {
+                composeRule.onNodeWithContentDescription("Sent").assertIsDisplayed()
+                true
+            }.getOrDefault(false)
+        }
         composeRule.onNodeWithText("Sent").assertDoesNotExist()
 
         runBlocking { store.markFailed(failedId, "default") }
