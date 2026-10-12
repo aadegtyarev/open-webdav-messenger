@@ -2,7 +2,7 @@ package org.openwebdav.messenger.ui.feed
 
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.absolutePadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.runtime.CompositionLocalProvider
@@ -24,6 +24,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -98,6 +99,7 @@ import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.ui.participants.ParticipantsScreen
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
@@ -918,48 +920,86 @@ class ChatFeedScreenTest {
     }
 
     @Test
+    @Config(qualifiers = "w600dp")
     fun toolbar_respects_status_cutout_and_horizontal_safe_insets() {
         val longTitle = "Community title that must remain visible beside toolbar actions"
         val graph = graph(longTitle)
-        val safeAreaPadding = Modifier.absolutePadding(left = 20.dp, top = 24.dp, right = 16.dp)
         val width = mutableStateOf(320)
+        val densityScale = mutableStateOf(1f)
+        val fontScale = mutableStateOf(1f)
         val viewModel = ChatFeedViewModel(graph)
         composeRule.setContent {
-            Box(Modifier.requiredWidth(width.value.dp).height(720.dp).testTag("safe-area-host")) {
-                ChatFeedScreen(
-                    onShowInvite = {},
-                    onShowParticipants = {},
-                    deleteCapabilityOverride = ChatDeleteCapability.Available,
-                    chatTitle = longTitle,
-                    toolbarSafeArea = safeAreaPadding,
-                    viewModel = viewModel,
-                )
+            val density = Density(densityScale.value, fontScale.value)
+            CompositionLocalProvider(LocalDensity provides density) {
+                val insets =
+                    WindowInsets(
+                        left = with(density) { 12.dp.roundToPx() },
+                        top = with(density) { 24.dp.roundToPx() },
+                        right = with(density) { 16.dp.roundToPx() },
+                    )
+                Box(Modifier.requiredWidth(width.value.dp).height(720.dp).testTag("safe-area-host")) {
+                    ChatFeedScreen(
+                        onShowInvite = {},
+                        onShowParticipants = {},
+                        deleteCapabilityOverride = ChatDeleteCapability.Available,
+                        chatTitle = longTitle,
+                        toolbarWindowInsets = insets,
+                        viewModel = viewModel,
+                    )
+                }
             }
         }
 
         for (screenWidth in listOf(320, 360)) {
-            composeRule.runOnIdle { width.value = screenWidth }
-            composeRule.waitForIdle()
-            val host = composeRule.onNodeWithTag("safe-area-host").fetchSemanticsNode().boundsInRoot
-            val back = bounds("Back")
-            val title = composeRule.onNodeWithText(longTitle).fetchSemanticsNode().boundsInRoot
-            val refresh = bounds("Refresh messages")
-            val people = bounds("Participants")
-            val invite = bounds("Invite someone")
-            val more = bounds("More actions for $longTitle")
+            for (scale in listOf(1f, 1.5f)) {
+                for (textScale in listOf(1f, 1.3f)) {
+                    composeRule.runOnIdle {
+                        width.value = screenWidth
+                        densityScale.value = scale
+                        fontScale.value = textScale
+                    }
+                    composeRule.waitForIdle()
+                    val density = Density(scale, textScale)
+                    val leftInset = with(density) { 12.dp.roundToPx().toFloat() }
+                    val topInset = with(density) { (24.dp + 8.dp).roundToPx().toFloat() }
+                    val rightInset = with(density) { 16.dp.roundToPx().toFloat() }
+                    val host = composeRule.onNodeWithTag("safe-area-host").fetchSemanticsNode().boundsInRoot
+                    val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+                    val back = bounds("Back")
+                    val title = composeRule.onNodeWithText(longTitle).fetchSemanticsNode().boundsInRoot
+                    val refresh = bounds("Refresh messages")
+                    val people = bounds("Participants")
+                    val invite = bounds("Invite someone")
+                    val moreNode = composeRule.onNodeWithContentDescription("More actions for $longTitle")
+                    assertTrue(
+                        "More is unavailable at width=$screenWidth density=$scale fontScale=$textScale",
+                        composeRule.onAllNodesWithContentDescription("More actions for $longTitle").fetchSemanticsNodes().isNotEmpty(),
+                    )
+                    moreNode.assertIsDisplayed().assertIsEnabled()
+                    val more = moreNode.fetchSemanticsNode().boundsInRoot
 
-            assertTrue("toolbar did not honor top/status inset", back.top >= host.top + 24f)
-            assertTrue("toolbar did not honor left cutout inset: host=$host toolbar=$back", back.left >= host.left + 12f)
-            assertTrue("toolbar exceeded right safe inset", more.right <= host.right - 16f)
-            assertTrue("title is not visible inside safe area", title.width > 0f && title.left >= back.right)
-            assertTrue(
-                "toolbar slots overlap",
-                title.right <= refresh.left && refresh.right <= people.left && people.right <= invite.left && invite.right <= more.left,
-            )
-            listOf(back, refresh, people, invite, more).forEach { target ->
-                assertTrue("toolbar action target is under 48dp", target.width >= 48f && target.height >= 48f)
+                    assertTrue("toolbar top inset was lost or doubled", kotlin.math.abs(back.top - host.top - topInset) <= 1f)
+                    assertTrue("toolbar left inset was lost or doubled", kotlin.math.abs(back.left - host.left - leftInset) <= 1f)
+                    assertTrue(
+                        "toolbar right inset was lost or doubled",
+                        kotlin.math.abs(more.right - host.right + rightInset) <= 1f,
+                    )
+                    assertTrue(
+                        "rightmost More is outside the visible root: root=$root more=$more",
+                        more.left >= root.left && more.right <= root.right && more.top >= root.top && more.bottom <= root.bottom,
+                    )
+                    assertTrue("title is not visible inside safe area", title.width > 0f && title.left >= back.right)
+                    assertTrue(
+                        "toolbar slots overlap",
+                        title.right <= refresh.left + 1f && refresh.right <= people.left + 1f &&
+                            people.right <= invite.left + 1f && invite.right <= more.left + 1f,
+                    )
+                    listOf(back, refresh, people, invite, more).forEach { target ->
+                        assertTrue("toolbar action target is under 48dp", target.width / scale >= 48f && target.height / scale >= 48f)
+                    }
+                    assertTrue("toolbar title is not one line", title.height / scale < 48f)
+                }
             }
-            assertTrue("toolbar title is not one line", title.height < 48f)
         }
     }
 
