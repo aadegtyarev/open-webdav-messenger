@@ -331,7 +331,7 @@ interface MessageDao {
     @Query(
         "UPDATE messages SET sendStatus = 'SENT', outboxEnvelope = NULL, outboxRecipients = NULL, outboxClaimToken = NULL " +
             "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
-            "AND sendStatus = 'SENDING' AND outboxClaimToken IS NULL AND outboxEnvelope IS NOT NULL",
+            "AND sendStatus IN ('SENDING', 'SENT') AND outboxClaimToken IS NULL AND outboxEnvelope IS NOT NULL",
     )
     suspend fun finishOutgoing(
         messageId: String,
@@ -392,7 +392,7 @@ interface MessageDao {
     ): Int
 
     @Query(
-        "UPDATE messages SET sendStatus = 'SENT', outboxClaimToken = NULL " +
+        "UPDATE messages SET sendStatus = 'SENT' " +
             "WHERE communityId = :communityId AND messageId = :messageId AND outboxCommunityId = :communityId " +
             "AND sendStatus IN ('SENDING', 'SENT') AND outboxClaimToken = :claimToken AND outboxEnvelope IS NOT NULL",
     )
@@ -408,6 +408,18 @@ interface MessageDao {
             "AND outboxEnvelope IS NOT NULL",
     )
     suspend fun releaseSentOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ): Int
+
+    @Query(
+        "UPDATE messages SET sendStatus = CASE WHEN sendStatus = 'SENDING' THEN 'FAILED' ELSE 'SENT' END, " +
+            "outboxClaimToken = NULL WHERE communityId = :communityId AND messageId = :messageId " +
+            "AND outboxCommunityId = :communityId AND sendStatus IN ('SENDING', 'SENT') " +
+            "AND outboxClaimToken = :claimToken AND outboxEnvelope IS NOT NULL",
+    )
+    suspend fun releaseOutgoingClaim(
         messageId: String,
         communityId: String,
         claimToken: String,

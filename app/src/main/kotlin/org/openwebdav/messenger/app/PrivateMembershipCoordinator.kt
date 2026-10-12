@@ -31,6 +31,7 @@ internal class PrivateMembershipCoordinator(
         isCurrent: () -> Boolean,
         locallyCreatedWithoutPeers: Boolean = false,
         markNonSelfMemberObserved: () -> Unit = {},
+        onReadResultForTest: ((Boolean?, Boolean, Boolean, Boolean) -> Unit)? = null,
     ) {
         if (!isCurrent()) return
         val accountGeneration = AccountMutationBarrier.process.replacementGeneration()
@@ -55,7 +56,9 @@ internal class PrivateMembershipCoordinator(
         scope.launch {
             val directory = communityKey?.let { runCatching { readDirectory(stored, it) }.getOrNull() }
             val result = runCatching { service.read(graph.chatId, graph.chatKey, directory) }.getOrNull()
-            if (!isCurrent()) return@launch
+            val current = isCurrent()
+            onReadResultForTest?.invoke(result?.listingFailed, current, cachedReady, locallyCreatedWithoutPeers)
+            if (!current) return@launch
             if (result == null || result.listingFailed) {
                 if (!cachedReady && !locallyCreatedWithoutPeers) {
                     graph.updateRecipientReadiness(RecipientReadiness.Unavailable(unavailableMessage))

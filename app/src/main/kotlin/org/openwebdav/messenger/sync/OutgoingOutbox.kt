@@ -10,7 +10,7 @@ import java.util.UUID
 /** Retries persisted outgoing envelopes without minting a new message identity. */
 internal class OutgoingOutbox(
     private val store: MessageStore,
-    private val sendStored: suspend (MessageEntity, String) -> SendOutcome,
+    private val sendStored: suspend (MessageEntity, String, suspend () -> Unit) -> SendOutcome,
 ) {
     suspend fun retry(
         messageId: String,
@@ -36,23 +36,22 @@ internal class OutgoingOutbox(
         val outgoing = store.messageById(messageId, communityId) ?: return null
         if (store.isOutgoingBlocked(outgoing.chatId)) return null
         val claimToken = UUID.randomUUID().toString()
-        var sentWasAlreadyWritten = false
         return try {
             val message = store.claimOutgoing(messageId, communityId, claimToken) ?: return null
-            sentWasAlreadyWritten = message.sendStatus == MessageEntity.STATUS_SENT
             if (store.isOutgoingBlocked(message.chatId)) {
-                if (sentWasAlreadyWritten) {
-                    store.releaseSentOutgoingClaim(message.messageId, communityId, claimToken)
-                } else {
-                    store.failOutgoingClaim(message.messageId, communityId, claimToken)
-                }
+                store.releaseOutgoingClaim(message.messageId, communityId, claimToken)
                 return null
             }
             val envelope = message.outboxEnvelope ?: return null
             val recipients = message.outboxRecipients?.split('\n')?.filter(String::isNotBlank).orEmpty()
             val outcome =
                 try {
-                    sendStored(message.copy(outboxEnvelope = envelope, outboxRecipients = recipients.joinToString("\n")), senderIdentifier)
+                    sendStored(
+                        message.copy(outboxEnvelope = envelope, outboxRecipients = recipients.joinToString("\n")),
+                        senderIdentifier,
+                    ) {
+                        store.markLogWrittenClaim(message.messageId, communityId, claimToken)
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -60,18 +59,13 @@ internal class OutgoingOutbox(
                 }
             when {
                 outcome.complete -> store.finishOutgoingClaim(message.messageId, communityId, claimToken)
-                outcome.logWritten -> store.markLogWrittenClaim(message.messageId, communityId, claimToken)
-                sentWasAlreadyWritten -> store.releaseSentOutgoingClaim(message.messageId, communityId, claimToken)
-                else -> store.failOutgoingClaim(message.messageId, communityId, claimToken)
+                outcome.logWritten -> store.releaseSentOutgoingClaim(message.messageId, communityId, claimToken)
+                else -> store.releaseOutgoingClaim(message.messageId, communityId, claimToken)
             }
             outcome
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) {
-                if (sentWasAlreadyWritten) {
-                    store.releaseSentOutgoingClaim(messageId, communityId, claimToken)
-                } else {
-                    store.failOutgoingClaim(messageId, communityId, claimToken)
-                }
+                store.releaseOutgoingClaim(messageId, communityId, claimToken)
             }
             throw cancelled
         }

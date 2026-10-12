@@ -114,7 +114,10 @@ internal class MessageSendService(
                             prepared.orderToken,
                             prepared.envelopeBytes,
                             allMembers = prepared.recipients,
-                            graph.senderIdentifier,
+                            senderIdentifier = graph.senderIdentifier,
+                            onLogWritten = {
+                                graph.store.markLogWritten(prepared.messageId, graph.communityId)
+                            },
                         )
                     } catch (cancelled: CancellationException) {
                         throw cancelled

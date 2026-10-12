@@ -1,5 +1,7 @@
 package org.openwebdav.messenger.sync
 
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.openwebdav.messenger.protocol.ChatPaths
 import org.openwebdav.messenger.transport.WebDavResult
 import org.openwebdav.messenger.transport.WebDavTransport
@@ -29,6 +31,7 @@ internal class SendWriter(private val transport: WebDavTransport) {
         orderToken: String,
         envelopeBytes: ByteArray,
         otherMembers: List<String>,
+        onLogWritten: suspend () -> Unit = {},
     ): SendOutcome {
         // §6: ensure the chat root exists as a WebDAV collection before writing anything into it.
         // Some providers (e.g. Yandex.Disk) report folders created via their web UI as 404 on
@@ -48,6 +51,7 @@ internal class SendWriter(private val transport: WebDavTransport) {
             // pointing at a coordinate that is not in log/ (would advance a reader past a missing file).
             return SendOutcome(logWritten = false, notifiedMembers = 0, pendingMembers = otherMembers.size)
         }
+        withContext(NonCancellable) { onLogWritten() }
         // §6/§9.1: ensure the shared `changes/` parent ONCE per send, not per member (review finding 3).
         // If the parent MKCOL backs off, no member can be notified this send → all pending, re-run later.
         if (otherMembers.isNotEmpty() && !ensure(ChatPaths.CHANGES)) {

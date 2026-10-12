@@ -484,7 +484,7 @@ class MessageSendServiceTest {
             val deliveryStarted = CompletableDeferred<Unit>()
             val finishDelivery = CompletableDeferred<Unit>()
             val outbox =
-                OutgoingOutbox(store) { _, _ ->
+                OutgoingOutbox(store) { _, _, _ ->
                     deliveryAttempts++
                     deliveryStarted.complete(Unit)
                     finishDelivery.await()
@@ -602,6 +602,43 @@ class MessageSendServiceTest {
         }
 
     @Test
+    fun cancelling_initial_send_during_notification_keeps_confirmed_append_sent() =
+        runTest {
+            val notificationStarted = CountDownLatch(1)
+            val releaseNotification = CountDownLatch(1)
+            server.dispatcher =
+                object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        val response = disk.dispatch(request)
+                        if (request.method == "PUT" && request.path.orEmpty().contains("/${ChatPaths.CHANGES}/")) {
+                            notificationStarted.countDown()
+                            check(releaseNotification.await(5, TimeUnit.SECONDS))
+                        }
+                        return response
+                    }
+                }
+            val store = store("community-a")
+            val sendGraph =
+                graph(store, communityId = "community-a").apply {
+                    updateRecipientReadiness(RecipientReadiness.Ready(listOf(senderIdentifier, "peer")))
+                }
+            val service = MessageSendService(sendGraph, ioDispatcher = Dispatchers.IO)
+            val sending = launch(Dispatchers.IO) { service.send("cancel during notification") }
+            assertTrue(withContext(Dispatchers.IO) { notificationStarted.await(5, TimeUnit.SECONDS) })
+            val confirmed = store.messagesForChat(chatId).single()
+            assertEquals(MessageEntity.STATUS_SENT, confirmed.sendStatus)
+            assertNotNull(confirmed.outboxEnvelope)
+
+            sending.cancel()
+            releaseNotification.countDown()
+            sending.join()
+
+            val cancelled = store.messagesForChat(chatId).single()
+            assertEquals(MessageEntity.STATUS_SENT, cancelled.sendStatus)
+            assertNotNull(cancelled.outboxEnvelope)
+        }
+
+    @Test
     fun cancelling_claimed_outbox_attempt_releases_it_for_retry_without_reinitializing() =
         runTest {
             val store = store("community-a")
@@ -618,7 +655,7 @@ class MessageSendServiceTest {
             )
             val started = CompletableDeferred<Unit>()
             val cancelledAttempt =
-                OutgoingOutbox(store) { _, _ ->
+                OutgoingOutbox(store) { _, _, _ ->
                     started.complete(Unit)
                     awaitCancellation()
                 }
@@ -627,9 +664,70 @@ class MessageSendServiceTest {
             retry.cancelAndJoin()
 
             assertEquals(MessageEntity.STATUS_FAILED, store.messagesForChat(chatId).single().sendStatus)
-            val sameProcessRetry = OutgoingOutbox(store) { _, _ -> SendOutcome(true, 1, 0) }
+            val sameProcessRetry = OutgoingOutbox(store) { _, _, _ -> SendOutcome(true, 1, 0) }
             assertTrue(sameProcessRetry.retry("cancel-retry-id", "community-a", "self"))
             assertEquals(MessageEntity.STATUS_SENT, store.messagesForChat(chatId).single().sendStatus)
+        }
+
+    @Test
+    fun cancelling_between_sent_claim_update_and_select_releases_its_exact_claim() =
+        runTest {
+            val store = store("community-a")
+            store.persist(
+                "cancel-sent-select",
+                "0005",
+                SyncTestSupport.text(identity, "already appended"),
+                1L,
+                sendStatus = MessageEntity.STATUS_SENT,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "community-a",
+            )
+            val claimUpdated = CompletableDeferred<Unit>()
+            store.afterOutgoingClaimUpdate = {
+                claimUpdated.complete(Unit)
+                awaitCancellation()
+            }
+            val outbox = OutgoingOutbox(store) { _, _, _ -> error("send must not start before claim SELECT") }
+            val attempt = launch { outbox.retry("cancel-sent-select", "community-a", "self") }
+            claimUpdated.await()
+            attempt.cancelAndJoin()
+
+            val row = store.messagesForChat(chatId).single()
+            assertEquals(MessageEntity.STATUS_SENT, row.sendStatus)
+            assertNull(row.outboxClaimToken)
+            assertNotNull(row.outboxEnvelope)
+        }
+
+    @Test
+    fun cancelling_failed_retry_in_notifications_keeps_confirmed_append_sent() =
+        runTest {
+            val store = store("community-a")
+            store.persist(
+                "cancel-notify-retry",
+                "0005",
+                SyncTestSupport.text(identity, "retry"),
+                1L,
+                sendStatus = MessageEntity.STATUS_FAILED,
+                outboxEnvelope = byteArrayOf(1),
+                outboxRecipients = listOf("peer"),
+                outboxCommunityId = "community-a",
+            )
+            val notificationStarted = CompletableDeferred<Unit>()
+            val outbox =
+                OutgoingOutbox(store) { _, _, onLogWritten ->
+                    onLogWritten()
+                    notificationStarted.complete(Unit)
+                    awaitCancellation()
+                }
+            val attempt = launch { outbox.retry("cancel-notify-retry", "community-a", "self") }
+            notificationStarted.await()
+            attempt.cancelAndJoin()
+
+            val row = store.messagesForChat(chatId).single()
+            assertEquals(MessageEntity.STATUS_SENT, row.sendStatus)
+            assertNull(row.outboxClaimToken)
+            assertNotNull(row.outboxEnvelope)
         }
 
     @Test

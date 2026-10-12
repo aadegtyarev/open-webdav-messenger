@@ -26,10 +26,14 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -42,6 +46,7 @@ import org.openwebdav.messenger.app.CachedVerifiedRoster
 import org.openwebdav.messenger.app.ChatDeleteCapability
 import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.EngineWiring
+import org.openwebdav.messenger.app.InMemoryChatKeyStore
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RosterCacheProvenance
@@ -49,6 +54,7 @@ import org.openwebdav.messenger.app.RuntimeGraph
 import org.openwebdav.messenger.app.TombstoneReconciler
 import org.openwebdav.messenger.app.VerifiedParticipant
 import org.openwebdav.messenger.app.VerifiedRosterCachePersistence
+import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
@@ -56,11 +62,23 @@ import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.DirectoryEntry
+import org.openwebdav.messenger.directory.DirectoryFakeDisk
 import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.keystore.ChatRegistry
+import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.StoredConnection
+import org.openwebdav.messenger.membership.MembershipPublishOutcome
+import org.openwebdav.messenger.membership.PrivateMembershipAead
+import org.openwebdav.messenger.membership.PrivateMembershipCachePersistence
+import org.openwebdav.messenger.membership.PrivateMembershipCacheRecord
+import org.openwebdav.messenger.membership.PrivateMembershipClaimCodec
+import org.openwebdav.messenger.membership.PrivateMembershipClaimCrypto
+import org.openwebdav.messenger.membership.PrivateMembershipPaths
+import org.openwebdav.messenger.membership.PrivateMembershipService
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.message.TextMessage
+import org.openwebdav.messenger.protocol.ChatPaths
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.protocol.MessageId
 import org.openwebdav.messenger.protocol.OrderToken
@@ -72,6 +90,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.GraphicsMode
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -110,6 +129,20 @@ class ChatFeedScreenTest {
         AppContainer.clearChatOpenTestSeam()
         server.shutdown()
         db.close()
+    }
+
+    private class MemoryPrivateMembershipCache : PrivateMembershipCachePersistence {
+        private var records = emptyList<PrivateMembershipCacheRecord>()
+
+        override fun loadAll(): List<PrivateMembershipCacheRecord> = records
+
+        override fun replaceAll(records: List<PrivateMembershipCacheRecord>) {
+            this.records = records
+        }
+
+        override fun clear() {
+            records = emptyList()
+        }
     }
 
     private class MemoryRosterCache : VerifiedRosterCachePersistence {
@@ -238,73 +271,158 @@ class ChatFeedScreenTest {
     }
 
     @Test
-    fun locally_created_private_room_is_ready_and_composer_enabled_while_claim_scan_runs() {
+    fun production_created_private_room_scans_peer_caches_exact_roster_and_stays_closed_after_failure() {
         val communityId = "default"
-        val privateId = "private-self-${java.util.UUID.randomUUID()}"
-        val importedId = "joined-room-${java.util.UUID.randomUUID()}"
         val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
-        val scannedPrivateIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val claimCrypto =
+            PrivateMembershipClaimCrypto(
+                PrivateMembershipAead(Aead(AppTestSupport.native())),
+                PrivateMembershipClaimCodec(AppTestSupport.identityCrypto()),
+            )
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val chatRegistry = ChatRegistry(context)
+        val directory = DirectoryFakeDisk(SyncTestSupport.CHAT_ROOT)
+        val pauseFirstClaimRead = CountDownLatch(1)
+        val releaseFirstClaimRead = CountDownLatch(1)
+        val firstClaimRead = java.util.concurrent.atomic.AtomicBoolean(true)
+        val claimListCount = java.util.concurrent.atomic.AtomicInteger()
+        val privateReadResults = java.util.concurrent.CopyOnWriteArrayList<String>()
         server.dispatcher =
-            object : okhttp3.mockwebserver.Dispatcher() {
-                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): okhttp3.mockwebserver.MockResponse {
-                    val scannedId =
-                        listOf(privateId, importedId).firstOrNull {
-                            request.path.orEmpty().contains("private-membership/$it")
-                        }
-                    if (request.method == "PROPFIND" && scannedId != null) scannedPrivateIds += scannedId
-                    return okhttp3.mockwebserver.MockResponse().setResponseCode(404)
+            object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val isClaimCollection =
+                        request.method == "PROPFIND" &&
+                            request.path.orEmpty().contains("/private-membership/")
+                    if (isClaimCollection) claimListCount.incrementAndGet()
+                    if (isClaimCollection && firstClaimRead.compareAndSet(true, false)) {
+                        pauseFirstClaimRead.countDown()
+                        check(releaseFirstClaimRead.await(5, TimeUnit.SECONDS))
+                    }
+                    return directory.dispatch(request)
                 }
             }
+        CommunityRegistry(context).replace(listOf(CommunityRegistry.Entry(communityId, "Community", chatId)))
+        chatRegistry.replace(
+            communityId,
+            listOf(ChatRegistry.Entry(chatId, "General", "general", "public")),
+        )
+        val keyStore = InMemoryChatKeyStore().apply { store(chatId, chatKey) }
+        val privateCache = MemoryPrivateMembershipCache()
         EngineWiring.initialize(
-            AppTestSupport.chatOpenTestDeps(
-                server,
-                db,
-                communityId,
-                stored,
-                identity,
-                mapOf(chatId to chatKey, privateId to chatKey, importedId to chatKey),
-            ),
+            AppTestSupport.chatOpenTestDeps(server, db, communityId, stored, identity, mapOf(chatId to chatKey)),
         )
         AppContainer.configureChatOpenTestSeam(
             communityId,
             AppContainer.ChatOpenTestSeam(
-                loadChatKey = { if (it in setOf(privateId, importedId)) chatKey else null },
+                loadChatKey = keyStore::load,
                 loadStored = { stored },
                 readDirectory = { DirectoryReadResult(emptyList(), 0) },
-                chatKind = { _, _ -> "group" },
-                chatAccess = { _, _ -> "private" },
-                localPrivateSelfRoomEligible = { _, id -> id == privateId },
+                chatKeyStore = keyStore,
+                privateMembershipCachePersistence = privateCache,
+                chatRegistryOverride = chatRegistry,
+                privateMembershipReadResultForTest = { listingFailed, current, cachedReady, locallyCreated ->
+                    privateReadResults += "$listingFailed,$current,$cachedReady,$locallyCreated"
+                },
+                privateMembershipServiceForTest = { PrivateMembershipService(SyncTestSupport.transport(server), claimCrypto) },
+                chatAccess = { id, target -> chatRegistry.all(id).singleOrNull { it.id == target }?.access },
             ),
         )
         try {
+            val createdId = runBlocking { AppContainer.createGroupChat("Self room", communityId, ChatAccess.PRIVATE) }
+            assertNotNull(createdId)
+            val privateId = checkNotNull(createdId)
+            val createdRows = chatRegistry.all(communityId)
+            val created =
+                createdRows.firstOrNull { it.id == privateId }
+                    ?: error(
+                        "created room $privateId missing from $communityId registry: direct=$createdRows, " +
+                            "container=${AppContainer.chatsForCommunity(communityId)}",
+                    )
+            assertEquals(created, AppContainer.chatFor(communityId, privateId))
+            assertTrue(created.locallyCreatedPrivate)
+            assertFalse(created.nonSelfMemberObserved)
+
+            val firstGraph = checkNotNull(AppContainer.runtimeGraph())
+            assertEquals(privateId, firstGraph.chatId)
+            val initialReady = firstGraph.recipientSnapshot() as RecipientReadiness.Ready
+            assertEquals(listOf(firstGraph.senderIdentifier), initialReady.members)
+            assertTrue(pauseFirstClaimRead.await(5, TimeUnit.SECONDS))
+            releaseFirstClaimRead.countDown()
+
+            val peer = AppTestSupport.newIdentity()
+            val peerIdentifier = Hex.encode(peer.copySignPublic())
+            val signedClaim = claimCrypto.seal(privateId, "Verified peer", peer, keyStore.load(privateId)!!)
+            val membershipService = PrivateMembershipService(SyncTestSupport.transport(server), claimCrypto)
+            assertTrue(
+                runBlocking {
+                    membershipService.publishSelf(signedClaim, privateId) is MembershipPublishOutcome.Published
+                },
+            )
+
             val request = AppContainer.beginChatOpenRequest()
             assertTrue(runBlocking { AppContainer.openGroupChat(privateId, "Self room", communityId, requestToken = request) })
-            val graph = checkNotNull(AppContainer.runtimeGraph())
-            assertEquals(privateId, graph.chatId)
-            assertTrue(graph.privateMembershipChat)
-            assertTrue(graph.recipientSnapshot() is RecipientReadiness.Ready)
-            assertEquals(listOf(graph.senderIdentifier), (graph.recipientSnapshot() as RecipientReadiness.Ready).members)
-            val visibleGraph = mutableStateOf<RuntimeGraph?>(null)
-            composeRule.setContent {
-                visibleGraph.value?.let { ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(it)) }
+            val verifiedGraph = checkNotNull(AppContainer.runtimeGraph())
+            composeRule.waitUntil(5_000) {
+                val readiness = verifiedGraph.recipientSnapshot() as? RecipientReadiness.Ready
+                readiness?.members?.contains(peerIdentifier) == true
             }
-            visibleGraph.value = graph
-            composeRule.onNodeWithContentDescription("Message").assertIsEnabled()
-            composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
-            composeRule.onNodeWithContentDescription("Reading participants from server").assertDoesNotExist()
-            composeRule.waitUntil(5_000) { privateId in scannedPrivateIds }
-            composeRule.waitUntil(5_000) { graph.recipientSnapshot() is RecipientReadiness.Ready }
-            assertEquals(listOf(graph.senderIdentifier), (graph.recipientSnapshot() as RecipientReadiness.Ready).members)
+            val verified = verifiedGraph.recipientSnapshot() as RecipientReadiness.Ready
+            assertEquals(setOf(verifiedGraph.senderIdentifier, peerIdentifier), verified.members.toSet())
+            assertTrue(chatRegistry.all(communityId).first { it.id == privateId }.nonSelfMemberObserved)
+            assertTrue(privateCache.loadAll().orEmpty().any { it.communityId == communityId && it.chatId == privateId })
 
-            val joined = openInstalledChat(importedId, "Joined room")
-            assertEquals(RecipientReadiness.Loading, joined.recipientSnapshot())
-            visibleGraph.value = joined
-            composeRule.waitUntil(5_000) { importedId in scannedPrivateIds }
-            composeRule.waitUntil(5_000) { joined.recipientSnapshot() is RecipientReadiness.Unavailable }
-            composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
-            composeRule.onNodeWithText("Verified members unavailable — reconnect and retry").assertIsDisplayed()
-            composeRule.onNodeWithText("Retry").assertIsDisplayed()
+            val beforeCachedRead = privateReadResults.size
+            val cachedRequest = AppContainer.beginChatOpenRequest()
+            assertTrue(runBlocking { AppContainer.openGroupChat(privateId, "Self room", communityId, requestToken = cachedRequest) })
+            val cachedGraph = checkNotNull(AppContainer.runtimeGraph())
+            assertEquals(
+                setOf(cachedGraph.senderIdentifier, peerIdentifier),
+                (cachedGraph.recipientSnapshot() as RecipientReadiness.Ready).members.toSet(),
+            )
+            composeRule.waitUntil(5_000) {
+                privateReadResults.drop(beforeCachedRead).any { it.startsWith("false,true,") }
+            }
+            directory.failPutUnderPrefix[ChatPaths.changeIndex(peerIdentifier, privateId)] = 503
+            val sent =
+                runBlocking { MessageSendService(cachedGraph, ioDispatcher = Dispatchers.Unconfined).send("send to cached exact roster") }
+            assertTrue(sent.logWritten)
+            assertEquals(
+                peerIdentifier,
+                runBlocking { cachedGraph.store.messagesForChat(privateId).single().outboxRecipients },
+            )
+
+            privateCache.replaceAll(privateCache.loadAll().orEmpty().filterNot { it.communityId == communityId && it.chatId == privateId })
+            directory.failPropfind[PrivateMembershipPaths.collection(privateId)] = 503
+            val failedMembershipRead = runBlocking { membershipService.read(privateId, cachedGraph.chatKey, null) }
+            assertTrue(failedMembershipRead.listingFailed)
+            val claimReadsBeforeFailure = claimListCount.get()
+            val beforeFailureRead = privateReadResults.size
+            val failedRequest = AppContainer.beginChatOpenRequest()
+            assertTrue(runBlocking { AppContainer.openGroupChat(privateId, "Self room", communityId, requestToken = failedRequest) })
+            val reopened = checkNotNull(AppContainer.runtimeGraph())
+            assertTrue(AppContainer.runtimeGraph() === reopened)
+            assertEquals(privateId, reopened.chatId)
+            composeRule.waitUntil(5_000) { claimListCount.get() > claimReadsBeforeFailure }
+            val currentFailureObserved =
+                runCatching {
+                    composeRule.waitUntil(5_000) {
+                        privateReadResults.drop(beforeFailureRead).any { it.startsWith("true,true,") }
+                    }
+                }.isSuccess
+            val unavailableReached =
+                runCatching {
+                    composeRule.waitUntil(5_000) { reopened.recipientSnapshot() is RecipientReadiness.Unavailable }
+                }.isSuccess
+            assertTrue(
+                "expected failed private claim read to become Unavailable; readiness=${reopened.recipientSnapshot()}, " +
+                    "requests=${server.requestCount}, cache=${privateCache.loadAll()}, reads=$privateReadResults, " +
+                    "currentFailureObserved=$currentFailureObserved",
+                unavailableReached,
+            )
+            assertTrue(privateReadResults.drop(beforeFailureRead).any { it.startsWith("true,true,") })
+            assertTrue(chatRegistry.all(communityId).first { it.id == privateId }.nonSelfMemberObserved)
         } finally {
+            releaseFirstClaimRead.countDown()
             AppContainer.clearChatOpenTestSeam()
             EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
         }
@@ -598,6 +716,53 @@ class ChatFeedScreenTest {
             } else {
                 composeRule.onNodeWithContentDescription("Participants").assertIsEnabled()
                 composeRule.onNodeWithContentDescription("Invite someone").assertIsEnabled()
+            }
+        }
+    }
+
+    @Test
+    fun people_and_invite_toolbar_coordinates_stay_fixed_across_loading_and_delete_states() {
+        val graph = graph()
+        val capability = mutableStateOf<ChatDeleteCapability>(ChatDeleteCapability.NotAuthorized)
+        composeRule.setContent {
+            ChatFeedScreen(
+                onShowInvite = {},
+                deleteCapabilityOverride = capability.value,
+                viewModel = ChatFeedViewModel(graph),
+            )
+        }
+
+        fun left(description: String) = composeRule.onNodeWithContentDescription(description).fetchSemanticsNode().boundsInRoot.left
+        val peopleLeft = left("Participants")
+        val inviteLeft = left("Invite someone")
+        val deleteStates =
+            listOf(
+                ChatDeleteCapability.NotAuthorized,
+                ChatDeleteCapability.Loading,
+                ChatDeleteCapability.Unavailable,
+                ChatDeleteCapability.Available,
+            )
+        for (deleteState in deleteStates) {
+            for (readiness in listOf(RecipientReadiness.Ready(listOf(graph.senderIdentifier)), RecipientReadiness.Loading)) {
+                composeRule.runOnIdle {
+                    capability.value = deleteState
+                    graph.updateRecipientReadiness(readiness)
+                }
+                composeRule.waitForIdle()
+                val peopleDescription =
+                    if (readiness is RecipientReadiness.Loading) {
+                        "Participants unavailable while verified members load"
+                    } else {
+                        "Participants"
+                    }
+                assertEquals(peopleLeft, left(peopleDescription), 0.01f)
+                val inviteDescription =
+                    if (readiness is RecipientReadiness.Loading) {
+                        "Invite someone (verified participants are loading)"
+                    } else {
+                        "Invite someone"
+                    }
+                assertEquals(inviteLeft, left(inviteDescription), 0.01f)
             }
         }
     }

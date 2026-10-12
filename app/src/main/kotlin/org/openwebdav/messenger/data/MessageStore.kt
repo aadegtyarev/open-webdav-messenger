@@ -22,6 +22,8 @@ class MessageStore(
     private val cursorDao: SyncCursorDao,
     private val communityId: String,
 ) {
+    internal var afterOutgoingClaimUpdate: suspend () -> Unit = {}
+
     /**
      * Persist a received/sent [message] under its §2 [messageId] and §4 [orderToken], with
      * [sendStatus] (SENT for received, SENDING for local echo). Idempotent on the message-id.
@@ -83,6 +85,7 @@ class MessageStore(
     ): MessageEntity? {
         if (communityId != this.communityId) return null
         if (messageDao.claimOutgoing(messageId, communityId, claimToken) != 1) return null
+        afterOutgoingClaimUpdate()
         return messageDao.claimedOutgoing(messageId, communityId, claimToken)
     }
 
@@ -108,6 +111,14 @@ class MessageStore(
         claimToken: String,
     ) {
         if (communityId == this.communityId) messageDao.releaseSentOutgoingClaim(messageId, communityId, claimToken)
+    }
+
+    suspend fun releaseOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ) {
+        if (communityId == this.communityId) messageDao.releaseOutgoingClaim(messageId, communityId, claimToken)
     }
 
     suspend fun failOutgoingClaim(

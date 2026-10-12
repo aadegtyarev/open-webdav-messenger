@@ -358,15 +358,17 @@ internal fun ChatFeedScreen(
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh messages")
                     }
-                    if (loadingProgressLabel.isNotEmpty()) {
-                        CircularProgressIndicator(
-                            modifier =
-                                Modifier.size(24.dp).semantics {
-                                    contentDescription = loadingProgressLabel
-                                    progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
-                                },
-                            strokeWidth = 2.dp,
-                        )
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        if (loadingProgressLabel.isNotEmpty()) {
+                            CircularProgressIndicator(
+                                modifier =
+                                    Modifier.size(24.dp).semantics {
+                                        contentDescription = loadingProgressLabel
+                                        progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+                                    },
+                                strokeWidth = 2.dp,
+                            )
+                        }
                     }
                     IconButton(
                         onClick = onShowParticipants,
@@ -378,28 +380,34 @@ internal fun ChatFeedScreen(
                             contentDescription = participantsActionDescription,
                         )
                     }
-                    if (deleteCapability is ChatDeleteCapability.Unavailable) {
-                        IconButton(
-                            onClick = viewModel::refreshDeleteCapability,
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Filled.Refresh, contentDescription = deleteAuthorityRetryLabel)
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        if (deleteCapability is ChatDeleteCapability.Unavailable) {
+                            IconButton(
+                                onClick = viewModel::refreshDeleteCapability,
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(Icons.Filled.Refresh, contentDescription = deleteAuthorityRetryLabel)
+                            }
                         }
                     }
-                    if (canDeleteForAll || deleteCapability is ChatDeleteCapability.Available) {
-                        IconButton(
-                            onClick = { showDeleteChatConfirmation = true },
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.chat_delete_all_action))
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        if (canDeleteForAll || deleteCapability is ChatDeleteCapability.Available) {
+                            IconButton(
+                                onClick = { showDeleteChatConfirmation = true },
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.chat_delete_all_action))
+                            }
                         }
                     }
-                    if (canDeleteLocalDm) {
-                        IconButton(
-                            onClick = { showDeleteDmConfirmation = true },
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.dm_delete_action))
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        if (canDeleteLocalDm) {
+                            IconButton(
+                                onClick = { showDeleteDmConfirmation = true },
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.dm_delete_action))
+                            }
                         }
                     }
                     IconButton(
