@@ -22,6 +22,8 @@ class MessageStore(
     private val cursorDao: SyncCursorDao,
     private val communityId: String,
 ) {
+    internal var afterOutgoingClaimUpdate: suspend () -> Unit = {}
+
     /**
      * Persist a received/sent [message] under its §2 [messageId] and §4 [orderToken], with
      * [sendStatus] (SENT for received, SENDING for local echo). Idempotent on the message-id.
@@ -60,6 +62,14 @@ class MessageStore(
         if (communityId == this.communityId) messageDao.finishOutgoing(messageId, communityId)
     }
 
+    /** Record a successful shared-log write while retaining the payload for pending notifications. */
+    suspend fun markLogWritten(
+        messageId: String,
+        communityId: String,
+    ) {
+        if (communityId == this.communityId) messageDao.markOutgoingLogWritten(messageId, communityId)
+    }
+
     /** Mark a locally-sent message for later retry without discarding its original operation. */
     suspend fun markFailed(
         messageId: String,
@@ -75,6 +85,7 @@ class MessageStore(
     ): MessageEntity? {
         if (communityId != this.communityId) return null
         if (messageDao.claimOutgoing(messageId, communityId, claimToken) != 1) return null
+        afterOutgoingClaimUpdate()
         return messageDao.claimedOutgoing(messageId, communityId, claimToken)
     }
 
@@ -84,6 +95,30 @@ class MessageStore(
         claimToken: String,
     ) {
         if (communityId == this.communityId) messageDao.finishOutgoingClaim(messageId, communityId, claimToken)
+    }
+
+    suspend fun markLogWrittenClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ) {
+        if (communityId == this.communityId) messageDao.markOutgoingClaimLogWritten(messageId, communityId, claimToken)
+    }
+
+    suspend fun releaseSentOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ) {
+        if (communityId == this.communityId) messageDao.releaseSentOutgoingClaim(messageId, communityId, claimToken)
+    }
+
+    suspend fun releaseOutgoingClaim(
+        messageId: String,
+        communityId: String,
+        claimToken: String,
+    ) {
+        if (communityId == this.communityId) messageDao.releaseOutgoingClaim(messageId, communityId, claimToken)
     }
 
     suspend fun failOutgoingClaim(

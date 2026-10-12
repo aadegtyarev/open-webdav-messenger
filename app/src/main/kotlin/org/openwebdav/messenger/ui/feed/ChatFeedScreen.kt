@@ -7,13 +7,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -22,14 +27,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -41,7 +48,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,6 +65,7 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -94,6 +101,7 @@ internal fun ChatFeedScreen(
     chatTitle: String = "",
     onLocalDmDeleted: () -> Unit = {},
     onChatDeleted: (ChatDeletionStatus) -> Unit = {},
+    toolbarWindowInsets: WindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
     viewModel: ChatFeedViewModel =
         viewModel(
             key = runtimeScopeKey("feed"),
@@ -117,9 +125,55 @@ internal fun ChatFeedScreen(
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val rosterLoadingLabel = stringResource(R.string.roster_loading_accessibility)
-    val rosterLoadingExplanation = stringResource(R.string.roster_loading_explanation)
     val deleteAuthorityLoadingLabel = stringResource(R.string.chat_delete_authority_loading)
     val deleteAuthorityRetryLabel = stringResource(R.string.chat_delete_authority_retry)
+    val participantsActionLabel = stringResource(R.string.participants_action)
+    val inviteActionLabel = stringResource(R.string.invite_action)
+    val participantsActionDescription =
+        when (recipientReadiness) {
+            is RecipientReadiness.Loading -> stringResource(R.string.participants_loading_disabled)
+            is RecipientReadiness.Unavailable -> stringResource(R.string.participants_unavailable_disabled)
+            is RecipientReadiness.Ready -> participantsActionLabel
+        }
+    val inviteActionDescription =
+        when (recipientReadiness) {
+            is RecipientReadiness.Loading -> stringResource(R.string.invite_roster_loading)
+            is RecipientReadiness.Unavailable -> stringResource(R.string.invite_roster_unavailable)
+            is RecipientReadiness.Ready -> inviteActionLabel
+        }
+    val rosterActionsEnabled = recipientReadiness is RecipientReadiness.Ready
+    val rosterIsLoading = recipientReadiness is RecipientReadiness.Loading
+    val authorityIsLoading = deleteCapability is ChatDeleteCapability.Loading
+    val refreshingMessagesLabel = stringResource(R.string.toolbar_refreshing_messages)
+    val loadingProgressLabel =
+        when {
+            isSyncing && rosterIsLoading && authorityIsLoading ->
+                stringResource(
+                    R.string.feed_operations_loading,
+                    refreshingMessagesLabel,
+                    stringResource(R.string.feed_operations_loading, rosterLoadingLabel, deleteAuthorityLoadingLabel),
+                )
+            isSyncing && rosterIsLoading -> stringResource(R.string.feed_operations_loading, refreshingMessagesLabel, rosterLoadingLabel)
+            isSyncing && authorityIsLoading ->
+                stringResource(R.string.feed_operations_loading, refreshingMessagesLabel, deleteAuthorityLoadingLabel)
+            rosterIsLoading && authorityIsLoading ->
+                stringResource(R.string.feed_operations_loading, rosterLoadingLabel, deleteAuthorityLoadingLabel)
+            isSyncing -> refreshingMessagesLabel
+            rosterIsLoading -> rosterLoadingLabel
+            authorityIsLoading -> deleteAuthorityLoadingLabel
+            else -> ""
+        }
+    val displayTitle = viewModel.communityName
+    val titleStatus =
+        when (privateClaimStatus) {
+            PrivateClaimPublicationStatus.PENDING -> stringResource(R.string.private_claim_pending)
+            PrivateClaimPublicationStatus.UPLOADED -> stringResource(R.string.private_claim_uploaded)
+            PrivateClaimPublicationStatus.NOT_PRIVATE -> lastSyncText
+        }
+    val moreActionsDescription = stringResource(R.string.toolbar_more_actions, chatTitle.ifBlank { displayTitle })
+    val showOverflowActions =
+        canDeleteForAll || canDeleteLocalDm || deleteCapability !is ChatDeleteCapability.NotAuthorized
+    var showMoreActions by remember { mutableStateOf(false) }
     var showDeleteDmConfirmation by remember { mutableStateOf(false) }
     var showDeleteChatConfirmation by remember { mutableStateOf(false) }
     var typedDeleteTitle by remember { mutableStateOf("") }
@@ -301,106 +355,138 @@ internal fun ChatFeedScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(viewModel.communityName)
-                        Text(
-                            text = lastSyncText,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
-                        when (privateClaimStatus) {
-                            PrivateClaimPublicationStatus.NOT_PRIVATE -> Unit
-                            PrivateClaimPublicationStatus.PENDING ->
-                                Text(
-                                    stringResource(R.string.private_claim_pending),
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            PrivateClaimPublicationStatus.UPLOADED ->
-                                Text(
-                                    stringResource(R.string.private_claim_uploaded),
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
+            Box(
+                modifier = Modifier.fillMaxWidth().windowInsetsPadding(toolbarWindowInsets),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-                actions = {
-                    IconButton(
-                        onClick = { viewModel.syncNow() },
-                        enabled = !isSyncing,
+                    Column(
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                        verticalArrangement = Arrangement.Center,
                     ) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh messages")
+                        Text(
+                            text = displayTitle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = titleStatus,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier =
+                                Modifier.semantics {
+                                    if (privateClaimStatus != PrivateClaimPublicationStatus.NOT_PRIVATE) {
+                                        contentDescription = "$lastSyncText. $titleStatus"
+                                    }
+                                },
+                        )
                     }
-                    when (recipientReadiness) {
-                        RecipientReadiness.Loading ->
-                            IconButton(
-                                onClick = { coroutineScope.launch { snackbarHostState.showSnackbar(rosterLoadingExplanation) } },
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        if (loadingProgressLabel.isNotEmpty()) {
+                            CircularProgressIndicator(
                                 modifier =
-                                    Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics {
-                                        contentDescription = rosterLoadingLabel
+                                    Modifier.size(22.dp).semantics {
+                                        contentDescription = loadingProgressLabel
+                                        progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
                                     },
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            IconButton(
+                                onClick = { viewModel.syncNow() },
+                                enabled = !isSyncing,
+                                modifier = Modifier.size(48.dp),
                             ) {
-                                CircularProgressIndicator(
-                                    modifier =
-                                        Modifier.size(24.dp).semantics {
-                                            progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
-                                        },
-                                    strokeWidth = 2.dp,
-                                )
+                                Icon(Icons.Filled.Refresh, contentDescription = "Refresh messages")
                             }
-                        is RecipientReadiness.Ready -> Unit
-                        is RecipientReadiness.Unavailable -> Unit
+                        }
                     }
                     IconButton(
                         onClick = onShowParticipants,
-                        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+                        enabled = rosterActionsEnabled,
+                        modifier = Modifier.size(48.dp),
                     ) {
-                        Icon(Icons.Filled.People, contentDescription = stringResource(R.string.participants_action))
+                        Icon(Icons.Filled.People, contentDescription = participantsActionDescription)
                     }
-                    if (deleteCapability is ChatDeleteCapability.Loading) {
-                        CircularProgressIndicator(
-                            modifier =
-                                Modifier.size(24.dp).semantics {
-                                    contentDescription = deleteAuthorityLoadingLabel
-                                    progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
-                                },
-                            strokeWidth = 2.dp,
-                        )
-                    } else if (deleteCapability is ChatDeleteCapability.Unavailable) {
-                        IconButton(
-                            onClick = viewModel::refreshDeleteCapability,
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Filled.Refresh, contentDescription = deleteAuthorityRetryLabel)
+                    IconButton(
+                        onClick = onShowInvite,
+                        enabled = rosterActionsEnabled,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Icon(Icons.Filled.PersonAdd, contentDescription = inviteActionDescription)
+                    }
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        if (showOverflowActions) {
+                            IconButton(
+                                onClick = { showMoreActions = true },
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = moreActionsDescription)
+                            }
+                            DropdownMenu(
+                                expanded = showMoreActions,
+                                onDismissRequest = { showMoreActions = false },
+                            ) {
+                                when {
+                                    deleteCapability is ChatDeleteCapability.Loading ->
+                                        DropdownMenuItem(
+                                            text = { Text(deleteAuthorityLoadingLabel) },
+                                            onClick = {},
+                                            enabled = false,
+                                        )
+                                    deleteCapability is ChatDeleteCapability.Unavailable -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.chat_delete_authority_unavailable_status)) },
+                                            onClick = {},
+                                            enabled = false,
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(deleteAuthorityRetryLabel) },
+                                            onClick = {
+                                                showMoreActions = false
+                                                viewModel.refreshDeleteCapability()
+                                            },
+                                        )
+                                    }
+                                    deleteCapability is ChatDeleteCapability.NotAuthorized && !canDeleteForAll && canDeleteLocalDm ->
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.chat_delete_authority_not_authorized)) },
+                                            onClick = {},
+                                            enabled = false,
+                                        )
+                                }
+                                if (canDeleteForAll || deleteCapability is ChatDeleteCapability.Available) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_delete_all_action)) },
+                                        onClick = {
+                                            showMoreActions = false
+                                            showDeleteChatConfirmation = true
+                                        },
+                                    )
+                                }
+                                if (canDeleteLocalDm) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.dm_delete_action)) },
+                                        onClick = {
+                                            showMoreActions = false
+                                            showDeleteDmConfirmation = true
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
-                    if (canDeleteForAll || deleteCapability is ChatDeleteCapability.Available) {
-                        IconButton(
-                            onClick = { showDeleteChatConfirmation = true },
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.chat_delete_all_action))
-                        }
-                    }
-                    if (canDeleteLocalDm) {
-                        IconButton(
-                            onClick = { showDeleteDmConfirmation = true },
-                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                        ) {
-                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.dm_delete_action))
-                        }
-                    }
-                    IconButton(onClick = onShowInvite) {
-                        Icon(Icons.Filled.PersonAdd, contentDescription = "Invite someone")
-                    }
-                },
-            )
+                }
+            }
         },
         bottomBar = {
             Composer(
@@ -548,38 +634,31 @@ private fun MessageRow(
                         MessageEntity.STATUS_FAILED -> stringResource(R.string.message_status_failed)
                         else -> stringResource(R.string.message_status_sent)
                     }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    when (row.sendStatus) {
-                        MessageEntity.STATUS_SENDING ->
-                            Icon(
-                                Icons.Filled.Schedule,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.outline,
-                            )
-                        MessageEntity.STATUS_FAILED ->
-                            IconButton(
-                                onClick = onRetry,
-                                modifier = Modifier.size(48.dp).semantics { contentDescription = retryLabel },
-                            ) {
-                                Icon(
-                                    Icons.Filled.ErrorOutline,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        else ->
-                            Icon(
-                                Icons.Filled.CheckCircle,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
+                val failedStatusRetryLabel = stringResource(R.string.message_failed_retry, statusLabel, retryLabel)
+                if (row.sendStatus == MessageEntity.STATUS_FAILED) {
+                    IconButton(
+                        onClick = onRetry,
+                        modifier =
+                            Modifier.size(48.dp).semantics {
+                                contentDescription = failedStatusRetryLabel
+                            },
+                    ) {
+                        Icon(
+                            Icons.Filled.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                        )
                     }
-                    Text(
-                        text = statusLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.semantics { contentDescription = statusLabel },
+                } else {
+                    val isQueued = row.sendStatus == MessageEntity.STATUS_SENDING
+                    val statusIcon = if (isQueued) Icons.Filled.Schedule else Icons.Filled.CheckCircle
+                    val statusTint =
+                        if (isQueued) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary
+                    Icon(
+                        statusIcon,
+                        contentDescription = statusLabel,
+                        modifier = Modifier.size(16.dp),
+                        tint = statusTint,
                     )
                 }
             }
@@ -609,7 +688,15 @@ private fun Composer(
     rosterLoading: Boolean,
     onRetryRoster: () -> Unit,
 ) {
+    val rosterLoadingExplanation = stringResource(R.string.roster_loading_explanation)
     Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
+        if (rosterLoading) {
+            Text(
+                rosterLoadingExplanation,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
         sendError?.let {
             Text(
                 it,

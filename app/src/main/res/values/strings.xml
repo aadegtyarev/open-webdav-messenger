@@ -10,7 +10,13 @@
     <string name="roster_loading_placeholder">Reading participants from server…</string>
     <string name="roster_loading_accessibility">Reading participants from server</string>
     <string name="roster_loading_explanation">Reading participants from server. Sending will be available when complete.</string>
+    <string name="feed_operations_loading">%1$s; %2$s</string>
+    <string name="invite_roster_loading">Invite someone (verified participants are loading)</string>
+    <string name="invite_action">Invite someone</string>
     <string name="participants_action">Participants</string>
+    <string name="participants_loading_disabled">Participants unavailable while verified members load</string>
+    <string name="participants_unavailable_disabled">Participants unavailable until the verified roster is retried</string>
+    <string name="invite_roster_unavailable">Invite someone (verified participants are unavailable)</string>
     <string name="participants_title">Participants</string>
     <string name="participants_private_chat_only">Identity verified only for this private chat</string>
     <string name="private_claim_pending">Private-chat identity claim not uploaded yet. Other members may not see you.</string>
@@ -27,6 +33,7 @@
     <string name="message_status_sent">Sent</string>
     <string name="message_status_failed">Failed</string>
     <string name="message_retry">Retry sending message</string>
+    <string name="message_failed_retry">%1$s. %2$s</string>
     <string name="dm_delete_title">Delete this chat from this device?</string>
     <string name="dm_delete_confirmation">Type “%1$s” to delete local history. A genuinely new message from your peer will reopen this chat with new history only.</string>
     <string name="dm_delete_type_title">Type the chat title</string>
@@ -40,6 +47,10 @@
     <string name="chat_delete_authority_retry">Delete authority unavailable. Tap to retry.</string>
     <string name="chat_delete_failure">Deletion was not authorized or could not be safely started.</string>
     <string name="chat_actions_accessibility">Actions for %1$s</string>
+    <string name="toolbar_refreshing_messages">Refreshing messages</string>
+    <string name="toolbar_more_actions">More actions for %1$s</string>
+    <string name="chat_delete_authority_unavailable_status">Delete authority could not be checked</string>
+    <string name="chat_delete_authority_not_authorized">You cannot delete this chat for everyone</string>
     <string name="dm_delete_success">Chat deleted locally.</string>
     <string name="chat_delete_local_committed">Local deletion committed; tombstone publication is pending retry.</string>
     <string name="chat_delete_tombstone_published">Tombstone published; remote content cleanup is pending.</string>

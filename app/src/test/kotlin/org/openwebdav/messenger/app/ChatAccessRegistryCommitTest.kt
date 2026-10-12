@@ -49,9 +49,14 @@ class ChatAccessRegistryCommitTest {
     private fun committer(
         barrier: AccountMutationBarrier,
         rows: MutableList<ChatRegistry.Entry>,
-    ) = ChatAccessRegistryCommit(barrier, { rows.toList() }, { _, updated ->
-        rows.clear()
-        rows.addAll(updated)
-        true
-    })
+    ) = ChatAccessRegistryCommit(barrier) { _, transform ->
+        val updated = transform(rows.toList())
+        if (updated == null) {
+            false
+        } else {
+            rows.clear()
+            rows.addAll(updated)
+            true
+        }
+    }
 }

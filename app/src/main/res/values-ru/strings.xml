@@ -4,4 +4,20 @@
     <string name="message_status_sent">Отправлено</string>
     <string name="message_status_failed">Не отправлено</string>
     <string name="message_retry">Повторить отправку</string>
+    <string name="message_failed_retry">%1$s. %2$s</string>
+    <string name="toolbar_refreshing_messages">Обновление сообщений</string>
+    <string name="toolbar_more_actions">Действия для чата «%1$s»</string>
+    <string name="chat_delete_authority_loading">Проверка права на удаление</string>
+    <string name="chat_delete_authority_retry">Не удалось проверить право на удаление. Нажмите, чтобы повторить.</string>
+    <string name="chat_delete_authority_unavailable_status">Не удалось проверить право на удаление</string>
+    <string name="chat_delete_authority_not_authorized">Вы не можете удалить этот чат для всех</string>
+    <string name="chat_delete_all_action">Удалить для всех</string>
+    <string name="dm_delete_action">Удалить на устройстве</string>
+    <string name="roster_loading_accessibility">Загрузка списка участников</string>
+    <string name="invite_roster_loading">Пригласить участника (загрузка списка участников)</string>
+    <string name="participants_action">Участники</string>
+    <string name="participants_loading_disabled">Участники недоступны, пока загружается подтверждённый список</string>
+    <string name="participants_unavailable_disabled">Участники недоступны до повторной проверки списка</string>
+    <string name="invite_roster_unavailable">Пригласить участника (список участников недоступен)</string>
+    <string name="invite_action">Пригласить участника</string>
 </resources>

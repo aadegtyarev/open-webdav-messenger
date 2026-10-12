@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0: the public surface is not stable, and minor versions may change behavior freely.
 
+## [0.25.2] — 2026-10-12
+
+### Changed
+
+- Locally created private rooms become self-ready while verified membership scanning continues; roster loading and outgoing send states use concise, accessible toolbar and icon semantics.
+
+### Fixed
+
+- A successful shared-log append is reported as Sent even when a per-member change-index notification remains pending; the original durable notification operation remains retryable without duplicating the log entry.
+
 ## [0.25.1] — 2026-10-12
 
 ### Fixed

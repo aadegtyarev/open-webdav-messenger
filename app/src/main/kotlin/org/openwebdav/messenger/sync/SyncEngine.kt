@@ -40,7 +40,7 @@ internal class SyncEngine(
     private val sendWriter = SendWriter(transport)
     private val pollReader = PollReader(transport, envelope, store, keyProvider, clock)
     private val outgoingOutbox =
-        OutgoingOutbox(store) { pending, sender ->
+        OutgoingOutbox(store) { pending, sender, onLogWritten ->
             val recipients = pending.outboxRecipients?.split('\n')?.filter(String::isNotBlank).orEmpty()
             send(
                 pending.chatId,
@@ -48,6 +48,7 @@ internal class SyncEngine(
                 pending.outboxEnvelope ?: byteArrayOf(),
                 recipients + sender,
                 sender,
+                onLogWritten,
             )
         }
 
@@ -62,9 +63,10 @@ internal class SyncEngine(
         envelopeBytes: ByteArray,
         allMembers: List<String>,
         senderIdentifier: String,
+        onLogWritten: suspend () -> Unit = {},
     ): SendOutcome {
         val others = allMembers.filter { it != senderIdentifier }
-        return sendWriter.send(chatId, orderToken, envelopeBytes, others)
+        return sendWriter.send(chatId, orderToken, envelopeBytes, others, onLogWritten)
     }
 
     suspend fun retryOutgoing(

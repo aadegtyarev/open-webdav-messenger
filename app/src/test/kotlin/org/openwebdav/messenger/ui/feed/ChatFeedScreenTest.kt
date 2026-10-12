@@ -1,17 +1,34 @@
 package org.openwebdav.messenger.ui.feed
 
 import android.content.res.Configuration
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -20,10 +37,14 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -36,6 +57,7 @@ import org.openwebdav.messenger.app.CachedVerifiedRoster
 import org.openwebdav.messenger.app.ChatDeleteCapability
 import org.openwebdav.messenger.app.ChatMessageSender
 import org.openwebdav.messenger.app.EngineWiring
+import org.openwebdav.messenger.app.InMemoryChatKeyStore
 import org.openwebdav.messenger.app.MessageSendService
 import org.openwebdav.messenger.app.RecipientReadiness
 import org.openwebdav.messenger.app.RosterCacheProvenance
@@ -43,6 +65,7 @@ import org.openwebdav.messenger.app.RuntimeGraph
 import org.openwebdav.messenger.app.TombstoneReconciler
 import org.openwebdav.messenger.app.VerifiedParticipant
 import org.openwebdav.messenger.app.VerifiedRosterCachePersistence
+import org.openwebdav.messenger.chatdirectory.ChatAccess
 import org.openwebdav.messenger.crypto.Aead
 import org.openwebdav.messenger.crypto.ChatKey
 import org.openwebdav.messenger.crypto.MessageCrypto
@@ -50,11 +73,23 @@ import org.openwebdav.messenger.data.DmLocalDeleteResult
 import org.openwebdav.messenger.data.MessageStore
 import org.openwebdav.messenger.data.MessengerDatabase
 import org.openwebdav.messenger.directory.DirectoryEntry
+import org.openwebdav.messenger.directory.DirectoryFakeDisk
 import org.openwebdav.messenger.directory.DirectoryReadResult
 import org.openwebdav.messenger.identity.Identity
+import org.openwebdav.messenger.keystore.ChatRegistry
+import org.openwebdav.messenger.keystore.CommunityRegistry
 import org.openwebdav.messenger.keystore.StoredConnection
+import org.openwebdav.messenger.membership.MembershipPublishOutcome
+import org.openwebdav.messenger.membership.PrivateMembershipAead
+import org.openwebdav.messenger.membership.PrivateMembershipCachePersistence
+import org.openwebdav.messenger.membership.PrivateMembershipCacheRecord
+import org.openwebdav.messenger.membership.PrivateMembershipClaimCodec
+import org.openwebdav.messenger.membership.PrivateMembershipClaimCrypto
+import org.openwebdav.messenger.membership.PrivateMembershipPaths
+import org.openwebdav.messenger.membership.PrivateMembershipService
 import org.openwebdav.messenger.message.MessageEnvelope
 import org.openwebdav.messenger.message.TextMessage
+import org.openwebdav.messenger.protocol.ChatPaths
 import org.openwebdav.messenger.protocol.Hex
 import org.openwebdav.messenger.protocol.MessageId
 import org.openwebdav.messenger.protocol.OrderToken
@@ -64,8 +99,10 @@ import org.openwebdav.messenger.sync.SyncTestSupport
 import org.openwebdav.messenger.ui.participants.ParticipantsScreen
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -106,6 +143,20 @@ class ChatFeedScreenTest {
         db.close()
     }
 
+    private class MemoryPrivateMembershipCache : PrivateMembershipCachePersistence {
+        private var records = emptyList<PrivateMembershipCacheRecord>()
+
+        override fun loadAll(): List<PrivateMembershipCacheRecord> = records
+
+        override fun replaceAll(records: List<PrivateMembershipCacheRecord>) {
+            this.records = records
+        }
+
+        override fun clear() {
+            records = emptyList()
+        }
+    }
+
     private class MemoryRosterCache : VerifiedRosterCachePersistence {
         private val records = mutableMapOf<Pair<String, String>, CachedVerifiedRoster>()
 
@@ -128,7 +179,7 @@ class ChatFeedScreenTest {
         override fun clear() = records.clear()
     }
 
-    private fun graph(): RuntimeGraph {
+    private fun graph(communityName: String = "Community"): RuntimeGraph {
         val envelope = MessageEnvelope.create(MessageCrypto(Aead(AppTestSupport.native())), AppTestSupport.identityCrypto())
         val engine =
             SyncEngine(
@@ -143,7 +194,7 @@ class ChatFeedScreenTest {
             envelope = envelope,
             config = SyncTestSupport.config(server),
             chatId = chatId,
-            communityName = "Community",
+            communityName = communityName,
             chatKey = chatKey,
             identity = identity,
             senderIdentifier = Hex.encode(identity.copySignPublic()),
@@ -178,7 +229,8 @@ class ChatFeedScreenTest {
             )
         }
 
-        composeRule.onNodeWithContentDescription("Delete locally").assertWidthIsAtLeast(48.dp).performClick()
+        composeRule.onNodeWithContentDescription("More actions for Peer").performClick()
+        composeRule.onNodeWithText("Delete locally").assertHeightIsAtLeast(48.dp).performClick()
         composeRule.onNodeWithText("Type the chat title").assertIsDisplayed()
         composeRule.onNodeWithText("Delete locally").assertIsNotEnabled()
         composeRule.onNodeWithText("Type the chat title").performTextInput("Peer")
@@ -208,15 +260,22 @@ class ChatFeedScreenTest {
                 viewModel = viewModel,
             )
         }
-        composeRule.onNodeWithContentDescription("Delete for everyone").assertDoesNotExist()
-        composeRule.onNodeWithContentDescription("Delete locally").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("More actions for Community").performClick()
+        composeRule.onNodeWithText("Delete for everyone").assertDoesNotExist()
+        composeRule.onNodeWithText("Delete locally").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithText("You cannot delete this chat for everyone").assertIsDisplayed()
 
         composeRule.runOnIdle { capability.value = ChatDeleteCapability.Loading }
-        composeRule.onNodeWithContentDescription("Checking delete authority").assertIsDisplayed()
+        composeRule.onNodeWithText("Checking delete authority").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete for everyone").assertDoesNotExist()
         composeRule.runOnIdle { capability.value = ChatDeleteCapability.Unavailable }
-        composeRule.onNodeWithContentDescription("Delete authority unavailable. Tap to retry.").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete authority could not be checked").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete authority unavailable. Tap to retry.")
+            .assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithText("Delete for everyone").assertDoesNotExist()
         composeRule.runOnIdle { capability.value = ChatDeleteCapability.Available }
-        composeRule.onNodeWithContentDescription("Delete for everyone").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete for everyone").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
     }
 
     /** An empty chat shows the empty-state prompt and the disabled-until-typed Send action. */
@@ -229,6 +288,164 @@ class ChatFeedScreenTest {
 
         composeRule.onNodeWithText("No messages yet — say hello.").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
+    }
+
+    @Test
+    fun production_created_private_room_scans_peer_caches_exact_roster_and_stays_closed_after_failure() {
+        val communityId = "default"
+        val stored = StoredConnection(SyncTestSupport.config(server), chatId, "Community")
+        val claimCrypto =
+            PrivateMembershipClaimCrypto(
+                PrivateMembershipAead(Aead(AppTestSupport.native())),
+                PrivateMembershipClaimCodec(AppTestSupport.identityCrypto()),
+            )
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val chatRegistry = ChatRegistry(context)
+        val directory = DirectoryFakeDisk(SyncTestSupport.CHAT_ROOT)
+        val pauseFirstClaimRead = CountDownLatch(1)
+        val releaseFirstClaimRead = CountDownLatch(1)
+        val firstClaimRead = java.util.concurrent.atomic.AtomicBoolean(true)
+        val claimListCount = java.util.concurrent.atomic.AtomicInteger()
+        val privateReadResults = java.util.concurrent.CopyOnWriteArrayList<String>()
+        server.dispatcher =
+            object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val isClaimCollection =
+                        request.method == "PROPFIND" &&
+                            request.path.orEmpty().contains("/private-membership/")
+                    if (isClaimCollection) claimListCount.incrementAndGet()
+                    if (isClaimCollection && firstClaimRead.compareAndSet(true, false)) {
+                        pauseFirstClaimRead.countDown()
+                        check(releaseFirstClaimRead.await(5, TimeUnit.SECONDS))
+                    }
+                    return directory.dispatch(request)
+                }
+            }
+        CommunityRegistry(context).replace(listOf(CommunityRegistry.Entry(communityId, "Community", chatId)))
+        chatRegistry.replace(
+            communityId,
+            listOf(ChatRegistry.Entry(chatId, "General", "general", "public")),
+        )
+        val keyStore = InMemoryChatKeyStore().apply { store(chatId, chatKey) }
+        val privateCache = MemoryPrivateMembershipCache()
+        EngineWiring.initialize(
+            AppTestSupport.chatOpenTestDeps(server, db, communityId, stored, identity, mapOf(chatId to chatKey)),
+        )
+        AppContainer.configureChatOpenTestSeam(
+            communityId,
+            AppContainer.ChatOpenTestSeam(
+                loadChatKey = keyStore::load,
+                loadStored = { stored },
+                readDirectory = { DirectoryReadResult(emptyList(), 0) },
+                chatKeyStore = keyStore,
+                privateMembershipCachePersistence = privateCache,
+                chatRegistryOverride = chatRegistry,
+                privateMembershipReadResultForTest = { listingFailed, current, cachedReady, locallyCreated ->
+                    privateReadResults += "$listingFailed,$current,$cachedReady,$locallyCreated"
+                },
+                privateMembershipServiceForTest = { PrivateMembershipService(SyncTestSupport.transport(server), claimCrypto) },
+                chatAccess = { id, target -> chatRegistry.all(id).singleOrNull { it.id == target }?.access },
+            ),
+        )
+        try {
+            val createdId = runBlocking { AppContainer.createGroupChat("Self room", communityId, ChatAccess.PRIVATE) }
+            assertNotNull(createdId)
+            val privateId = checkNotNull(createdId)
+            val createdRows = chatRegistry.all(communityId)
+            val created =
+                createdRows.firstOrNull { it.id == privateId }
+                    ?: error(
+                        "created room $privateId missing from $communityId registry: direct=$createdRows, " +
+                            "container=${AppContainer.chatsForCommunity(communityId)}",
+                    )
+            assertEquals(created, AppContainer.chatFor(communityId, privateId))
+            assertTrue(created.locallyCreatedPrivate)
+            assertFalse(created.nonSelfMemberObserved)
+
+            val firstGraph = checkNotNull(AppContainer.runtimeGraph())
+            assertEquals(privateId, firstGraph.chatId)
+            val initialReady = firstGraph.recipientSnapshot() as RecipientReadiness.Ready
+            assertEquals(listOf(firstGraph.senderIdentifier), initialReady.members)
+            assertTrue(pauseFirstClaimRead.await(5, TimeUnit.SECONDS))
+            releaseFirstClaimRead.countDown()
+
+            val peer = AppTestSupport.newIdentity()
+            val peerIdentifier = Hex.encode(peer.copySignPublic())
+            val signedClaim = claimCrypto.seal(privateId, "Verified peer", peer, keyStore.load(privateId)!!)
+            val membershipService = PrivateMembershipService(SyncTestSupport.transport(server), claimCrypto)
+            assertTrue(
+                runBlocking {
+                    membershipService.publishSelf(signedClaim, privateId) is MembershipPublishOutcome.Published
+                },
+            )
+
+            val request = AppContainer.beginChatOpenRequest()
+            assertTrue(runBlocking { AppContainer.openGroupChat(privateId, "Self room", communityId, requestToken = request) })
+            val verifiedGraph = checkNotNull(AppContainer.runtimeGraph())
+            composeRule.waitUntil(5_000) {
+                val readiness = verifiedGraph.recipientSnapshot() as? RecipientReadiness.Ready
+                readiness?.members?.contains(peerIdentifier) == true
+            }
+            val verified = verifiedGraph.recipientSnapshot() as RecipientReadiness.Ready
+            assertEquals(setOf(verifiedGraph.senderIdentifier, peerIdentifier), verified.members.toSet())
+            assertTrue(chatRegistry.all(communityId).first { it.id == privateId }.nonSelfMemberObserved)
+            assertTrue(privateCache.loadAll().orEmpty().any { it.communityId == communityId && it.chatId == privateId })
+
+            val beforeCachedRead = privateReadResults.size
+            val cachedRequest = AppContainer.beginChatOpenRequest()
+            assertTrue(runBlocking { AppContainer.openGroupChat(privateId, "Self room", communityId, requestToken = cachedRequest) })
+            val cachedGraph = checkNotNull(AppContainer.runtimeGraph())
+            assertEquals(
+                setOf(cachedGraph.senderIdentifier, peerIdentifier),
+                (cachedGraph.recipientSnapshot() as RecipientReadiness.Ready).members.toSet(),
+            )
+            composeRule.waitUntil(5_000) {
+                privateReadResults.drop(beforeCachedRead).any { it.startsWith("false,true,") }
+            }
+            directory.failPutUnderPrefix[ChatPaths.changeIndex(peerIdentifier, privateId)] = 503
+            val sent =
+                runBlocking { MessageSendService(cachedGraph, ioDispatcher = Dispatchers.Unconfined).send("send to cached exact roster") }
+            assertTrue(sent.logWritten)
+            assertEquals(
+                peerIdentifier,
+                runBlocking { cachedGraph.store.messagesForChat(privateId).single().outboxRecipients },
+            )
+
+            privateCache.replaceAll(privateCache.loadAll().orEmpty().filterNot { it.communityId == communityId && it.chatId == privateId })
+            directory.failPropfind[PrivateMembershipPaths.collection(privateId)] = 503
+            val failedMembershipRead = runBlocking { membershipService.read(privateId, cachedGraph.chatKey, null) }
+            assertTrue(failedMembershipRead.listingFailed)
+            val claimReadsBeforeFailure = claimListCount.get()
+            val beforeFailureRead = privateReadResults.size
+            val failedRequest = AppContainer.beginChatOpenRequest()
+            assertTrue(runBlocking { AppContainer.openGroupChat(privateId, "Self room", communityId, requestToken = failedRequest) })
+            val reopened = checkNotNull(AppContainer.runtimeGraph())
+            assertTrue(AppContainer.runtimeGraph() === reopened)
+            assertEquals(privateId, reopened.chatId)
+            composeRule.waitUntil(5_000) { claimListCount.get() > claimReadsBeforeFailure }
+            val currentFailureObserved =
+                runCatching {
+                    composeRule.waitUntil(5_000) {
+                        privateReadResults.drop(beforeFailureRead).any { it.startsWith("true,true,") }
+                    }
+                }.isSuccess
+            val unavailableReached =
+                runCatching {
+                    composeRule.waitUntil(5_000) { reopened.recipientSnapshot() is RecipientReadiness.Unavailable }
+                }.isSuccess
+            assertTrue(
+                "expected failed private claim read to become Unavailable; readiness=${reopened.recipientSnapshot()}, " +
+                    "requests=${server.requestCount}, cache=${privateCache.loadAll()}, reads=$privateReadResults, " +
+                    "currentFailureObserved=$currentFailureObserved",
+                unavailableReached,
+            )
+            assertTrue(privateReadResults.drop(beforeFailureRead).any { it.startsWith("true,true,") })
+            assertTrue(chatRegistry.all(communityId).first { it.id == privateId }.nonSelfMemberObserved)
+        } finally {
+            releaseFirstClaimRead.countDown()
+            AppContainer.clearChatOpenTestSeam()
+            EngineWiring.initialize(AppTestSupport.emptyEngineDeps())
+        }
     }
 
     @Test
@@ -287,7 +504,7 @@ class ChatFeedScreenTest {
             }
             val oldRead = reads.poll(5, TimeUnit.SECONDS) ?: error("group roster read did not start")
             assertEquals(RecipientReadiness.Loading, groupGraph.recipientSnapshot())
-            composeRule.onNodeWithContentDescription("Reading participants from server").assertIsDisplayed()
+            assertToolbarProgressContains("Reading participants from server")
             composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
             composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
 
@@ -320,7 +537,7 @@ class ChatFeedScreenTest {
                 }.getOrDefault(false)
             }
             val dmRead = reads.poll(5, TimeUnit.SECONDS) ?: error("DM roster read did not start")
-            composeRule.onNodeWithContentDescription("Reading participants from server").assertIsDisplayed()
+            assertToolbarProgressContains("Reading participants from server")
             composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
             composeRule.onNodeWithContentDescription("Send").assertIsNotEnabled()
             val dmReadFinished = CompletableDeferred<Unit>()
@@ -483,6 +700,319 @@ class ChatFeedScreenTest {
     }
 
     @Test
+    fun toolbar_has_one_progress_indicator_at_most_for_all_loading_combinations() {
+        val graph = graph()
+        val capability = mutableStateOf<ChatDeleteCapability>(ChatDeleteCapability.NotAuthorized)
+        composeRule.setContent {
+            ChatFeedScreen(
+                onShowInvite = {},
+                deleteCapabilityOverride = capability.value,
+                viewModel = ChatFeedViewModel(graph),
+            )
+        }
+        val loadingCombinations = listOf(false to false, true to false, false to true, true to true)
+        for ((rosterLoading, deleteLoading) in loadingCombinations) {
+            composeRule.runOnIdle {
+                graph.updateRecipientReadiness(
+                    if (rosterLoading) RecipientReadiness.Loading else RecipientReadiness.Ready(listOf(graph.senderIdentifier)),
+                )
+                capability.value = if (deleteLoading) ChatDeleteCapability.Loading else ChatDeleteCapability.NotAuthorized
+            }
+            composeRule.waitForIdle()
+            val spinnerCount =
+                composeRule.onAllNodes(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate))
+                    .fetchSemanticsNodes().size
+            assertTrue("toolbar exposed multiple progress indicators", spinnerCount <= 1)
+            if (rosterLoading || deleteLoading) assertEquals(1, spinnerCount)
+            if (spinnerCount == 1) {
+                composeRule.onNodeWithContentDescription("Refresh messages").assertDoesNotExist()
+            } else {
+                composeRule.onNodeWithContentDescription("Refresh messages").assertIsEnabled()
+            }
+            composeRule.onNodeWithContentDescription(
+                if (rosterLoading) "Participants unavailable while verified members load" else "Participants",
+            ).assertIsDisplayed()
+            composeRule.onNodeWithContentDescription(
+                if (rosterLoading) "Invite someone (verified participants are loading)" else "Invite someone",
+            ).assertIsDisplayed()
+            if (rosterLoading) {
+                composeRule.onNodeWithContentDescription("Participants unavailable while verified members load").assertIsNotEnabled()
+                composeRule.onNodeWithContentDescription("Invite someone (verified participants are loading)").assertIsNotEnabled()
+            } else {
+                composeRule.onNodeWithContentDescription("Participants").assertIsEnabled()
+                composeRule.onNodeWithContentDescription("Invite someone").assertIsEnabled()
+            }
+        }
+    }
+
+    @Test
+    fun people_and_invite_toolbar_coordinates_stay_fixed_across_loading_and_delete_states() {
+        val graph = graph()
+        val capability = mutableStateOf<ChatDeleteCapability>(ChatDeleteCapability.NotAuthorized)
+        composeRule.setContent {
+            ChatFeedScreen(
+                onShowInvite = {},
+                deleteCapabilityOverride = capability.value,
+                viewModel = ChatFeedViewModel(graph),
+            )
+        }
+
+        fun left(description: String) = composeRule.onNodeWithContentDescription(description).fetchSemanticsNode().boundsInRoot.left
+        val peopleLeft = left("Participants")
+        val inviteLeft = left("Invite someone")
+        val deleteStates =
+            listOf(
+                ChatDeleteCapability.NotAuthorized,
+                ChatDeleteCapability.Loading,
+                ChatDeleteCapability.Unavailable,
+                ChatDeleteCapability.Available,
+            )
+        for (deleteState in deleteStates) {
+            for (
+            readiness in listOf(
+                RecipientReadiness.Ready(listOf(graph.senderIdentifier)),
+                RecipientReadiness.Loading,
+                RecipientReadiness.Unavailable("offline"),
+            )
+            ) {
+                composeRule.runOnIdle {
+                    capability.value = deleteState
+                    graph.updateRecipientReadiness(readiness)
+                }
+                composeRule.waitForIdle()
+                val peopleDescription =
+                    when (readiness) {
+                        is RecipientReadiness.Loading -> "Participants unavailable while verified members load"
+                        is RecipientReadiness.Unavailable -> "Participants unavailable until the verified roster is retried"
+                        is RecipientReadiness.Ready -> "Participants"
+                    }
+                assertEquals(peopleLeft, left(peopleDescription), 0.01f)
+                val inviteDescription =
+                    when (readiness) {
+                        is RecipientReadiness.Loading -> "Invite someone (verified participants are loading)"
+                        is RecipientReadiness.Unavailable -> "Invite someone (verified participants are unavailable)"
+                        is RecipientReadiness.Ready -> "Invite someone"
+                    }
+                assertEquals(inviteLeft, left(inviteDescription), 0.01f)
+            }
+        }
+    }
+
+    @Test
+    fun responsive_toolbar_fits_narrow_widths_and_font_scales_without_action_overlap() {
+        val longTitle = "A community title long enough to be ellipsized on a narrow display"
+        val graph = graph(longTitle)
+        val width = mutableStateOf(320)
+        val fontScale = mutableStateOf(1f)
+        val readiness = mutableStateOf<RecipientReadiness>(RecipientReadiness.Ready(listOf(graph.senderIdentifier)))
+        val capability = mutableStateOf<ChatDeleteCapability>(ChatDeleteCapability.NotAuthorized)
+        val viewModel = ChatFeedViewModel(graph)
+        composeRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, fontScale.value)) {
+                Box(Modifier.requiredWidth(width.value.dp).height(720.dp)) {
+                    ChatFeedScreen(
+                        onShowInvite = {},
+                        onShowParticipants = {},
+                        deleteCapabilityOverride = capability.value,
+                        chatTitle = longTitle,
+                        viewModel = viewModel,
+                    )
+                }
+            }
+        }
+
+        val readinessStates =
+            listOf(
+                RecipientReadiness.Ready(listOf(graph.senderIdentifier)),
+                RecipientReadiness.Loading,
+                RecipientReadiness.Unavailable("offline"),
+            )
+        val authorityStates =
+            listOf(
+                ChatDeleteCapability.NotAuthorized,
+                ChatDeleteCapability.Loading,
+                ChatDeleteCapability.Unavailable,
+                ChatDeleteCapability.Available,
+            )
+        for (screenWidth in listOf(320, 360)) {
+            var expectedPeopleLeft: Float? = null
+            var expectedInviteLeft: Float? = null
+            for (scale in listOf(1f, 1.3f)) {
+                composeRule.runOnIdle {
+                    width.value = screenWidth
+                    fontScale.value = scale
+                }
+                for (authority in authorityStates) {
+                    for (roster in readinessStates) {
+                        composeRule.runOnIdle {
+                            capability.value = authority
+                            readiness.value = roster
+                            graph.updateRecipientReadiness(roster)
+                        }
+                        composeRule.waitForIdle()
+
+                        val back = bounds("Back")
+                        val peopleDescription =
+                            when (roster) {
+                                is RecipientReadiness.Loading -> "Participants unavailable while verified members load"
+                                is RecipientReadiness.Unavailable -> "Participants unavailable until the verified roster is retried"
+                                is RecipientReadiness.Ready -> "Participants"
+                            }
+                        val inviteDescription =
+                            when (roster) {
+                                is RecipientReadiness.Loading -> "Invite someone (verified participants are loading)"
+                                is RecipientReadiness.Unavailable -> "Invite someone (verified participants are unavailable)"
+                                is RecipientReadiness.Ready -> "Invite someone"
+                            }
+                        val people = bounds(peopleDescription)
+                        val invite = bounds(inviteDescription)
+                        if (roster is RecipientReadiness.Ready) {
+                            composeRule.onNodeWithContentDescription(peopleDescription).assertIsEnabled()
+                            composeRule.onNodeWithContentDescription(inviteDescription).assertIsEnabled()
+                        } else {
+                            composeRule.onNodeWithContentDescription(peopleDescription).assertIsNotEnabled()
+                            composeRule.onNodeWithContentDescription(inviteDescription).assertIsNotEnabled()
+                        }
+                        val progressCount =
+                            composeRule.onAllNodes(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate))
+                                .fetchSemanticsNodes().size
+                        assertTrue("toolbar exposed multiple progress indicators", progressCount <= 1)
+                        val refresh =
+                            if (progressCount == 1) {
+                                composeRule.onNode(
+                                    hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate),
+                                ).fetchSemanticsNode().boundsInRoot
+                            } else {
+                                bounds("Refresh messages")
+                            }
+                        val title = composeRule.onNodeWithText(longTitle).fetchSemanticsNode().boundsInRoot
+                        val orderedTargets = listOf(back, title, refresh, people, invite)
+                        orderedTargets.zipWithNext().forEach { (left, right) ->
+                            assertTrue("toolbar bounds overlap at $screenWidth dp, fontScale $scale", left.right <= right.left + 0.01f)
+                        }
+                        listOf(back, people, invite).forEach { target ->
+                            assertTrue("toolbar action target is under 48dp", target.width >= 48f && target.height >= 48f)
+                        }
+                        if (progressCount == 0) {
+                            assertTrue("refresh action target is under 48dp", refresh.width >= 48f && refresh.height >= 48f)
+                        }
+                        assertTrue("title should remain one line", title.height < 48f)
+                        assertTrue("title is not visible", title.width > 0f)
+                        if (expectedPeopleLeft == null) {
+                            expectedPeopleLeft = people.left
+                            expectedInviteLeft = invite.left
+                        }
+                        assertEquals(expectedPeopleLeft!!, people.left, 0.01f)
+                        assertEquals(expectedInviteLeft!!, invite.left, 0.01f)
+                        val hasActions = authority !is ChatDeleteCapability.NotAuthorized
+                        val more = composeRule.onNodeWithContentDescription("More actions for $longTitle")
+                        if (hasActions) {
+                            more.assertIsDisplayed().assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
+                            val moreBounds = more.fetchSemanticsNode().boundsInRoot
+                            assertTrue("More action overlaps Invite", invite.right <= moreBounds.left + 0.01f)
+                        } else {
+                            more.assertDoesNotExist()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w600dp")
+    fun toolbar_respects_status_cutout_and_horizontal_safe_insets() {
+        val longTitle = "Community title that must remain visible beside toolbar actions"
+        val graph = graph(longTitle)
+        val width = mutableStateOf(320)
+        val densityScale = mutableStateOf(1f)
+        val fontScale = mutableStateOf(1f)
+        val viewModel = ChatFeedViewModel(graph)
+        composeRule.setContent {
+            val density = Density(densityScale.value, fontScale.value)
+            CompositionLocalProvider(LocalDensity provides density) {
+                val insets =
+                    WindowInsets(
+                        left = with(density) { 12.dp.roundToPx() },
+                        top = with(density) { 24.dp.roundToPx() },
+                        right = with(density) { 16.dp.roundToPx() },
+                    )
+                Box(Modifier.requiredWidth(width.value.dp).height(720.dp).testTag("safe-area-host")) {
+                    ChatFeedScreen(
+                        onShowInvite = {},
+                        onShowParticipants = {},
+                        deleteCapabilityOverride = ChatDeleteCapability.Available,
+                        chatTitle = longTitle,
+                        toolbarWindowInsets = insets,
+                        viewModel = viewModel,
+                    )
+                }
+            }
+        }
+
+        for (screenWidth in listOf(320, 360)) {
+            for (scale in listOf(1f, 1.5f)) {
+                for (textScale in listOf(1f, 1.3f)) {
+                    composeRule.runOnIdle {
+                        width.value = screenWidth
+                        densityScale.value = scale
+                        fontScale.value = textScale
+                    }
+                    composeRule.waitForIdle()
+                    val density = Density(scale, textScale)
+                    val leftInset = with(density) { 12.dp.roundToPx().toFloat() }
+                    val topInset = with(density) { (24.dp + 8.dp).roundToPx().toFloat() }
+                    val rightInset = with(density) { 16.dp.roundToPx().toFloat() }
+                    val host = composeRule.onNodeWithTag("safe-area-host").fetchSemanticsNode().boundsInRoot
+                    val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+                    val back = bounds("Back")
+                    val title = composeRule.onNodeWithText(longTitle).fetchSemanticsNode().boundsInRoot
+                    val refresh = bounds("Refresh messages")
+                    val people = bounds("Participants")
+                    val invite = bounds("Invite someone")
+                    val moreNode = composeRule.onNodeWithContentDescription("More actions for $longTitle")
+                    assertTrue(
+                        "More is unavailable at width=$screenWidth density=$scale fontScale=$textScale",
+                        composeRule.onAllNodesWithContentDescription("More actions for $longTitle").fetchSemanticsNodes().isNotEmpty(),
+                    )
+                    moreNode.assertIsDisplayed().assertIsEnabled()
+                    val more = moreNode.fetchSemanticsNode().boundsInRoot
+
+                    assertTrue("toolbar top inset was lost or doubled", kotlin.math.abs(back.top - host.top - topInset) <= 1f)
+                    assertTrue("toolbar left inset was lost or doubled", kotlin.math.abs(back.left - host.left - leftInset) <= 1f)
+                    assertTrue(
+                        "toolbar right inset was lost or doubled",
+                        kotlin.math.abs(more.right - host.right + rightInset) <= 1f,
+                    )
+                    assertTrue(
+                        "rightmost More is outside the visible root: root=$root more=$more",
+                        more.left >= root.left && more.right <= root.right && more.top >= root.top && more.bottom <= root.bottom,
+                    )
+                    assertTrue("title is not visible inside safe area", title.width > 0f && title.left >= back.right)
+                    assertTrue(
+                        "toolbar slots overlap",
+                        title.right <= refresh.left + 1f && refresh.right <= people.left + 1f &&
+                            people.right <= invite.left + 1f && invite.right <= more.left + 1f,
+                    )
+                    listOf(back, refresh, people, invite, more).forEach { target ->
+                        assertTrue("toolbar action target is under 48dp", target.width / scale >= 48f && target.height / scale >= 48f)
+                    }
+                    assertTrue("toolbar title is not one line", title.height / scale < 48f)
+                }
+            }
+        }
+    }
+
+    private fun bounds(description: String) = composeRule.onNodeWithContentDescription(description).fetchSemanticsNode().boundsInRoot
+
+    private fun assertToolbarProgressContains(operation: String) {
+        val descriptions =
+            composeRule.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate))
+                .fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
+        assertTrue("progress description omitted $operation: $descriptions", descriptions.any { operation in it })
+    }
+
+    @Test
     fun cached_ready_roster_has_no_loading_surface_and_keeps_send_enabled() {
         val graph = graph().apply { updateRecipientReadiness(RecipientReadiness.Ready(listOf(senderIdentifier, "peer"))) }
         composeRule.setContent {
@@ -505,8 +1035,9 @@ class ChatFeedScreenTest {
         composeRule.setContent {
             ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph))
         }
-        composeRule.onNodeWithContentDescription("Reading participants from server")
-            .assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+        assertToolbarProgressContains("Reading participants from server")
+        composeRule.onNodeWithContentDescription("Participants unavailable while verified members load").assertIsNotEnabled()
+        composeRule.onNodeWithContentDescription("Invite someone (verified participants are loading)").assertIsNotEnabled()
         composeRule.onNodeWithText("Reading participants from server…").assertIsDisplayed()
         composeRule.onNodeWithText("Reading participants from server. Sending will be available when complete.").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Message").assertIsNotEnabled()
@@ -568,15 +1099,59 @@ class ChatFeedScreenTest {
             ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph()))
         }
 
-        composeRule.onNodeWithText("Queued").assertIsDisplayed()
+        composeRule.onNodeWithText("Queued").assertDoesNotExist()
         composeRule.onNodeWithContentDescription("Queued").assertIsDisplayed()
-        composeRule.onNodeWithText("Sent").assertIsDisplayed()
+        composeRule.onNodeWithText("Sent").assertDoesNotExist()
         composeRule.onNodeWithContentDescription("Sent").assertIsDisplayed()
-        composeRule.onNodeWithText("Failed").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Failed").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Retry sending message")
+        composeRule.onNodeWithText("Failed").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Failed. Retry sending message")
             .assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun room_status_flow_moves_queued_to_sent_and_failed_without_visible_status_words() {
+        val queuedBody = "queued transition"
+        val failedBody = "failed transition"
+        val queuedId = "queued-transition"
+        val failedId = "failed-transition"
+        runBlocking {
+            listOf(queuedBody to queuedId, failedBody to failedId).forEachIndexed { index, (body, id) ->
+                store.persist(
+                    messageId = id,
+                    orderToken = "000${index + 1}",
+                    message = TextMessage(chatId, identity.publicIdentity(), null, body, index.toLong() + 1),
+                    receivedAtMillis = index.toLong() + 1,
+                    sendStatus = org.openwebdav.messenger.data.MessageEntity.STATUS_SENDING,
+                    outboxEnvelope = byteArrayOf(index.toByte()),
+                    outboxCommunityId = "default",
+                )
+            }
+        }
+        composeRule.setContent { ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph())) }
+        assertEquals(2, composeRule.onAllNodesWithContentDescription("Queued").fetchSemanticsNodes().size)
+        composeRule.onNodeWithText("Queued").assertDoesNotExist()
+
+        runBlocking { store.markSent(queuedId, "default") }
+        composeRule.waitUntil(5_000) {
+            runBlocking { store.messageById(queuedId)?.sendStatus == org.openwebdav.messenger.data.MessageEntity.STATUS_SENT }
+        }
+        composeRule.waitUntil(5_000) {
+            runCatching {
+                composeRule.onNodeWithContentDescription("Sent").assertIsDisplayed()
+                true
+            }.getOrDefault(false)
+        }
+        composeRule.onNodeWithText("Sent").assertDoesNotExist()
+
+        runBlocking { store.markFailed(failedId, "default") }
+        composeRule.waitUntil(5_000) {
+            runBlocking { store.messageById(failedId)?.sendStatus == org.openwebdav.messenger.data.MessageEntity.STATUS_FAILED }
+        }
+        composeRule.onNodeWithText(failedBody).performScrollTo()
+        composeRule.onNodeWithContentDescription("Failed. Retry sending message")
+            .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithText("Failed").assertDoesNotExist()
     }
 
     @Test
@@ -590,6 +1165,34 @@ class ChatFeedScreenTest {
         assertEquals("В очереди", resources.getString(R.string.message_status_queued))
         assertEquals("Отправлено", resources.getString(R.string.message_status_sent))
         assertEquals("Не отправлено", resources.getString(R.string.message_status_failed))
+    }
+
+    @Test
+    fun russian_failed_status_is_an_accessible_retry_name_without_visible_status_text() {
+        val body = "Russian failure"
+        val orderToken = OrderToken.build(1_717_000_000_000L, Hex.encode(identity.copySignPublic()), 9)
+        runBlocking {
+            store.persist(
+                MessageId.messageId(orderToken, body.toByteArray()),
+                orderToken,
+                TextMessage(chatId, identity.publicIdentity(), null, body, 9L),
+                9L,
+                sendStatus = org.openwebdav.messenger.data.MessageEntity.STATUS_FAILED,
+            )
+        }
+        val context = RuntimeEnvironment.getApplication()
+        val russian =
+            context.createConfigurationContext(
+                Configuration(context.resources.configuration).apply { setLocale(Locale("ru")) },
+            )
+        composeRule.setContent {
+            CompositionLocalProvider(LocalContext provides russian) {
+                ChatFeedScreen(onShowInvite = {}, viewModel = ChatFeedViewModel(graph()))
+            }
+        }
+        composeRule.onNodeWithContentDescription("Не отправлено. Повторить отправку")
+            .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithText("Не отправлено").assertDoesNotExist()
     }
 
     @Test
@@ -625,7 +1228,7 @@ class ChatFeedScreenTest {
         composeRule.setContent {
             ChatFeedScreen(onShowInvite = {}, viewModel = viewModel)
         }
-        composeRule.onNodeWithContentDescription("Retry sending message")
+        composeRule.onNodeWithContentDescription("Failed. Retry sending message")
             .assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
             .performClick()
